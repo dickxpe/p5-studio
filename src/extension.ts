@@ -3,9 +3,9 @@ import * as ts from 'typescript';
 import * as vscode from 'vscode';
 import * as parser from './code-parser';
 import * as fs from 'fs';
-import { existsSync, createWriteStream, writeFileSync, readFileSync } from "fs";
-import { timeStamp } from 'console';
-import { open } from 'openurl';
+import { writeFileSync } from "fs";
+import { Console } from 'console';
+
 
 let panel: any;
 let activeEditor: vscode.TextEditor;
@@ -29,6 +29,7 @@ async function listFilesRecursively(folderUri: vscode.Uri): Promise<string[]> {
   return files.flat();
 }
 
+
 export function activate(context: vscode.ExtensionContext): void {
 
   const webviewPanelMap = new Map<string, vscode.WebviewPanel>();
@@ -50,7 +51,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const editor = vscode.window.activeTextEditor;
     if (editor && editor.selection && !editor.selection.isEmpty) {
       let search = encodeURIComponent(editor.document.getText(editor.selection));
-      vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/search/?term=${search}`));
+      vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/p5/${search}`));
     }
   });
 
@@ -110,6 +111,7 @@ export function activate(context: vscode.ExtensionContext): void {
     path.join(context.extensionPath, 'assets')
   );
 
+
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
       if (editor) {
@@ -118,7 +120,12 @@ export function activate(context: vscode.ExtensionContext): void {
         if (panel) {
           panel.reveal(vscode.ViewColumn.Two);
         }
+        setCustomContext();
+        vscode.commands.executeCommand('setContext', 'inP5Webview', false);
+        vscode.window.showTextDocument(editor.document, vscode.ViewColumn.One, false);
+
       }
+
     })
   );
 
@@ -127,12 +134,34 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.live-p5', async () => {
       activeEditor = vscode.window.activeTextEditor;
-      let activeFilePath = activeEditor.document.fileName
-      let activeFilename = activeFilePath.substring(activeFilePath.lastIndexOf('\\') + 1, activeFilePath.length);
+      if (!activeEditor) return;
 
       const documentUri = activeEditor.document.uri.toString();
+      const activeFilePath = activeEditor.document.fileName;
+      const activeFilename = path.basename(activeFilePath);
 
-      panel = vscode.window['createWebviewPanel'](
+      const assetsPath = vscode.Uri.file(
+        path.join(context.extensionPath, 'assets')
+      );
+
+      // 🔍 Check if a panel already exists for this document
+      const existingPanel = webviewPanelMap.get(documentUri);
+      if (existingPanel) {
+        let test = "1";
+        const html = await createHtml(getText(), assetsPath);
+        panel.webview.html = html;
+        existingPanel.reveal(vscode.ViewColumn.Two);
+
+        vscode.commands.executeCommand('setContext', 'inP5Webview', true);
+        return; // 🛑 STOP: Don't create a new one
+      }
+
+      // ✅ Otherwise, create a new panel
+      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      if (!workspaceFolder) return;
+
+
+      const newPanel = vscode.window.createWebviewPanel(
         'extension.live-p5',
         'LIVE: ' + activeFilename,
         vscode.ViewColumn.Two,
@@ -141,45 +170,44 @@ export function activate(context: vscode.ExtensionContext): void {
           localResourceRoots: [
             vscode.Uri.file(path.join(context.extensionPath, 'assets')),
             vscode.Uri.file(path.join(context.extensionPath, 'node_modules')),
-            vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'common'))
+            vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'common')),
           ],
           retainContextWhenHidden: true
         },
       );
 
-      webviewPanelMap.set(documentUri, panel);
+      // 🌍 Set panel in map
+      webviewPanelMap.set(documentUri, newPanel);
+      panel = newPanel;
 
-      const fileName = vscode.window.activeTextEditor.document.fileName;
-      // vscode.workspace.createFileSystemWatcher(fileName).onDidChange(_ => {
-      //   documentChanged(assetsPath);
-      // })
-
-      panel.webview.html = await createHtml(getText(), assetsPath);
-
+      // 🧠 Generate HTML and show in panel
+      const html = await createHtml(getText(), assetsPath);
+      newPanel.webview.html = html;
       outputChannel.show(true);
+      vscode.commands.executeCommand('setContext', 'inP5Webview', true);
 
-      // Listen for messages from the webview
-      panel.webview.onDidReceiveMessage(
+      // 🔁 Listen to messages
+      newPanel.webview.onDidReceiveMessage(
         (message) => {
           if (message.type === 'log') {
-
-            outputChannel.appendLine(`[${new Date().toLocaleTimeString('eo', { hour12: false })
-              } LOG from ${activeFilename} ]: ${message.message.join(' ')} `);
+            outputChannel.appendLine(`[${new Date().toLocaleTimeString()} LOG from ${activeFilename}]: ${message.message.join(' ')}`);
           } else if (message.type === 'error') {
-            outputChannel.appendLine(
-              `[${new Date().toLocaleTimeString('eo', { hour12: false })} ERROR in ${activeFilename}]: ${message.message} (at ${message.filename}:${message.line}:${message.column})`
-            );
+            outputChannel.appendLine(`[${new Date().toLocaleTimeString()} ERROR in ${activeFilename}]: ${message.message} (at ${message.filename}:${message.line}:${message.column})`);
           }
         },
         undefined,
         context.subscriptions
       );
+
+      // 🧼 Clean up on dispose
+      newPanel.onDidDispose(() => {
+        webviewPanelMap.delete(documentUri);
+        vscode.commands.executeCommand('setContext', 'inP5Webview', false);
+      });
     })
   );
 
-  vscode.workspace.onDidOpenTextDocument((document) => {
-    // A new js file should always be opened on the left side as tab
-  });
+
 
   vscode.workspace.onDidSaveTextDocument(async (document: vscode.TextDocument) => {
     try {
@@ -187,20 +215,10 @@ export function activate(context: vscode.ExtensionContext): void {
       panel.webview.html = html;
       outputChannel.clear();
     } catch (error) {
-      outputChannel.appendLine(`[Error]: Error creating HTML on save ${error.message}`)
+      //outputChannel.appendLine(`[Error]: Error creating HTML on save ${error.message}`)
     }
   });
-  // vscode.workspace.onDidChangeTextDocument(async (event: vscode.TextDocumentChangeEvent) => {
-  //   try {
-  //     await documentChanged(assetsPath);  // Await the document change handling
-  //   } catch (error) {
-  //     outputChannel.appendLine(`[Error]: ${ error.message } - ${ activeEditor.document.fileName } `);
-  //   }
-  // });
 
-
-  // Update the context when the active editor changes
-  vscode.window.onDidChangeActiveTextEditor(setCustomContext, null, context.subscriptions);
 
   // Update the context when the document changes
   vscode.workspace.onDidChangeTextDocument((event) => {
@@ -218,7 +236,7 @@ export function activate(context: vscode.ExtensionContext): void {
 function createEmptyFile(filePath) {
   try {
     // Write an empty string to create an empty file
-    fs.writeFileSync(filePath, '', { flag: 'w' }); // 'w' ensures it overwrites if the file exists
+    fs.writeFileSync(filePath, '', { flag: 'wx' }); // 'w' ensures it overwrites if the file exists
     console.log(`Empty file created at: ${filePath} `);
   } catch (error) {
     console.error('Error creating empty file:', error);
@@ -233,7 +251,7 @@ async function documentChanged(assetsPath: vscode.Uri): Promise<void> {
       const html = await createHtml(text, assetsPath);  // Await the HTML generation
       panel.webview.html = html;
     } catch (error) {
-      vscode.window.showErrorMessage(`Error creating HTML: ${error.message} `);
+      //vscode.window.showErrorMessage(`Error creating HTML: ${error.message} `);
     }
   } else {
     panel.webview.postMessage({

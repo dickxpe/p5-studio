@@ -1,18 +1,19 @@
 {
   "compilerOptions": {
-    "module": "CommonJS",
+    "module": "commonjs",
     "moduleResolution": "node",
     "target": "ESNext",
     "esModuleInterop": true, // Allow default imports from non-ES modules
     "allowSyntheticDefaultImports": true, // Allow default imports even from non-ESM modules
-    "outDir": "./out",
+    "outDir": "out",
     "lib": [
       "es2019"
     ],
     "sourceMap": true,
-    "rootDir": ".",
-    "skipLibCheck": true
+    "rootDir": "src",
+    "skipLibCheck": true,
   },
+
   "exclude": [
     "node_modules",
     ".vscode-test",
