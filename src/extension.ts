@@ -8,6 +8,7 @@ const webviewPanelMap = new Map<string, vscode.WebviewPanel>();
 let activeP5Panel: vscode.WebviewPanel | null = null;
 const DEBOUNCE_DELAY = 150;
 
+// --- Debounce helper ---
 function debounce<Func extends (...args: any[]) => void>(fn: Func, delay: number) {
   let timeout: NodeJS.Timeout;
   return (...args: Parameters<Func>) => {
@@ -16,6 +17,7 @@ function debounce<Func extends (...args: any[]) => void>(fn: Func, delay: number
   };
 }
 
+// --- Get code from editor (transpile TS if needed) ---
 function getText(editor: vscode.TextEditor): string {
   const text = editor.document.getText();
   if (editor.document.languageId === 'typescript') {
@@ -29,6 +31,7 @@ function getText(editor: vscode.TextEditor): string {
   return text;
 }
 
+// --- Generate webview HTML ---
 async function createHtml(text: string, panel: vscode.WebviewPanel, extensionPath: string) {
   if (!/function\s+setup\s*\(/.test(text)) {
     text = `function setup() { createCanvas(window.innerWidth, window.innerHeight); background(255); }\n` + text;
@@ -61,56 +64,42 @@ canvas.p5Canvas { display:block; }
 const vscode = acquireVsCodeApi();
 window._p5Instance = null;
 
-// Forward console messages to VS Code
-(function() {
+// Forward console messages
+(function(){
     const originalLog = console.log;
-    console.log = function(...args) {
-        vscode.postMessage({ type: 'log', message: args });
-        originalLog.apply(console, args);
-    };
+    console.log = function(...args){ vscode.postMessage({ type:'log', message: args }); originalLog.apply(console,args); };
     const originalError = console.error;
-    console.error = function(...args) {
-        vscode.postMessage({ type: 'error', message: args.join(' ') });
-        originalError.apply(console, args);
-    };
+    console.error = function(...args){ vscode.postMessage({ type:'error', message: args.join(' ') }); originalError.apply(console,args); };
     const originalWarn = console.warn;
-    console.warn = function(...args) {
-        vscode.postMessage({ type: 'log', message: args });
-        originalWarn.apply(console, args);
-    };
+    console.warn = function(...args){ vscode.postMessage({ type:'log', message: args }); originalWarn.apply(console,args); };
 })();
 
-function runUserSketch(userCode) {
-    document.querySelectorAll('script[data-user-code]').forEach(s => s.remove());
+function runUserSketch(userCode){
+    document.querySelectorAll('script[data-user-code]').forEach(s=>s.remove());
     if(window._p5Instance) window._p5Instance.remove();
-
     const s = document.createElement('script');
-    s.type = 'text/javascript';
-    s.dataset.userCode = 'true';
+    s.type='text/javascript';
+    s.dataset.userCode='true';
     s.textContent = userCode + "\\n//# sourceURL=userSketch_" + Date.now() + ".js";
     document.body.appendChild(s);
-
     window._p5Instance = new p5();
     if(window._p5Instance._renderer) window._p5Instance.resizeCanvas(window.innerWidth, window.innerHeight);
 }
 
-// Load p5.js first, then user sketch
 const p5Script = document.createElement('script');
-p5Script.src = '${p5Uri}';
-p5Script.onload = () => { runUserSketch(${escapedCode}); };
-p5Script.onerror = () => {
-    const el = document.getElementById('error-overlay');
-    if(el) { el.textContent = 'Failed to load p5.js'; el.style.display = 'block'; }
+p5Script.src='${p5Uri}';
+p5Script.onload = ()=>{ runUserSketch(${escapedCode}); };
+p5Script.onerror = ()=>{
+    const el=document.getElementById('error-overlay');
+    if(el){ el.textContent='Failed to load p5.js'; el.style.display='block'; }
 };
 document.body.appendChild(p5Script);
 
-// Listen for reload messages
-window.addEventListener('message', event => {
-    if(event.data.type === 'reload') runUserSketch(event.data.code);
+window.addEventListener('message', event=>{
+    if(event.data.type==='reload') runUserSketch(event.data.code);
 });
 
-// Resize canvas on panel resize
-window.addEventListener('resize', () => {
+window.addEventListener('resize', ()=>{
     if(window._p5Instance?._renderer) window._p5Instance.resizeCanvas(window.innerWidth, window.innerHeight);
 });
 </script>
@@ -118,8 +107,10 @@ window.addEventListener('resize', () => {
 </html>`;
 }
 
+// --- Activate extension ---
 export function activate(context: vscode.ExtensionContext) {
 
+  // --- Context detection ---
   function updateP5Context() {
     const editor = vscode.window.activeTextEditor;
     if (!editor) return vscode.commands.executeCommand('setContext', 'isP5js', false);
@@ -139,21 +130,26 @@ export function activate(context: vscode.ExtensionContext) {
     } else vscode.commands.executeCommand('setContext', 'hasP5Webview', false);
   });
 
-  // --- Live update while typing ---
-  const updateWebview = debounce(() => {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) return;
-    const docUri = editor.document.uri.toString();
+  // --- Debounce per document for live update ---
+  const debounceMap = new Map<string, Function>();
+  function updateDocumentPanel(document: vscode.TextDocument) {
+    const docUri = document.uri.toString();
     const panel = webviewPanelMap.get(docUri);
     if (!panel) return;
+    panel.webview.postMessage({ type: 'reload', code: document.getText() });
+  }
+  function debounceDocumentUpdate(document: vscode.TextDocument) {
+    const docUri = document.uri.toString();
+    if (!debounceMap.has(docUri)) {
+      debounceMap.set(docUri, debounce(() => updateDocumentPanel(document), DEBOUNCE_DELAY));
+    }
+    debounceMap.get(docUri)!();
+  }
 
-    panel.webview.postMessage({ type: 'reload', code: getText(editor) });
-  }, DEBOUNCE_DELAY);
+  vscode.workspace.onDidChangeTextDocument(e => debounceDocumentUpdate(e.document));
+  vscode.workspace.onDidSaveTextDocument(e => debounceDocumentUpdate(e));
 
-  vscode.workspace.onDidChangeTextDocument(updateWebview);
-  vscode.workspace.onDidSaveTextDocument(updateWebview);
-
-  // --- LIVE P5 Command ---
+  // --- LIVE P5 command ---
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.live-p5', async () => {
       const editor = vscode.window.activeTextEditor;
@@ -196,7 +192,7 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // --- Reload Command ---
+  // --- Reload button ---
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.reload-p5-sketch', async () => {
       const editor = vscode.window.activeTextEditor;
@@ -210,6 +206,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 }
 
+// --- Deactivate ---
 export function deactivate() {
   webviewPanelMap.clear();
   outputChannel.dispose();
