@@ -14,6 +14,18 @@ export function codeHasChanged(userCode: string): boolean {
     previousCode.program.body);
 }
 
+export function getSlidableVars(code: string): Record<string, number> {
+  const result: Record<string, number> = {};
+  const varRegex = /let\s+(\w+)\s*=\s*(\d+(\.\d+)?);/g;
+
+  let match;
+  while ((match = varRegex.exec(code)) !== null) {
+    result[match[1]] = parseFloat(match[2]);
+  }
+  return result;
+}
+
+
 /**
  * Receives:
  * let a = 1;

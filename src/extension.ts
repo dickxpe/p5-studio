@@ -2,362 +2,323 @@ import * as path from 'path';
 import * as ts from 'typescript';
 import * as vscode from 'vscode';
 import * as parser from './code-parser';
-import * as fs from 'fs';
-import { writeFileSync } from "fs";
-import { Console } from 'console';
 
-
-let panel: any;
-let activeEditor: vscode.TextEditor;
 const outputChannel = vscode.window.createOutputChannel('LIVE P5');
+const webviewPanelMap = new Map<string, vscode.WebviewPanel>();
+let activeP5Panel: vscode.WebviewPanel | null = null;
 
-async function listFilesRecursively(folderUri: vscode.Uri): Promise<string[]> {
+const DEBOUNCE_DELAY = 150;
+
+function debounce<Func extends (...args: any[]) => void>(fn: Func, delay: number) {
+  let timeout: NodeJS.Timeout;
+  return (...args: Parameters<Func>) => {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => fn(...args), delay);
+  };
+}
+
+async function listFilesRecursively(folderUri: vscode.Uri, extensions: string[] = []): Promise<string[]> {
   const entries = await vscode.workspace.fs.readDirectory(folderUri);
   const filePromises = entries.map(async ([name, type]) => {
-
     const filePath = path.join(folderUri.fsPath, name);
     const fileUri = vscode.Uri.file(filePath);
-    if (type === vscode.FileType.Directory) {
-      return listFilesRecursively(fileUri); // Recurse into directories
-    } else if (type === vscode.FileType.File) {
-      return [fileUri.fsPath];
-    }
+    if (type === vscode.FileType.Directory) return listFilesRecursively(fileUri, extensions);
+    if (type === vscode.FileType.File && (extensions.length === 0 || extensions.includes(path.extname(name).toLowerCase()))) return [fileUri.fsPath];
     return [];
   });
-
   const files = await Promise.all(filePromises);
   return files.flat();
 }
 
-
-export function activate(context: vscode.ExtensionContext): void {
-
-  const webviewPanelMap = new Map<string, vscode.WebviewPanel>();
-
-  // Create the status bar item
-  let myStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
+// ---------------- Activate ----------------
+export function activate(context: vscode.ExtensionContext) {
+  const myStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
   myStatusBarItem.text = "P5 Reference";
   myStatusBarItem.command = 'extension.openP5Ref';
   myStatusBarItem.color = "#FF0000";
   myStatusBarItem.show();
-
-  // Register the command that opens the URL
-  let disposable = vscode.commands.registerCommand('extension.openP5Ref', () => {
-    vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/`));
-  });
-
-  // Register the "openSelectedText" command for the context menu
-  let openSelectedTextCommand = vscode.commands.registerCommand('extension.openSelectedText', () => {
-    const editor = vscode.window.activeTextEditor;
-    if (editor && editor.selection && !editor.selection.isEmpty) {
-      let search = encodeURIComponent(editor.document.getText(editor.selection));
-      vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/p5/${search}`));
-    }
-  });
-
   context.subscriptions.push(myStatusBarItem);
-  context.subscriptions.push(disposable);
-  context.subscriptions.push(openSelectedTextCommand);
 
-  const setCustomContext = () => {
-    let regexSetup = /\s*function\s+setup\s*\(\s*\)\s*\{/g;
-    let regexDraw = /\s*function\s+draw\s*\(\s*\)\s*\{/g;
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) {
-      vscode.commands.executeCommand('setContext', 'isP5js', false);
-      return;
+  // ---------- Commands ----------
+  context.subscriptions.push(
+    vscode.commands.registerCommand('extension.openP5Ref', () => {
+      vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/`));
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('extension.openSelectedText', () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor || editor.selection.isEmpty) return;
+      const search = encodeURIComponent(editor.document.getText(editor.selection));
+      vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/p5/${search}`));
+    })
+  );
+
+  function getText(editor: vscode.TextEditor): string {
+    const text = editor.document.getText();
+    if (editor.document.languageId === 'typescript') {
+      return ts.transpileModule(text, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText;
     }
+    return text;
+  }
 
-    const documentText = editor.document.getText();
-    const containsFunction = regexDraw.test(documentText) || regexSetup.test(documentText);
+  function updateHasP5WebviewContext(document?: vscode.TextDocument) {
+    if (!document) document = vscode.window.activeTextEditor?.document;
+    if (!document) return;
+    const docUri = document.uri.toString();
+    const exists = webviewPanelMap.has(docUri);
+    vscode.commands.executeCommand('setContext', 'hasP5Webview', exists);
+  }
 
-    vscode.commands.executeCommand('setContext', 'isP5js', containsFunction);
+  const updateP5Panel = async (editor: vscode.TextEditor) => {
+    const docUri = editor.document.uri.toString();
+    const panel = webviewPanelMap.get(docUri);
+    if (!panel) return;
+
+    const code = getText(editor);
+
+    // Send a message to the webview to reload the sketch
+    panel.webview.postMessage({ type: 'reload', code });
   };
 
-  setCustomContext();
+  const updateWebview = debounce(async (document: vscode.TextDocument) => {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document !== document) return;
+    await updateP5Panel(editor);
+  }, DEBOUNCE_DELAY);
 
-  outputChannel.clear();
-
-  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-
-  let createProject = vscode.commands.registerCommand(
-    "extension.create-jsconfig",
-    async () => {
-      try {
-        // creates a jsonconfig that tells vscode where to find the types file
-        const jsconfig = {
-          "compilerOptions": {
-            "target": "es6",
-            "checkJs": true,
-          },
-          include: [
-            "*.js",
-            "**/*.js",
-            path.join(context.extensionPath, "p5types", "global.d.ts"),
-          ],
-        };
-        fs.mkdirSync(workspaceFolder.uri.fsPath + "/common", { recursive: true });
-        createEmptyFile(workspaceFolder.uri.fsPath + "/common/utils.js");
-        const jsconfigPath = path.join(workspaceFolder.uri.fsPath, "jsconfig.json");
-
-        writeFileSync(vscode.Uri.file(jsconfigPath).fsPath, JSON.stringify(jsconfig, null, 2));
-
-      } catch (e) {
-        console.error(e);
-      }
-    });
-
-  const assetsPath = vscode.Uri.file(
-    path.join(context.extensionPath, 'assets')
-  );
-
-
-  context.subscriptions.push(
-    vscode.window.onDidChangeActiveTextEditor((editor) => {
-      if (editor) {
-        const documentUri = editor.document.uri.toString();
-        const panel = webviewPanelMap.get(documentUri);
-        if (panel) {
-          panel.reveal(vscode.ViewColumn.Two);
-        }
-        setCustomContext();
-        vscode.commands.executeCommand('setContext', 'inP5Webview', false);
-        vscode.window.showTextDocument(editor.document, vscode.ViewColumn.One, false);
-
-      }
-
-    })
-  );
-
-  //this has to run each time the createHtml is called.
-
+  // ---------- Live P5 Command ----------
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.live-p5', async () => {
-      activeEditor = vscode.window.activeTextEditor;
-      if (!activeEditor) return;
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) return;
 
-      const documentUri = activeEditor.document.uri.toString();
-      const activeFilePath = activeEditor.document.fileName;
-      const activeFilename = path.basename(activeFilePath);
+      const docUri = editor.document.uri.toString();
+      const activeFilename = path.basename(editor.document.fileName);
 
-      const assetsPath = vscode.Uri.file(
-        path.join(context.extensionPath, 'assets')
-      );
+      let panel = webviewPanelMap.get(docUri);
+      if (!panel) {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) return;
 
-      // 🔍 Check if a panel already exists for this document
-      const existingPanel = webviewPanelMap.get(documentUri);
-      if (existingPanel) {
-        let test = "1";
-        const html = await createHtml(getText(), assetsPath);
-        panel.webview.html = html;
-        existingPanel.reveal(vscode.ViewColumn.Two);
+        panel = vscode.window.createWebviewPanel(
+          'extension.live-p5',
+          'LIVE: ' + activeFilename,
+          vscode.ViewColumn.Two,
+          {
+            enableScripts: true,
+            localResourceRoots: [
+              vscode.Uri.file(path.join(context.extensionPath, 'assets')),
+              vscode.Uri.file(path.join(context.extensionPath, 'node_modules')),
+              vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'common')),
+            ],
+            retainContextWhenHidden: true
+          }
+        );
 
-        vscode.commands.executeCommand('setContext', 'inP5Webview', true);
-        return; // 🛑 STOP: Don't create a new one
+        webviewPanelMap.set(docUri, panel);
+        activeP5Panel = panel;
+
+        panel.webview.onDidReceiveMessage(msg => {
+          if (msg.type === 'log') {
+            outputChannel.appendLine(`[${new Date().toLocaleTimeString()} LOG]: ${msg.message.join(' ')}`);
+            outputChannel.show(true);
+          } else if (msg.type === 'error') {
+            outputChannel.appendLine(`[${new Date().toLocaleTimeString()} ERROR]: ${msg.message} (${msg.line}:${msg.column})`);
+            outputChannel.show(true);
+            panel.title = `⚠️ LIVE: ${activeFilename}`;
+          }
+        }, undefined, context.subscriptions);
+
+        panel.onDidChangeViewState(e => {
+          if (e.webviewPanel.active) activeP5Panel = e.webviewPanel;
+        });
+
+        panel.onDidDispose(() => {
+          webviewPanelMap.delete(docUri);
+          if (activeP5Panel === panel) activeP5Panel = null;
+          vscode.commands.executeCommand('setContext', 'inP5Webview', false);
+          updateHasP5WebviewContext(editor.document);
+        });
+
+        // Set initial HTML
+        const assetsPath = vscode.Uri.file(path.join(context.extensionPath, 'assets'));
+        panel.webview.html = await createHtml(getText(editor), assetsPath, panel);
       }
 
-      // ✅ Otherwise, create a new panel
-      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-      if (!workspaceFolder) return;
-
-
-      const newPanel = vscode.window.createWebviewPanel(
-        'extension.live-p5',
-        'LIVE: ' + activeFilename,
-        vscode.ViewColumn.Two,
-        {
-          enableScripts: true,
-          localResourceRoots: [
-            vscode.Uri.file(path.join(context.extensionPath, 'assets')),
-            vscode.Uri.file(path.join(context.extensionPath, 'node_modules')),
-            vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'common')),
-          ],
-          retainContextWhenHidden: true
-        },
-      );
-
-      // 🌍 Set panel in map
-      webviewPanelMap.set(documentUri, newPanel);
-      panel = newPanel;
-
-      // 🧠 Generate HTML and show in panel
-      const html = await createHtml(getText(), assetsPath);
-      newPanel.webview.html = html;
-      outputChannel.show(true);
       vscode.commands.executeCommand('setContext', 'inP5Webview', true);
+      updateHasP5WebviewContext(editor.document);
 
-      // 🔁 Listen to messages
-      newPanel.webview.onDidReceiveMessage(
-        (message) => {
-          if (message.type === 'log') {
-            outputChannel.appendLine(`[${new Date().toLocaleTimeString()} LOG from ${activeFilename}]: ${message.message.join(' ')}`);
-          } else if (message.type === 'error') {
-            outputChannel.appendLine(`[${new Date().toLocaleTimeString()} ERROR in ${activeFilename}]: ${message.message} (at ${message.filename}:${message.line}:${message.column})`);
-          }
-        },
-        undefined,
-        context.subscriptions
-      );
-
-      // 🧼 Clean up on dispose
-      newPanel.onDidDispose(() => {
-        webviewPanelMap.delete(documentUri);
-        vscode.commands.executeCommand('setContext', 'inP5Webview', false);
-      });
+      // Trigger initial update
+      await updateP5Panel(editor);
+      panel.reveal(vscode.ViewColumn.Two, true);
+      outputChannel.show(true);
     })
   );
 
+  // ---------- Reload Command ----------
+  context.subscriptions.push(
+    vscode.commands.registerCommand('extension.reload-p5-sketch', async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) return;
 
+      const docUri = editor.document.uri.toString();
+      const panel = webviewPanelMap.get(docUri);
+      if (!panel) {
+        vscode.window.showWarningMessage("No active P5 panel to reload.");
+        return;
+      }
 
-  vscode.workspace.onDidSaveTextDocument(async (document: vscode.TextDocument) => {
-    try {
-      const html = await createHtml(getText(), assetsPath);  // Await the HTML generation
-      panel.webview.html = html;
-      outputChannel.clear();
-    } catch (error) {
-      //outputChannel.appendLine(`[Error]: Error creating HTML on save ${error.message}`)
-    }
-  });
+      panel.reveal(vscode.ViewColumn.Two, true);
+      await updateP5Panel(editor);
+      vscode.window.showInformationMessage("P5 sketch reloaded!");
+    })
+  );
 
+  // ---------- Context detection ----------
+  const setCustomContext = () => {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) return vscode.commands.executeCommand('setContext', 'isP5js', false);
+    const text = editor.document.getText();
+    const containsP5 = /\s*function\s+setup\s*\(\s*\)\s*\{/.test(text) || /\s*function\s+draw\s*\(\s*\)\s*\{/.test(text);
+    vscode.commands.executeCommand('setContext', 'isP5js', containsP5);
+  };
 
-  // Update the context when the document changes
-  vscode.workspace.onDidChangeTextDocument((event) => {
-    if (event.document === vscode.window.activeTextEditor?.document) {
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(() => {
       setCustomContext();
-    }
-  }, null, context.subscriptions);
+      updateHasP5WebviewContext();
+    }),
+    vscode.workspace.onDidChangeTextDocument(event => {
+      if (event.document === vscode.window.activeTextEditor?.document) {
+        setCustomContext();
+        updateHasP5WebviewContext(event.document);
+      }
+    }),
+    vscode.workspace.onDidChangeTextDocument(e => updateWebview(e.document)),
+    vscode.workspace.onDidSaveTextDocument(doc => updateWebview(doc))
+  );
 
-  // Initial check
   setCustomContext();
-
-
+  updateHasP5WebviewContext();
 }
 
-function createEmptyFile(filePath) {
-  try {
-    // Write an empty string to create an empty file
-    fs.writeFileSync(filePath, '', { flag: 'wx' }); // 'w' ensures it overwrites if the file exists
-    console.log(`Empty file created at: ${filePath} `);
-  } catch (error) {
-    console.error('Error creating empty file:', error);
-  }
-}
-
-async function documentChanged(assetsPath: vscode.Uri): Promise<void> {
-  const text = getText();
-
-  if (parser.codeHasChanged(text)) {
-    try {
-      const html = await createHtml(text, assetsPath);  // Await the HTML generation
-      panel.webview.html = html;
-    } catch (error) {
-      //vscode.window.showErrorMessage(`Error creating HTML: ${error.message} `);
-    }
-  } else {
-    panel.webview.postMessage({
-      vars: JSON.stringify(parser.getVars(text)),
-    });
-  }
-}
-
-function getText(): string {
-
-  const document = activeEditor.document;
-
-  const text = document.getText();
-
-  const languageId = document.languageId;
-
-  if (languageId === 'typescript') {
-    const result = ts.transpileModule(text, {
-      compilerOptions: { module: ts.ModuleKind.CommonJS }
-    });
-    return result.outputText;
+// ---------------- createHtml ----------------
+async function createHtml(text: string, assetsPath: vscode.Uri, panel: vscode.WebviewPanel) {
+  // Ensure setup() exists
+  if (!/function\s+setup\s*\(/.test(text)) {
+    text = `function setup() { createCanvas(window.innerWidth, window.innerHeight); background(255); }\n` + text;
   }
 
-  return text;
-}
-
-
-async function createHtml(text: string, assetsPath: vscode.Uri) {
-
-  let regex = /\s*function\s+setup\s*\(\s*\)\s*\{/g;
-  if (!text.includes("createCanvas(")) {
-    if (!regex.test(text)) {
-      text = "function setup() { createCanvas(windowWidth - 1, windowHeight - 4);} " + text;
-    } else {
-      text = text.replace(regex, "function setup() { createCanvas(windowWidth - 1, windowHeight - 4);");
-    }
+  // Ensure createCanvas() exists
+  if (!/createCanvas\s*\(/.test(text)) {
+    text = text.replace(/function\s+setup\s*\(\)\s*\{/, match => `${match}\n createCanvas(window.innerWidth, window.innerHeight);`);
   }
-  let code = parser.parseCode(text);
 
+  // Ensure background() exists
+  if (!/background\s*\(/.test(text)) {
+    text = text.replace(/createCanvas\s*\([^\)]*\)\s*;?/, match => `${match}\n background(255);`);
+  }
 
-  const scripts = [
-    path.join(assetsPath.path, 'p5.min.js')
-  ];
+  // Parse the code
+  const code = parser.parseCode(text);
+
+  // Scripts to include
+  const scripts: string[] = [path.join(assetsPath.path, 'p5.min.js')];
 
   try {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    if (!workspaceFolder) {
-      throw new Error("Workspace folder not found");
+    if (workspaceFolder) {
+      const commonFiles = await listFilesRecursively(
+        vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, "common")),
+        [".ts", ".js"]
+      );
+      commonFiles.forEach(file => scripts.push(file));
     }
-
-    const files = await listFilesRecursively(vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, "common")));
-    files.forEach(file => scripts.push(file));
 
     const scriptTags = scripts
       .map(s => panel.webview.asWebviewUri(vscode.Uri.file(s)))
-      .map(uri => `<script src='${uri}'></script>`)
+      .map(uri => `<script src="${uri}"></script>`)
       .join('\n');
 
-    const html = `<!DOCTYPE html>
-      <html>
-        <head>
-          ${scriptTags}
-          <style>body {padding: 0; margin: 0; } .p5Canvas{ background-color: white;}</style>
-        </head>
-        <body></body>
-        <script>
-          ${code}
-        </script>
-        <script>
-        
-          const vscode = acquireVsCodeApi();
+    // Return HTML
+    return `<!DOCTYPE html>
+<html>
+<head>
+${scriptTags}
+<style>
+html, body { margin: 0; padding: 0; overflow: hidden; height: 100%; width: 100%; }
+canvas.p5Canvas { display: block; }
+</style>
+</head>
+<body></body>
+<script>
+const vscode = acquireVsCodeApi();
 
-          // Capture JavaScript errors
-          window.addEventListener('error', (event) => {
-              const message = {
-                  type: 'error',
-                  message: event.message,
-                  line: event.lineno,
-                  column: event.colno,
-              };
-              vscode.postMessage(message);
-          });
+// Save user setup/draw if needed
+window.userCode = \`${code}\`;
 
-          // Override console.log
-          const originalConsoleLog = console.log;
-          console.log = (...args) => {
-              vscode.postMessage({ type: 'log', message: args });
-              originalConsoleLog(...args);
-          };
+// Function to create new P5 instance
+function createP5Instance(userCode) {
+    // Remove old instance and canvas
+    if (window._p5Instance) {
+        try { window._p5Instance.remove(); } catch {}
+        window._p5Instance = null;
+    }
+    document.querySelectorAll('canvas').forEach(c => c.remove());
+    document.querySelectorAll('script[data-user-code]').forEach(s => s.remove());
 
-          window.addEventListener('message', event => {
-            const vars = JSON.parse(event.data.vars);
-            for (const k in vars) {
-              __AllVars[k] = vars[k];
-            }
-          });
-        </script>
-      </html><!-- ${Math.random()} -->`;
+    // Inject user code
+    const s = document.createElement('script');
+    s.type = 'text/javascript';
+    s.dataset.userCode = 'true';
+    s.textContent = userCode + \`\\n//# sourceURL=userSketch_\${Date.now()}.js\`;
+    document.body.appendChild(s);
 
-    return html;
+    // Create new P5 instance
+    window._p5Instance = new p5();
 
-  } catch (error) {
-    outputChannel.appendLine(`[]: Error gettings resources ${error.message}`)
+    // Resize canvas to fit webview
+    const p = window._p5Instance;
+    if (p._renderer) {
+        p.resizeCanvas(window.innerWidth, window.innerHeight);
+    }
+}
+
+// Listen for reload messages
+window.addEventListener('message', event => {
+    const msg = event.data;
+    if (msg.type === 'reload') {
+        try {
+            createP5Instance(msg.code);
+        } catch(e) {
+            vscode.postMessage({ type: 'error', message: e.message });
+        }
+    }
+});
+
+// Initial P5 instance
+createP5Instance(window.userCode);
+
+// Resize listener for dynamic panel size changes
+window.addEventListener('resize', () => {
+    if (!window._p5Instance?._renderer) return;
+    const p = window._p5Instance;
+    p.resizeCanvas(window.innerWidth, window.innerHeight);
+});
+</script>
+</html>`;
+  } catch (err: any) {
+    outputChannel.appendLine(`[Error in createHtml]: ${err.message}`);
+    outputChannel.show(true);
+    return `<body><h2>Error loading sketch</h2></body>`;
   }
 }
 
+
+// ---------------- Deactivate ----------------
 export function deactivate(): void {
-  panel = null;
+  webviewPanelMap.clear();
+  outputChannel.dispose();
 }
