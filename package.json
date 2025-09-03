@@ -39,10 +39,18 @@
     "commands": [
       {
         "command": "extension.live-p5",
-        "title": "Open live p5 panel",
+        "title": "Open LIVE P5",
         "icon": {
           "light": "images/p5.svg",
           "dark": "images/p5.svg"
+        }
+      },
+      {
+        "command": "extension.reload-p5-sketch",
+        "title": "Reload P5 Sketch",
+        "icon": {
+          "light": "images/reload.svg",
+          "dark": "images/reload.svg"
         }
       },
       {
@@ -56,14 +64,6 @@
       {
         "command": "extension.openSelectedText",
         "title": "Search in P5 Reference"
-      },
-      {
-        "command": "extension.reload-p5-sketch",
-        "title": "Reload P5 Sketch",
-        "icon": {
-          "light": "images/reload.svg",
-          "dark": "images/reload.svg"
-        }
       }
     ],
     "menus": {
@@ -71,12 +71,12 @@
         {
           "command": "extension.live-p5",
           "group": "navigation",
-          "when": "isP5js && (editorLangId == javascript || editorLangId == typescript) && !hasP5Webview"
+          "when": "isP5js && !hasP5Webview && (editorLangId == javascript || editorLangId == typescript)"
         },
         {
           "command": "extension.reload-p5-sketch",
           "group": "navigation",
-          "when": "isP5js && (editorLangId == javascript || editorLangId == typescript) && hasP5Webview"
+          "when": "hasP5Webview && (editorLangId == javascript || editorLangId == typescript)"
         }
       ],
       "editor/context": [
