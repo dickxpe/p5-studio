@@ -39,12 +39,12 @@ async function createHtml(text: string, panel: vscode.WebviewPanel, extensionPat
     const hasSetup = /function\s+setup\s*\(/.test(text);
     const hasDraw = /function\s+draw\s*\(/.test(text);
 
-    // 1. Ensure setup exists
+    // Ensure setup exists
     if (!hasSetup) {
       text = `function setup() {\n  // setup will be wrapped to create full-window canvas\n}\n\n` + text;
     }
 
-    // 2. Ensure draw exists if draw-only sketch needs background
+    // Ensure draw exists if draw-only sketch uses drawing functions
     if (!hasDraw && /line|ellipse|rect|circle|point/.test(text)) {
       text = `function draw() {\n  // draw will be wrapped\n}\n\n` + text;
     }
@@ -72,6 +72,7 @@ canvas.p5Canvas { display:block; }
 <script>
 const vscode = acquireVsCodeApi();
 window._p5Instance = null;
+window._p5Background = null;
 
 // Forward console messages
 (function(){
@@ -93,28 +94,32 @@ function runUserSketch(userCode) {
         window._p5Instance.remove();
         window._p5Instance = null;
     }
+    window._p5Background = null;
 
-    // Wrap user code to ensure canvas is full-window and background is white
+    // Wrap user code to create full-window canvas and capture setup background
     const wrappedCode = \`
 \${userCode}
 
-// Wrap setup to create full-window canvas and white background
+// Wrap setup to create full-window canvas and capture background color
 if (typeof setup === 'function') {
     const userSetup = setup;
     setup = function() {
         createCanvas(window.innerWidth, window.innerHeight);
-        background(255);
-        userSetup();
+        userSetup(); // run user setup first
+        // Capture top-left pixel color as background
+        const c = get(0, 0); // returns [r,g,b,a]
+        window._p5Background = color(c[0], c[1], c[2], c[3]);
     }
 } else {
     setup = function() {
         createCanvas(window.innerWidth, window.innerHeight);
         background(255);
+        window._p5Background = color(255);
     }
 }
 \`;
 
-    // Inject as script
+    // Inject user code
     const s = document.createElement('script');
     s.type = 'text/javascript';
     s.dataset.userCode = 'true';
@@ -140,14 +145,23 @@ window.addEventListener('message', event => {
     if (event.data.type === 'reload') runUserSketch(event.data.code);
 });
 
-// --- Resize canvas on window change ---
+// --- Resize canvas and reapply captured background ---
 window.addEventListener('resize', () => {
-    if (window._p5Instance?._renderer) window._p5Instance.resizeCanvas(window.innerWidth, window.innerHeight);
+    if (window._p5Instance?._renderer) {
+        window._p5Instance.resizeCanvas(window.innerWidth, window.innerHeight);
+        if (window._p5Background) {
+            window._p5Instance.background(window._p5Background);
+        } else {
+            window._p5Instance.background(255);
+        }
+    }
 });
 </script>
 </body>
 </html>`;
 }
+
+
 
 
 // --- Activate extension ---
