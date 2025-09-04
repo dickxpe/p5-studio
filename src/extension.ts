@@ -50,11 +50,46 @@ async function createHtml(text: string, panel: vscode.WebviewPanel, extensionPat
 <html>
 <head>
 <style>
-html,body{margin:0;padding:0;overflow:hidden;width:100%;height:100%;background:#fff;}
-canvas.p5Canvas{display:block;}
-#error-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(255,0,0,0.95);color:#fff;font-family:monospace;padding:16px;display:none;z-index:9999;white-space:pre-wrap;overflow:auto;}
-#reload-button{position:fixed;top:10px;right:10px;width:16px;height:16px;cursor:pointer;z-index:9999;}
-#reload-button img{width:100%;height:100%;}
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+  background: transparent; /* Keep webview transparent */
+}
+canvas.p5Canvas {
+  display: block;
+  background: white; /* Canvas default background */
+}
+#error-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255,0,0,0.95);
+  color: #fff;
+  font-family: monospace;
+  padding: 16px;
+  display: none;
+  z-index: 9999;
+  white-space: pre-wrap;
+  overflow: auto;
+}
+#reload-button {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  z-index: 9999;
+}
+#reload-button img {
+  width: 100%;
+  height: 100%;
+}
 </style>
 </head>
 <body>
@@ -62,45 +97,47 @@ canvas.p5Canvas{display:block;}
 <div id="reload-button"><img src="${reloadIconUri}" title="Reload P5 Sketch"></div>
 <script>
 const vscode = acquireVsCodeApi();
-window._p5Instance=null;
-window._p5Background=null;
+window._p5Instance = null;
+window._p5Background = null;
 
 function showError(msg){
-    const el=document.getElementById('error-overlay');
-    if(el){el.textContent=msg;el.style.display='block';}
-    if(window._p5Instance){window._p5Instance.remove();window._p5Instance=null;}
+    const el = document.getElementById('error-overlay');
+    if(el){el.textContent = msg; el.style.display = 'block';}
+    if(window._p5Instance){window._p5Instance.remove(); window._p5Instance=null;}
     document.querySelectorAll('canvas').forEach(c=>c.remove());
     console.error(msg);
 }
-function clearError(){const el=document.getElementById('error-overlay');if(el){el.textContent='';el.style.display='none';}}
+function clearError(){const el=document.getElementById('error-overlay'); if(el){el.textContent=''; el.style.display='none';}}
 
-window.onerror=function(message, source, lineno, colno, error){showError('[Runtime Error] '+message+' (line '+lineno+', column '+colno+')'); return true;}
-window.addEventListener('unhandledrejection', e=>showError('[Promise Error] '+(e.reason?.message||e.reason)));
+window.onerror = function(message, source, lineno, colno, error){showError('[Runtime Error] '+message+' (line '+lineno+', column '+colno+')'); return true;}
+window.addEventListener('unhandledrejection', e => showError('[Promise Error] '+(e.reason?.message || e.reason)));
 
 (function(){
-    const origLog=console.log; console.log=function(...args){vscode.postMessage({type:'log',message:args}); origLog.apply(console,args);};
-    const origErr=console.error; console.error=function(...args){vscode.postMessage({type:'error',message:args.join(' ')}); origErr.apply(console,args);};
+  const origLog = console.log;
+  console.log = (...args) => { vscode.postMessage({type:'log', message:args}); origLog.apply(console,args); };
+  const origErr = console.error;
+  console.error = (...args) => { vscode.postMessage({type:'error', message:args.join(' ')}); origErr.apply(console,args); };
 })();
 
 function runUserSketch(userCode){
     clearError();
     document.querySelectorAll('script[data-user-code]').forEach(s=>s.remove());
-    if(window._p5Instance){window._p5Instance.remove();window._p5Instance=null;}
+    if(window._p5Instance){window._p5Instance.remove(); window._p5Instance=null;}
     document.querySelectorAll('canvas').forEach(c=>c.remove());
-    window._p5Background=null;
+    window._p5Background = null;
 
-    const wrappedCode=\`\${userCode}
-if(typeof setup==='function'){const userSetup=setup;setup=function(){try{createCanvas(window.innerWidth,window.innerHeight);userSetup();const c=get(0,0);window._p5Background=color(c[0],c[1],c[2],c[3]);clearError();}catch(e){showError('[Setup Error] '+(e.message||e));throw e;}}}
-if(typeof draw==='function'){const userDraw=draw;draw=function(){try{userDraw();}catch(e){showError('[Draw Error] '+(e.message||e));throw e;}}}\`;
+    const wrappedCode = \`\${userCode}
+if(typeof setup==='function'){const userSetup=setup; setup=function(){try{createCanvas(window.innerWidth, window.innerHeight); background(255); userSetup(); const c=get(0,0); window._p5Background=color(c[0],c[1],c[2],c[3]); clearError();}catch(e){showError('[Setup Error] '+(e.message||e)); throw e;}}}
+if(typeof draw==='function'){const userDraw=draw; draw=function(){try{userDraw();}catch(e){showError('[Draw Error] '+(e.message||e)); throw e;}}}\`;
 
     try{
         new Function(wrappedCode);
-        const s=document.createElement('script');
+        const s = document.createElement('script');
         s.type='text/javascript';
         s.dataset.userCode='true';
-        s.textContent=wrappedCode;
+        s.textContent = wrappedCode;
         document.body.appendChild(s);
-        window._p5Instance=new p5();
+        window._p5Instance = new p5();
     }catch(e){
         let msg='[Syntax Error] '+(e.message||e);
         if(e.lineNumber) msg+=' (line '+e.lineNumber+', column '+(e.columnNumber||'?')+')';
@@ -108,26 +145,30 @@ if(typeof draw==='function'){const userDraw=draw;draw=function(){try{userDraw();
     }
 }
 
-const p5Script=document.createElement('script');
+const p5Script = document.createElement('script');
 p5Script.src='${p5Uri}';
-p5Script.onload=()=>{runUserSketch(${escapedCode});};
-p5Script.onerror=()=>{showError('Failed to load p5.js');};
+p5Script.onload = () => { runUserSketch(${escapedCode}); };
+p5Script.onerror = () => { showError('Failed to load p5.js'); };
 document.body.appendChild(p5Script);
 
-document.getElementById('reload-button').addEventListener('click',()=>{vscode.postMessage({type:'reload-button-clicked'});});
+document.getElementById('reload-button').addEventListener('click', () => {
+  vscode.postMessage({ type:'reload-button-clicked' });
+});
 
-window.addEventListener('resize',()=>{
+window.addEventListener('resize', () => {
     if(window._p5Instance?._renderer){
-        window._p5Instance.resizeCanvas(window.innerWidth,window.innerHeight);
-        if(window._p5Background){window._p5Instance.background(window._p5Background);}else{window._p5Instance.background(255);}
+        window._p5Instance.resizeCanvas(window.innerWidth, window.innerHeight);
+        if(window._p5Background){ window._p5Instance.background(window._p5Background); }
+        else { window._p5Instance.background(255); }
     }
 });
 
-window.addEventListener('message', e=>{if(e.data.type==='reload') runUserSketch(e.data.code);});
+window.addEventListener('message', e => { if(e.data.type==='reload') runUserSketch(e.data.code); });
 </script>
 </body>
 </html>`;
 }
+
 
 export function activate(context: vscode.ExtensionContext) {
   function updateP5Context(editor?: vscode.TextEditor) {
