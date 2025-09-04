@@ -32,23 +32,17 @@ function getText(editor: vscode.TextEditor): string {
 }
 
 async function createHtml(text: string, panel: vscode.WebviewPanel, extensionPath: string) {
-  // --- Helper: ensure minimal p5.js boilerplate ---
   function ensureP5Boilerplate(code: string): string {
     let text = code;
-
     const hasSetup = /function\s+setup\s*\(/.test(text);
     const hasDraw = /function\s+draw\s*\(/.test(text);
 
-    // Ensure setup exists
     if (!hasSetup) {
-      text = `function setup() {\n  // setup will be wrapped to create full-window canvas\n}\n\n` + text;
+      text = `function setup() {\n  // setup will be wrapped\n}\n\n` + text;
     }
-
-    // Ensure draw exists if draw-only sketch uses drawing functions
     if (!hasDraw && /line|ellipse|rect|circle|point/.test(text)) {
       text = `function draw() {\n  // draw will be wrapped\n}\n\n` + text;
     }
-
     return text;
   }
 
@@ -62,9 +56,9 @@ async function createHtml(text: string, panel: vscode.WebviewPanel, extensionPat
 <html>
 <head>
 <style>
-html, body { margin:0; padding:0; overflow:hidden; height:100%; width:100%; }
+html, body { margin:0; padding:0; overflow:hidden; height:100%; width:100%; background:#fff; }
 canvas.p5Canvas { display:block; }
-#error-overlay { position:fixed; top:0; left:0; right:0; background:rgba(255,0,0,0.9); color:#fff; font-family:monospace; padding:8px 12px; display:none; z-index:9999; white-space:pre-wrap; }
+#error-overlay { position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(255,0,0,0.95); color:#fff; font-family:monospace; padding:16px; display:none; z-index:9999; white-space:pre-wrap; overflow:auto; }
 </style>
 </head>
 <body>
@@ -74,7 +68,38 @@ const vscode = acquireVsCodeApi();
 window._p5Instance = null;
 window._p5Background = null;
 
-// Forward console messages
+function showError(msg) {
+    const el = document.getElementById('error-overlay');
+    if (el) {
+        el.textContent = msg;
+        el.style.display = 'block';
+    }
+    if (window._p5Instance) {
+        window._p5Instance.remove();
+        window._p5Instance = null;
+    }
+    document.querySelectorAll('canvas').forEach(c => c.remove());
+    console.error(msg);
+}
+
+function clearError() {
+    const el = document.getElementById('error-overlay');
+    if (el) {
+        el.textContent = '';
+        el.style.display = 'none';
+    }
+}
+
+// --- Global error handlers ---
+window.onerror = function(message, source, lineno, colno, error) {
+    showError('[Runtime Error] ' + message + ' (line ' + lineno + ', column ' + colno + ')');
+    return true;
+};
+window.addEventListener('unhandledrejection', function(event) {
+    showError('[Promise Error] ' + (event.reason?.message || event.reason));
+});
+
+// --- Forward console messages to VSCode ---
 (function(){
     const originalLog = console.log;
     console.log = function(...args){ vscode.postMessage({ type:'log', message: args }); originalLog.apply(console,args); };
@@ -85,71 +110,85 @@ window._p5Background = null;
 })();
 
 // --- Run user sketch ---
-function runUserSketch(userCode) {
-    // Remove previous script tags
-    document.querySelectorAll('script[data-user-code]').forEach(s => s.remove());
+function runUserSketch(userCode){
+    clearError(); // Clear old errors on reload
 
-    // Remove previous p5 instance and its canvas
-    if (window._p5Instance) {
-        window._p5Instance.remove();
-        window._p5Instance = null;
-    }
+    document.querySelectorAll('script[data-user-code]').forEach(s=>s.remove());
+    if(window._p5Instance){ window._p5Instance.remove(); window._p5Instance = null; }
+    document.querySelectorAll('canvas').forEach(c => c.remove());
     window._p5Background = null;
 
-    // Wrap user code to create full-window canvas and capture setup background
     const wrappedCode = \`
 \${userCode}
 
-// Wrap setup to create full-window canvas and capture background color
-if (typeof setup === 'function') {
+// Wrap setup
+if(typeof setup==='function'){
     const userSetup = setup;
-    setup = function() {
-        createCanvas(window.innerWidth, window.innerHeight);
-        userSetup(); // run user setup first
-        // Capture top-left pixel color as background
-        const c = get(0, 0); // returns [r,g,b,a]
-        window._p5Background = color(c[0], c[1], c[2], c[3]);
+    setup = function(){
+        try {
+            createCanvas(window.innerWidth, window.innerHeight);
+            userSetup();
+            const c = get(0,0);
+            window._p5Background = color(c[0],c[1],c[2],c[3]);
+            clearError();
+        } catch(e){
+            showError('[Setup Error] ' + (e.message||e));
+            throw e;
+        }
     }
-} else {
-    setup = function() {
-        createCanvas(window.innerWidth, window.innerHeight);
-        background(255);
-        window._p5Background = color(255);
+}
+
+// Wrap draw
+if(typeof draw==='function'){
+    const userDraw = draw;
+    draw = function(){
+        try{
+            userDraw();
+        } catch(e){
+            showError('[Draw Error] ' + (e.message||e));
+            throw e;
+        }
     }
 }
 \`;
 
-    // Inject user code
-    const s = document.createElement('script');
-    s.type = 'text/javascript';
-    s.dataset.userCode = 'true';
-    s.textContent = wrappedCode;
-    document.body.appendChild(s);
+    try {
+        // ✅ Syntax check before injecting
+        new Function(wrappedCode);
 
-    // Instantiate new p5
-    window._p5Instance = new p5();
+        // Append script only if syntax is valid
+        const s = document.createElement('script');
+        s.type='text/javascript';
+        s.dataset.userCode='true';
+        s.textContent = wrappedCode;
+        document.body.appendChild(s);
+
+        window._p5Instance = new p5();
+    } catch(e) {
+        // Include line/column if available from SyntaxError
+        let msg = '[Syntax Error] ' + (e.message || e);
+        if (e.lineNumber) msg += ' (line ' + e.lineNumber + ', column ' + (e.columnNumber || '?') + ')';
+        showError(msg);
+    }
 }
 
 // --- Load p5.js ---
 const p5Script = document.createElement('script');
 p5Script.src='${p5Uri}';
-p5Script.onload = () => { runUserSketch(${escapedCode}); };
-p5Script.onerror = () => {
-    const el = document.getElementById('error-overlay');
-    if (el) { el.textContent = 'Failed to load p5.js'; el.style.display = 'block'; }
-};
+p5Script.onload=()=>{ runUserSketch(${escapedCode}); };
+p5Script.onerror=()=>{ showError('Failed to load p5.js'); };
 document.body.appendChild(p5Script);
 
 // --- Handle reload messages from VS Code ---
-window.addEventListener('message', event => {
-    if (event.data.type === 'reload') runUserSketch(event.data.code);
+window.addEventListener('message', event=>{
+    if(event.data.type==='reload') runUserSketch(event.data.code);
 });
 
-// --- Resize canvas and reapply captured background ---
-window.addEventListener('resize', () => {
-    if (window._p5Instance?._renderer) {
+// --- Resize canvas and reapply background ---
+window.addEventListener('resize',()=>{
+    if(window._p5Instance?._renderer){
         window._p5Instance.resizeCanvas(window.innerWidth, window.innerHeight);
-        if (window._p5Background) {
+        if(window._p5Background){
             window._p5Instance.background(window._p5Background);
         } else {
             window._p5Instance.background(255);
@@ -160,7 +199,6 @@ window.addEventListener('resize', () => {
 </body>
 </html>`;
 }
-
 
 
 
