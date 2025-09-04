@@ -200,14 +200,24 @@ window.addEventListener('resize',()=>{
 </html>`;
 }
 
-
-
-// --- Activate extension ---
 export function activate(context: vscode.ExtensionContext) {
+  const outputChannel = vscode.window.createOutputChannel('LIVE P5');
+  const webviewPanelMap = new Map<string, vscode.WebviewPanel>();
+  let activeP5Panel: vscode.WebviewPanel | null = null;
+  const DEBOUNCE_DELAY = 150;
 
-  // --- Context detection ---
-  function updateP5Context() {
-    const editor = vscode.window.activeTextEditor;
+  // --- Debounce helper ---
+  function debounce<Func extends (...args: any[]) => void>(fn: Func, delay: number) {
+    let timeout: NodeJS.Timeout;
+    return (...args: Parameters<Func>) => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => fn(...args), delay);
+    };
+  }
+
+  // --- Track if a document contains P5.js code ---
+  function updateP5Context(editor?: vscode.TextEditor) {
+    editor = editor || vscode.window.activeTextEditor;
     if (!editor) return vscode.commands.executeCommand('setContext', 'isP5js', false);
     const text = editor.document.getText();
     const containsP5 = /\bfunction\s+setup\s*\(/.test(text) || /\bfunction\s+draw\s*\(/.test(text);
@@ -216,16 +226,23 @@ export function activate(context: vscode.ExtensionContext) {
 
   updateP5Context();
 
-  vscode.window.onDidChangeActiveTextEditor(() => {
-    updateP5Context();
-    const editor = vscode.window.activeTextEditor;
-    if (editor) {
-      const docUri = editor.document.uri.toString();
-      vscode.commands.executeCommand('setContext', 'hasP5Webview', webviewPanelMap.has(docUri));
-    } else vscode.commands.executeCommand('setContext', 'hasP5Webview', false);
+  // --- Handle editor switching ---
+  vscode.window.onDidChangeActiveTextEditor(editor => {
+    updateP5Context(editor);
+    if (!editor) return vscode.commands.executeCommand('setContext', 'hasP5Webview', false);
+
+    const docUri = editor.document.uri.toString();
+    const panel = webviewPanelMap.get(docUri);
+    if (panel) {
+      panel.reveal(panel.viewColumn, true);
+      activeP5Panel = panel;
+      vscode.commands.executeCommand('setContext', 'hasP5Webview', true);
+    } else {
+      vscode.commands.executeCommand('setContext', 'hasP5Webview', false);
+    }
   });
 
-  // --- Debounce per document for live update ---
+  // --- Debounced live update per document ---
   const debounceMap = new Map<string, Function>();
   function updateDocumentPanel(document: vscode.TextDocument) {
     const docUri = document.uri.toString();
@@ -233,8 +250,8 @@ export function activate(context: vscode.ExtensionContext) {
     if (!panel) return;
     panel.webview.postMessage({ type: 'reload', code: document.getText() });
   }
+
   function debounceDocumentUpdate(document: vscode.TextDocument) {
-    updateP5Context();
     const docUri = document.uri.toString();
     if (!debounceMap.has(docUri)) {
       debounceMap.set(docUri, debounce(() => updateDocumentPanel(document), DEBOUNCE_DELAY));
@@ -250,9 +267,10 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('extension.live-p5', async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
-      const docUri = editor.document.uri.toString();
 
+      const docUri = editor.document.uri.toString();
       let panel = webviewPanelMap.get(docUri);
+
       if (!panel) {
         panel = vscode.window.createWebviewPanel(
           'extension.live-p5',
@@ -260,6 +278,7 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.ViewColumn.Two,
           { enableScripts: true, localResourceRoots: [vscode.Uri.file(path.join(context.extensionPath, 'assets'))], retainContextWhenHidden: true }
         );
+
         webviewPanelMap.set(docUri, panel);
         activeP5Panel = panel;
 
@@ -280,11 +299,12 @@ export function activate(context: vscode.ExtensionContext) {
           vscode.commands.executeCommand('setContext', 'hasP5Webview', false);
         });
 
-        panel.webview.html = await createHtml(getText(editor), panel, context.extensionPath);
+        panel.webview.html = await createHtml(editor.document.getText(), panel, context.extensionPath);
       }
 
       vscode.commands.executeCommand('setContext', 'hasP5Webview', true);
-      panel.reveal(vscode.ViewColumn.Two, true);
+      panel.reveal(panel.viewColumn, true);
+      activeP5Panel = panel;
     })
   );
 
@@ -293,14 +313,20 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('extension.reload-p5-sketch', async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
+
       const docUri = editor.document.uri.toString();
       const panel = webviewPanelMap.get(docUri);
-      if (!panel) { vscode.window.showWarningMessage('No active P5 panel to reload.'); return; }
-      panel.webview.postMessage({ type: 'reload', code: getText(editor) });
+      if (!panel) {
+        vscode.window.showWarningMessage('No active P5 panel to reload.');
+        return;
+      }
+      panel.webview.postMessage({ type: 'reload', code: editor.document.getText() });
       vscode.window.showInformationMessage('P5 sketch reloaded!');
     })
   );
 }
+
+
 
 // --- Deactivate ---
 export function deactivate() {
