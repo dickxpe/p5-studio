@@ -60,11 +60,11 @@
       },
       {
         "command": "extension.openP5Ref",
-        "title": "P5 Reference"
+        "title": "📕P5 Reference"
       },
       {
         "command": "extension.openSelectedText",
-        "title": "Search in P5 Reference"
+        "title": "📕Search in P5 Reference"
       }
     ],
     "menus": {
