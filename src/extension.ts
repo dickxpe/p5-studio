@@ -53,7 +53,26 @@ async function createHtml(text: string, panel: vscode.WebviewPanel, extensionPat
 html,body{margin:0;padding:0;overflow:hidden;width:100%;height:100%;background:transparent;}
 canvas.p5Canvas{display:block;}
 #error-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(255,0,0,0.95);color:#fff;font-family:monospace;padding:10px;display:none;z-index:9999;white-space:pre-wrap;overflow:auto;}
-#reload-button{position:fixed;top:10px;right:10px;width:16px;height:16px;cursor:pointer;z-index:9999;}
+#reload-button {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  width: 16px;           /* slightly larger for padding */
+  height: 16px;
+  background: white;      /* white square background */
+  border-radius: 2px;     /* rounded corners */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 9999;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2); /* subtle shadow for depth */
+}
+
+#reload-button img {
+  width: 8px;            /* keep icon smaller than container */
+  height: 8px;
+}
 #reload-button img{width:100%;height:100%;}
 </style>
 </head>
