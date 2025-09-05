@@ -55,6 +55,7 @@ async function createHtml(
   extensionPath: string,
   initialError?: { message: string; line: number; fileName: string }
 ) {
+  // --- 1. Ensure p5 setup/draw boilerplate ---
   const ensureP5Boilerplate = (code: string) => {
     let txt = code;
     if (!/function\s+setup\s*\(/.test(txt)) txt = `function setup(){/*setup*/}\n` + txt;
@@ -62,19 +63,29 @@ async function createHtml(
       txt = `function draw(){/*draw*/}\n` + txt;
     return txt;
   };
-
   text = ensureP5Boilerplate(text);
-  const escapedCode = JSON.stringify(text);
-  const fileName = JSON.stringify(path.basename(panel.title.replace(/^LIVE: /, '') || 'sketch.js'));
-  const initialErrorMessage = initialError ? JSON.stringify(initialError.message) : 'null';
+
+  // --- 2. Escape only backticks for safe embedding ---
+  function escapeBackticks(str: string) {
+    return str.replace(/`/g, "\\`");
+  }
+  const escapedCode = escapeBackticks(text);
+
+  // --- 3. Error details for initial load ---
+  const fileName = path.basename(panel.title.replace(/^LIVE: /, "") || "sketch.js");
+  const initialErrorMessage = initialError ? escapeBackticks(initialError.message) : "";
   const initialErrorLine = initialError ? initialError.line : 1;
 
-  const p5Path = vscode.Uri.file(path.join(extensionPath, 'assets', 'p5.min.js'));
+  // --- 4. URIs ---
+  const p5Path = vscode.Uri.file(path.join(extensionPath, "assets", "p5.min.js"));
   const p5Uri = panel.webview.asWebviewUri(p5Path);
-  const reloadIconPath = vscode.Uri.file(path.join(extensionPath, 'images', 'reload.svg'));
+  const reloadIconPath = vscode.Uri.file(path.join(extensionPath, "images", "reload.svg"));
   const reloadIconUri = panel.webview.asWebviewUri(reloadIconPath);
-  const showReloadButton = vscode.workspace.getConfiguration('liveP5').get<boolean>('showReloadButton', true);
+  const showReloadButton = vscode.workspace
+    .getConfiguration("liveP5")
+    .get<boolean>("showReloadButton", true);
 
+  // --- 5. Full HTML ---
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -88,7 +99,7 @@ canvas.p5Canvas{display:block;}
 }
 #reload-button {
   position: fixed; top: 10px; right: 10px; width: 16px; height: 16px;
-  background: white; border-radius: 4px; display: ${showReloadButton ? 'flex' : 'none'};
+  background: white; border-radius: 4px; display: ${showReloadButton ? "flex" : "none"};
   align-items: center; justify-content: center; cursor: pointer; z-index: 9999;
   box-shadow: 0 2px 5px rgba(0,0,0,0.2);
 }
@@ -101,189 +112,157 @@ canvas.p5Canvas{display:block;}
 <script>
 const vscode = acquireVsCodeApi();
 window._p5Instance = null;
-window._p5UserDefinedCanvas = false;
-window._p5UserAutoFill = false;
-window._p5UserBackground = false;
-window._p5LastBackgroundArgs = null;
 
-const userCodeStr = ${escapedCode};
-
-function getTime() {
+// --- Error utils ---
+function getTime(){
   const now = new Date();
-  const h = String(now.getHours()).padStart(2,'0');
-  const m = String(now.getMinutes()).padStart(2,'0');
-  const s = String(now.getSeconds()).padStart(2,'0');
-  return \`\${h}:\${m}:\${s}\`;
+  return now.toTimeString().split(" ")[0]; // HH:mm:ss
 }
-
-function formatError(msg, type='RUNTIME ERROR', fileName='sketch.js', line='?') {
-  return \`[\${getTime()} \${type.toUpperCase()} on Line \${line} in \${fileName}] \${msg}\`;
+function sanitizeMessage(msg){
+  if(!msg) return msg;
+  return msg.replace(/\\[object Arguments\\]/g, "MISSING ARGUMENT(S) ");
 }
-
-// Show error in overlay without timestamp
+function formatError(msg,type="RUNTIME ERROR",file="${fileName}",line="?"){
+  return \`[\${getTime()} \${type} on Line \${line} in \${file}] \${sanitizeMessage(msg)}\`;
+}
 function showError(msg){
-  const overlayMsg = msg.replace(/^\\[\\d{2}:\\d{2}:\\d{2} /, '[');
-  const el=document.getElementById('error-overlay');
-  if(el){ 
-    el.textContent = overlayMsg; 
-    el.style.display = 'block'; 
-  }
-  if(window._p5Instance){ 
-    window._p5Instance.remove(); 
-    window._p5Instance=null; 
-  }
-  document.querySelectorAll('canvas').forEach(c=>c.remove());
+  // Remove timestamp in overlay
+  let overlayMsg = msg.replace(/^\\[\\d{2}:\\d{2}:\\d{2} /,"[");
+  const el=document.getElementById("error-overlay");
+  if(el){el.textContent=overlayMsg; el.style.display="block";}
+  if(window._p5Instance){window._p5Instance.remove();window._p5Instance=null;}
+  document.querySelectorAll("canvas").forEach(c=>c.remove());
+}
+function clearError(){
+  const el=document.getElementById("error-overlay");
+  if(el){el.textContent=""; el.style.display="none";}
+}
+function getLineNumberFromStack(e){
+  if(!e||!e.stack) return "?";
+  const m=e.stack.match(/:(\\d+):\\d+/);
+  return m?parseInt(m[1],10):"?";
 }
 
-function clearError(){ 
-  const el=document.getElementById('error-overlay'); 
-  if(el){ el.textContent=''; el.style.display='none'; } 
-}
-
-function getLineNumberFromStack(e) {
-  if(!e || !e.stack) return '?';
-  const m = e.stack.match(/:(\\d+):\\d+/);
-  if(m) return parseInt(m[1],10);
-  return '?';
-}
-
-// Show initial syntax error
-document.addEventListener('DOMContentLoaded', () => {
-  if (${initialErrorMessage} !== null) {
-    const msg = formatError(${initialErrorMessage}, 'SYNTAX ERROR', ${fileName}, ${initialErrorLine});
+// --- Show initial syntax error ---
+document.addEventListener("DOMContentLoaded",()=>{
+  if("${initialErrorMessage}"){
+    const msg = formatError("${initialErrorMessage}","SYNTAX ERROR","${fileName}",${initialErrorLine});
     showError(msg);
-    vscode.postMessage({ type: 'showError', message: msg });
+    vscode.postMessage({type:"showError",message:msg});
   }
 });
 
-// Console passthrough with timestamp
+// --- Console passthrough ---
 (function(){
   const origLog=console.log;
-  console.log=function(...args){ vscode.postMessage({type:'log',message:args}); origLog.apply(console,args); };
+  console.log=function(...args){vscode.postMessage({type:"log",message:args}); origLog.apply(console,args);};
   const origErr=console.error;
-  console.error=function(...args){ 
-    const msg = args.join(' '); 
-    const lineNum = '?'; 
-    const fullMsg = formatError(msg, 'RUNTIME ERROR', ${fileName}, lineNum);
-    showError(fullMsg);
-    vscode.postMessage({type:'showError', message: fullMsg}); 
-    origErr.apply(console,args); 
+  console.error=function(...args){
+    let msg=args.join(" ");
+    const full=formatError(msg,"RUNTIME ERROR","${fileName}","?");
+    showError(full);
+    vscode.postMessage({type:"showError",message:full});
+    origErr.apply(console,args);
   };
 })();
 
+// --- Run sketch ---
 function runUserSketch(code){
   clearError();
-  if(window._p5Instance){ window._p5Instance.remove(); window._p5Instance=null; }
-  document.querySelectorAll('canvas').forEach(c=>c.remove());
+  if(window._p5Instance){window._p5Instance.remove();window._p5Instance=null;}
+  document.querySelectorAll("canvas").forEach(c=>c.remove());
 
-  // Syntax check
-  try { new Function(code); } 
+  try{ new Function(code); }
   catch(e){
-    const lines = code.split('\\n');
-    let lineNum = '?';
+    let lineNum="?";
+    const lines=code.split("\\n");
     for(let i=0;i<lines.length;i++){
-      try { new Function(lines.slice(0,i+1).join('\\n')); } catch { lineNum=i+1; break; }
+      try{ new Function(lines.slice(0,i+1).join("\\n")); }
+      catch{ lineNum=i+1; break; }
     }
-    const msg = formatError(e.message, 'SYNTAX ERROR', ${fileName}, lineNum);
+    const msg=formatError(e.message,"SYNTAX ERROR","${fileName}",lineNum);
     showError(msg);
-    vscode.postMessage({ type: 'showError', message: msg });
+    vscode.postMessage({type:"showError",message:msg});
     return;
   }
 
-  try {
-    const proto = p5.prototype;
-    const origCreateCanvas = proto.createCanvas;
-    proto.createCanvas = function(w,h,...args){
-      window._p5UserDefinedCanvas = true;
-      if(w===windowWidth && h===windowHeight){ window._p5UserAutoFill=true; }
+  try{
+    const proto=p5.prototype;
+    const origCreateCanvas=proto.createCanvas;
+    proto.createCanvas=function(w,h,...args){
       return origCreateCanvas.call(this,w,h,...args);
     };
-    const origBackground = proto.background;
-    proto.background = function(...args){
-      window._p5UserBackground = true;
-      window._p5LastBackgroundArgs = args;
+    const origBackground=proto.background;
+    proto.background=function(...args){
       return origBackground.apply(this,args);
     };
 
     const wrappedCode = \`
       \${code}
-
       if(typeof setup==='function'){
-        const userSetup = setup;
-        setup = function(){
-          try { userSetup(); clearError(); }
+        const userSetup=setup;
+        setup=function(){
+          try{ userSetup(); clearError(); }
           catch(e){
-            const lineNum = getLineNumberFromStack(e);
-            const msg = formatError(e.message, 'SETUP ERROR', ${fileName}, lineNum);
-            showError(msg);
-            vscode.postMessage({ type:'showError', message: msg });
+            const msg=formatError(e.message,"SETUP ERROR","${fileName}",getLineNumberFromStack(e));
+            showError(msg); vscode.postMessage({type:"showError",message:msg});
           }
         }
       }
-
       if(typeof draw==='function'){
-        const userDraw = draw;
-        draw = function(){
-          try{ userDraw(); } 
+        const userDraw=draw;
+        draw=function(){
+          try{ userDraw(); }
           catch(e){
-            const lineNum = getLineNumberFromStack(e);
-            const msg = formatError(e.message, 'DRAW ERROR', ${fileName}, lineNum);
-            showError(msg);
-            vscode.postMessage({ type:'showError', message: msg });
+            const msg=formatError(e.message,"DRAW ERROR","${fileName}",getLineNumberFromStack(e));
+            showError(msg); vscode.postMessage({type:"showError",message:msg});
           }
         }
       }
     \`;
 
-    const s = document.createElement('script');
-    s.type = 'text/javascript';
-    s.dataset.userCode = 'true';
-    s.textContent = wrappedCode;
+    const s=document.createElement("script");
+    s.type="text/javascript"; s.dataset.userCode="true"; s.textContent=wrappedCode;
     document.body.appendChild(s);
 
-    window._p5Instance = new p5();
+    window._p5Instance=new p5();
 
-  } catch(e){
-    const lineNum = getLineNumberFromStack(e);
-    const msg = formatError(e.message, 'RUNTIME ERROR', ${fileName}, lineNum);
-    showError(msg);
-    vscode.postMessage({ type: 'showError', message: msg });
+  }catch(e){
+    const msg=formatError(e.message,"RUNTIME ERROR","${fileName}",getLineNumberFromStack(e));
+    showError(msg); vscode.postMessage({type:"showError",message:msg});
   }
 }
 
-// Load p5.js
-const p5Script = document.createElement('script');
-p5Script.src = '${p5Uri}';
-p5Script.onload = () => { runUserSketch(userCodeStr); };
-p5Script.onerror = () => { showError('Failed to load p5.js'); };
+// --- Load p5.js ---
+const p5Script=document.createElement("script");
+p5Script.src="${p5Uri}";
+p5Script.onload=()=>{ runUserSketch(\`${escapedCode}\`); };
+p5Script.onerror=()=>{ showError("Failed to load p5.js"); };
 document.body.appendChild(p5Script);
 
-// Reload button
-document.getElementById('reload-button').addEventListener('click',()=>{vscode.postMessage({type:'reload-button-clicked'});});
+// --- Reload button ---
+document.getElementById("reload-button").addEventListener("click",()=>{vscode.postMessage({type:"reload-button-clicked"});});
 
-// Resize handling
-window.addEventListener('resize',()=>{ 
-  if(window._p5Instance?._renderer && window._p5UserAutoFill){
+// --- Resize ---
+window.addEventListener("resize",()=>{
+  if(window._p5Instance?._renderer){
     window._p5Instance.resizeCanvas(window.innerWidth,window.innerHeight);
-    const bgArgs = window._p5LastBackgroundArgs || [255];
-    window._p5Instance.background(...bgArgs);
   }
 });
 
-// Messages from extension
-window.addEventListener('message', e=>{
-  const data = e.data;
+// --- Messages from extension ---
+window.addEventListener("message",e=>{
+  const data=e.data;
   switch(data.type){
-    case 'reload': runUserSketch(data.code); break;
-    case 'stop': if(window._p5Instance){ window._p5Instance.remove(); window._p5Instance=null;} document.querySelectorAll('canvas').forEach(c=>c.remove()); break;
-    case 'toggleReloadButton': const btn=document.getElementById('reload-button'); if(btn) btn.style.display = data.show ? 'flex' : 'none'; break;
-    case 'showError': showError(data.message); break;
+    case "reload": runUserSketch(data.code); break;
+    case "stop": if(window._p5Instance){window._p5Instance.remove();window._p5Instance=null;} document.querySelectorAll("canvas").forEach(c=>c.remove()); break;
+    case "toggleReloadButton": const btn=document.getElementById("reload-button"); if(btn) btn.style.display=data.show?"flex":"none"; break;
+    case "showError": showError(data.message); break;
   }
 });
 </script>
 </body>
 </html>`;
-
 }
 
 
