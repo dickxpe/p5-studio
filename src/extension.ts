@@ -7,6 +7,11 @@ const webviewPanelMap = new Map<string, vscode.WebviewPanel>();
 let activeP5Panel: vscode.WebviewPanel | null = null;
 const DEBOUNCE_DELAY = 150;
 
+const autoReloadListenersMap = new Map<
+  string,
+  { changeListener?: vscode.Disposable; saveListener?: vscode.Disposable }
+>();
+
 function debounce<Func extends (...args: any[]) => void>(fn: Func, delay: number) {
   let timeout: NodeJS.Timeout;
   return (...args: Parameters<Func>) => {
@@ -46,6 +51,8 @@ async function createHtml(text: string, panel: vscode.WebviewPanel, extensionPat
   const reloadIconPath = vscode.Uri.file(path.join(extensionPath, 'images', 'reload.svg'));
   const reloadIconUri = panel.webview.asWebviewUri(reloadIconPath);
 
+  const showReloadButton = vscode.workspace.getConfiguration('liveP5').get<boolean>('showReloadButton', true);
+
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -57,23 +64,18 @@ canvas.p5Canvas{display:block;}
   position: fixed;
   top: 10px;
   right: 10px;
-  width: 16px;           /* slightly larger for padding */
+  width: 16px;
   height: 16px;
-  background: white;      /* white square background */
-  border-radius: 2px;     /* rounded corners */
-  display: flex;
+  background: white;
+  border-radius: 4px;
+  display: ${showReloadButton ? 'flex' : 'none'};
   align-items: center;
   justify-content: center;
   cursor: pointer;
   z-index: 9999;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.2); /* subtle shadow for depth */
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
 }
-
-#reload-button img {
-  width: 8px;            /* keep icon smaller than container */
-  height: 8px;
-}
-#reload-button img{width:100%;height:100%;}
+#reload-button img { width: 12px; height: 12px; }
 </style>
 </head>
 <body>
@@ -194,7 +196,7 @@ document.body.appendChild(p5Script);
 document.getElementById('reload-button').addEventListener('click',()=>{vscode.postMessage({type:'reload-button-clicked'});});
 
 // Resize handling
-window.addEventListener('resize',()=>{
+window.addEventListener('resize',()=>{ 
   if(window._p5Instance?._renderer && window._p5UserAutoFill){
     window._p5Instance.resizeCanvas(window.innerWidth,window.innerHeight);
     const bgArgs = window._p5LastBackgroundArgs || [255];
@@ -202,17 +204,21 @@ window.addEventListener('resize',()=>{
   }
 });
 
+// Messages from extension
 window.addEventListener('message', e=>{
   if(e.data.type==='reload') runUserSketch(e.data.code);
+  if(e.data.type==='toggleReloadButton'){
+    const btn = document.getElementById('reload-button');
+    if(btn) btn.style.display = e.data.show ? 'flex' : 'none';
+  }
 });
 </script>
 </body>
 </html>`;
 }
 
-
-
 export function activate(context: vscode.ExtensionContext) {
+
   function updateP5Context(editor?: vscode.TextEditor) {
     editor = editor || vscode.window.activeTextEditor;
     if (!editor) return vscode.commands.executeCommand('setContext', 'isP5js', false);
@@ -235,25 +241,25 @@ export function activate(context: vscode.ExtensionContext) {
     } else {
       vscode.commands.executeCommand('setContext', 'hasP5Webview', false);
     }
+
+    if (editor) updateAutoReloadListeners(editor);
   });
 
-  const debounceMap = new Map<string, Function>();
   function updateDocumentPanel(document: vscode.TextDocument) {
     const docUri = document.uri.toString();
     const panel = webviewPanelMap.get(docUri);
     if (!panel) return;
     panel.webview.postMessage({ type: 'reload', code: document.getText() });
   }
+
+  // Debounced onChange
+  const debounceMap = new Map<string, Function>();
   function debounceDocumentUpdate(document: vscode.TextDocument) {
     const docUri = document.uri.toString();
     if (!debounceMap.has(docUri)) debounceMap.set(docUri, debounce(() => updateDocumentPanel(document), DEBOUNCE_DELAY));
     debounceMap.get(docUri)!();
   }
 
-  vscode.workspace.onDidChangeTextDocument(e => debounceDocumentUpdate(e.document));
-  vscode.workspace.onDidSaveTextDocument(e => debounceDocumentUpdate(e));
-
-  // LIVE P5 command
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.live-p5', async () => {
       const editor = vscode.window.activeTextEditor;
@@ -297,6 +303,11 @@ export function activate(context: vscode.ExtensionContext) {
           webviewPanelMap.delete(docUri);
           if (activeP5Panel === panel) activeP5Panel = null;
           vscode.commands.executeCommand('setContext', 'hasP5Webview', false);
+
+          const listeners = autoReloadListenersMap.get(docUri);
+          listeners?.changeListener?.dispose();
+          listeners?.saveListener?.dispose();
+          autoReloadListenersMap.delete(docUri);
         });
 
         panel.webview.html = await createHtml(editor.document.getText(), panel, context.extensionPath);
@@ -305,10 +316,11 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       updateP5Context(editor);
+      if (editor) updateAutoReloadListeners(editor);
     })
   );
 
-  // Reload button in editor tab (only for JS/TS sketches)
+  // Reload button in editor tab
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.reload-p5-sketch', async () => {
       const editor = vscode.window.activeTextEditor;
@@ -347,9 +359,52 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/`));
     })
   );
+
+  // Configuration change handling
+  vscode.workspace.onDidChangeConfiguration(e => {
+    if (e.affectsConfiguration('liveP5.showReloadButton')) {
+      const show = vscode.workspace.getConfiguration('liveP5').get<boolean>('showReloadButton', true);
+      webviewPanelMap.forEach(panel => panel.webview.postMessage({ type: 'toggleReloadButton', show }));
+    }
+  });
+
+  // Auto-reload listeners
+  function updateAutoReloadListeners(editor: vscode.TextEditor) {
+    const docUri = editor.document.uri.toString();
+    const setting = vscode.workspace.getConfiguration('liveP5').get<'onChange' | 'onSave' | 'both'>('autoReload');
+
+    const existing = autoReloadListenersMap.get(docUri);
+    existing?.changeListener?.dispose();
+    existing?.saveListener?.dispose();
+
+    const newListeners: typeof existing = {};
+
+    if (setting === 'onChange' || setting === 'both') {
+      newListeners.changeListener = vscode.workspace.onDidChangeTextDocument(e => {
+        if (e.document.uri.toString() === docUri) {
+          debounceDocumentUpdate(e.document);
+        }
+      });
+    }
+
+    if (setting === 'onSave' || setting === 'both') {
+      newListeners.saveListener = vscode.workspace.onDidSaveTextDocument(doc => {
+        if (doc.uri.toString() === docUri) {
+          const panel = webviewPanelMap.get(docUri);
+          panel?.webview.postMessage({ type: 'reload', code: doc.getText() });
+        }
+      });
+    }
+
+    autoReloadListenersMap.set(docUri, newListeners);
+  }
 }
 
 export function deactivate() {
-  webviewPanelMap.clear();
+  webviewPanelMap.forEach(panel => panel.dispose());
   outputChannel.dispose();
+  autoReloadListenersMap.forEach(listeners => {
+    listeners.changeListener?.dispose();
+    listeners.saveListener?.dispose();
+  });
 }

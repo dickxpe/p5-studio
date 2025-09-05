@@ -87,6 +87,27 @@
           "group": "navigation"
         }
       ]
+    },
+    "configuration": {
+      "type": "object",
+      "title": "LIVE P5 Settings",
+      "properties": {
+        "liveP5.reloadWhileTyping": {
+          "type": "boolean",
+          "default": true,
+          "description": "Determines if the P5 webpanel automatically reloads while typing."
+        },
+        "liveP5.reloadOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Determines if the P5 webpanel automatically reloads when saving the file."
+        },
+        "liveP5.showReloadButton": {
+          "type": "boolean",
+          "default": true,
+          "description": "Determines if the reload button is shown on the P5 webpanel."
+        }
+      }
     }
   },
   "scripts": {
