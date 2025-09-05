@@ -43,7 +43,7 @@ function checkSyntax(code: string): { valid: boolean; message?: string } {
   }
 }
 
-// Create Webview HTML with optional initialError
+// Create Webview HTML with initial error
 async function createHtml(
   text: string,
   panel: vscode.WebviewPanel,
@@ -250,7 +250,6 @@ window.addEventListener('message', e => {
 </html>`;
 }
 
-
 export function activate(context: vscode.ExtensionContext) {
 
   function updateP5Context(editor?: vscode.TextEditor) {
@@ -263,6 +262,32 @@ export function activate(context: vscode.ExtensionContext) {
 
   updateP5Context();
 
+  // =================== P5 Reference status bar ===================
+  const p5RefStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  p5RefStatusBar.command = 'extension.openP5Ref';
+  p5RefStatusBar.text = '$(book) P5 Reference';
+  p5RefStatusBar.color = '#ff0000';
+  p5RefStatusBar.tooltip = 'Open P5.js Reference';
+  p5RefStatusBar.show();
+  context.subscriptions.push(p5RefStatusBar);
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('extension.openP5Ref', () => {
+      vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/`));
+    })
+  );
+
+  // =================== Search selected text ===================
+  const openSelectedTextCommand = vscode.commands.registerCommand('extension.openSelectedText', () => {
+    const editor = vscode.window.activeTextEditor;
+    if (editor && editor.selection && !editor.selection.isEmpty) {
+      const search = encodeURIComponent(editor.document.getText(editor.selection));
+      vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/p5/${search}`));
+    }
+  });
+  context.subscriptions.push(openSelectedTextCommand);
+
+  // =================== The rest of your Webview / auto-reload logic ===================
   vscode.window.onDidChangeActiveTextEditor(editor => {
     updateP5Context(editor);
     if (!editor) return;
@@ -298,7 +323,9 @@ export function activate(context: vscode.ExtensionContext) {
       panel.webview.postMessage({ type: 'reload', code });
     } else {
       panel.webview.postMessage({ type: 'showError', message: '[Syntax Error] ' + result.message });
-      outputChannel.appendLine(`[${new Date().toLocaleTimeString()} SYNTAX ERROR] ${result.message}`);
+      outputChannel.appendLine(
+        `[${new Date().toLocaleTimeString()} SYNTAX ERROR] ${result.message}`
+      );
       outputChannel.show(true);
     }
   }
@@ -312,7 +339,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       const code = editor.document.getText();
       const syntaxResult = checkSyntax(code);
-      const initialError = syntaxResult.valid ? undefined : '[Syntax Error] ' + syntaxResult.message;
+      const initialError = syntaxResult.valid ? undefined : `[Syntax Error] ${syntaxResult.message}`;
 
       if (!panel) {
         panel = vscode.window.createWebviewPanel(
@@ -341,13 +368,7 @@ export function activate(context: vscode.ExtensionContext) {
             outputChannel.appendLine(`[${new Date().toLocaleTimeString()} ERROR]: ${msg.message}`);
             outputChannel.show(true);
           } else if (msg.type === 'reload-button-clicked') {
-            const newCode = editor.document.getText();
-            const result = checkSyntax(newCode);
-            if (result.valid) {
-              panel.webview.postMessage({ type: 'reload', code: newCode });
-            } else {
-              panel.webview.postMessage({ type: 'showError', message: '[Syntax Error] ' + result.message });
-            }
+            panel.webview.postMessage({ type: 'reload', code: editor.document.getText() });
             vscode.window.showInformationMessage('P5 sketch reloaded!');
           }
         });
@@ -363,7 +384,7 @@ export function activate(context: vscode.ExtensionContext) {
           autoReloadListenersMap.delete(docUri);
         });
 
-        panel.webview.html = await createHtml(code, panel, context.extensionPath, initialError);
+        panel.webview.html = await createHtml(editor.document.getText(), panel, context.extensionPath, initialError);
       } else {
         panel.reveal(panel.viewColumn, true);
       }
@@ -373,7 +394,6 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // Reload button command
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.reload-p5-sketch', async () => {
       const editor = vscode.window.activeTextEditor;
@@ -384,18 +404,18 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showWarningMessage('No active P5 panel to reload.');
         return;
       }
-      const code = editor.document.getText();
-      const result = checkSyntax(code);
-      if (result.valid) {
-        panel.webview.postMessage({ type: 'reload', code });
-      } else {
-        panel.webview.postMessage({ type: 'showError', message: '[Syntax Error] ' + result.message });
-      }
+      panel.webview.postMessage({ type: 'reload', code: editor.document.getText() });
       vscode.window.showInformationMessage('P5 sketch reloaded!');
     })
   );
 
-  // Auto-reload listeners
+  vscode.workspace.onDidChangeConfiguration(e => {
+    if (e.affectsConfiguration('liveP5.showReloadButton')) {
+      const show = vscode.workspace.getConfiguration('liveP5').get<boolean>('showReloadButton', true);
+      webviewPanelMap.forEach(panel => panel.webview.postMessage({ type: 'toggleReloadButton', show }));
+    }
+  });
+
   function updateAutoReloadListeners(editor: vscode.TextEditor) {
     const docUri = editor.document.uri.toString();
     const setting = vscode.workspace.getConfiguration('liveP5').get<'onChange' | 'onSave' | 'both'>('autoReload');
@@ -417,7 +437,8 @@ export function activate(context: vscode.ExtensionContext) {
     if (setting === 'onSave' || setting === 'both') {
       newListeners.saveListener = vscode.workspace.onDidSaveTextDocument(doc => {
         if (doc.uri.toString() === docUri) {
-          updateDocumentPanel(doc);
+          const panel = webviewPanelMap.get(docUri);
+          panel?.webview.postMessage({ type: 'reload', code: doc.getText() });
         }
       });
     }
