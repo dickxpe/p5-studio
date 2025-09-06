@@ -1,6 +1,5 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
-import * as ts from 'typescript';
 
 const outputChannel = vscode.window.createOutputChannel('LIVE P5');
 const webviewPanelMap = new Map<string, vscode.WebviewPanel>();
@@ -11,8 +10,6 @@ const autoReloadListenersMap = new Map<
   string,
   { changeListener?: vscode.Disposable; saveListener?: vscode.Disposable }
 >();
-
-const diagnosticsCollection = vscode.languages.createDiagnosticCollection('liveP5');
 
 function debounce<Func extends (...args: any[]) => void>(fn: Func, delay: number) {
   let timeout: NodeJS.Timeout;
@@ -31,61 +28,28 @@ function getTime(): string {
 }
 
 // ----------------------------
-// Syntax check and line detection
-// ----------------------------
-function checkSyntax(code: string): { valid: boolean; message?: string; line?: number } {
-  const result = ts.transpileModule(code, {
-    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ESNext },
-    reportDiagnostics: true
-  });
-
-  if (!result.diagnostics || result.diagnostics.length === 0) return { valid: true };
-
-  const diag = result.diagnostics[0];
-  const message = ts.flattenDiagnosticMessageText(diag.messageText, '\n');
-  const line = diag.start !== undefined && diag.file
-    ? diag.file.getLineAndCharacterOfPosition(diag.start).line + 1
-    : 1;
-
-  return { valid: false, message, line };
-}
-
-
-
-// ----------------------------
 // Create Webview HTML
 // ----------------------------
 async function createHtml(
-  text: string,
+  userCode: string,
   panel: vscode.WebviewPanel,
-  extensionPath: string,
-  initialError?: { message: string; line: number; fileName: string }
+  extensionPath: string
 ) {
-  const ensureP5Boilerplate = (code: string) => {
-    let txt = code;
-    if (!/function\s+setup\s*\(/.test(txt)) txt = `function setup(){/*setup*/}\n` + txt;
-    if (!/function\s+draw\s*\(/.test(txt) && /line|ellipse|rect|circle|point/.test(txt))
-      txt = `function draw(){/*draw*/}\n` + txt;
-    return txt;
-  };
-  text = ensureP5Boilerplate(text);
+  const p5Path = vscode.Uri.file(path.join(extensionPath, 'assets', 'p5.min.js'));
+  const p5Uri = panel.webview.asWebviewUri(p5Path);
+
+  const reloadIconPath = vscode.Uri.file(path.join(extensionPath, 'images', 'reload.svg'));
+  const reloadIconUri = panel.webview.asWebviewUri(reloadIconPath);
+
+  const showReloadButton = vscode.workspace
+    .getConfiguration('liveP5')
+    .get<boolean>('showReloadButton', true);
 
   function escapeBackticks(str: string) {
-    return str.replace(/`/g, "\\`");
+    return str.replace(/`/g, '\\`');
   }
-  const escapedCode = escapeBackticks(text);
 
-  const fileName = path.basename(panel.title.replace(/^LIVE: /, "") || "sketch.js");
-  const initialErrorMessage = initialError ? escapeBackticks(initialError.message) : "";
-  const initialErrorLine = initialError ? initialError.line : 1;
-
-  const p5Path = vscode.Uri.file(path.join(extensionPath, "assets", "p5.min.js"));
-  const p5Uri = panel.webview.asWebviewUri(p5Path);
-  const reloadIconPath = vscode.Uri.file(path.join(extensionPath, "images", "reload.svg"));
-  const reloadIconUri = panel.webview.asWebviewUri(reloadIconPath);
-  const showReloadButton = vscode.workspace
-    .getConfiguration("liveP5")
-    .get<boolean>("showReloadButton", true);
+  const escapedCode = escapeBackticks(userCode);
 
   return `<!DOCTYPE html>
 <html>
@@ -117,136 +81,117 @@ window._p5UserDefinedCanvas = false;
 window._p5UserAutoFill = false;
 window._p5UserBackground = false;
 window._p5LastBackgroundArgs = null;
+window._p5ErrorLogged = false;
 
-// --- Error utils ---
-function getTime(){ return new Date().toTimeString().split(" ")[0]; }
-function sanitizeMessage(msg){ if(!msg) return msg; return msg.replace(/\\[object Arguments\\]/g,"MISSING ARGUMENT(S) "); }
-function formatError(msg,type="RUNTIME ERROR",file="${fileName}",line="?"){ return \`[\${getTime()} \${type} on Line \${line} in \${file}] \${sanitizeMessage(msg)}\`; }
 function showError(msg){
-  let overlayMsg = msg.replace(/^\\[\\d{2}:\\d{2}:\\d{2} /,"[");
-  const el=document.getElementById("error-overlay"); if(el){el.textContent=overlayMsg; el.style.display="block";}
-  if(window._p5Instance){window._p5Instance.remove();window._p5Instance=null;}
+  const el = document.getElementById("error-overlay");
+  if(el){el.textContent = msg; el.style.display = "block";}
+  if(window._p5Instance){window._p5Instance.remove(); window._p5Instance = null;}
   document.querySelectorAll("canvas").forEach(c=>c.remove());
 }
 function clearError(){ const el=document.getElementById("error-overlay"); if(el){el.textContent=""; el.style.display="none";} }
 
-// --- Show initial syntax error ---
-document.addEventListener("DOMContentLoaded",()=>{
-  if("${initialErrorMessage}"){
-    const msg = formatError("${initialErrorMessage}","SYNTAX ERROR","${fileName}",${initialErrorLine});
-    showError(msg);
-    vscode.postMessage({type:"showError",message:msg});
-  }
-});
-
-// --- Console passthrough ---
 (function(){
   const origLog=console.log;
-  console.log=function(...args){vscode.postMessage({type:"log",message:args}); origLog.apply(console,args);};
+  console.log=function(...args){vscode.postMessage({type:"log",message:args}); origLog.apply(console,args);}
   const origErr=console.error;
   console.error=function(...args){
     let msg=args.join(" ");
-    const full=formatError(msg,"RUNTIME ERROR","${fileName}","?");
-    showError(full);
-    vscode.postMessage({type:"showError",message:full});
+    if(!window._p5ErrorLogged){
+      window._p5ErrorLogged=true;
+      showError(msg);
+      vscode.postMessage({type:"showError",message:msg});
+    }
     origErr.apply(console,args);
-  };
+  }
 })();
 
-// --- Run sketch ---
 function runUserSketch(code){
   clearError();
+  window._p5ErrorLogged = false;
   if(window._p5Instance){window._p5Instance.remove();window._p5Instance=null;}
   document.querySelectorAll("canvas").forEach(c=>c.remove());
 
-  try{ new Function(code); }
-  catch(e){
-    let lineNum="?";
-    const lines=code.split("\\n");
-    for(let i=0;i<lines.length;i++){
-      try{ new Function(lines.slice(0,i+1).join("\\n")); }
-      catch{ lineNum=i+1; break; }
+  const proto = p5.prototype;
+
+  const origCreateCanvas = proto.createCanvas;
+  proto.createCanvas = function(w,h,...args){
+    window._p5UserDefinedCanvas=true;
+    if(w===window.innerWidth && h===window.innerHeight) window._p5UserAutoFill=true;
+    return origCreateCanvas.call(this,w,h,...args);
+  };
+
+  const origBackground = proto.background;
+  proto.background = function(...args){
+    window._p5UserBackground=true;
+    window._p5LastBackgroundArgs=args;
+    return origBackground.apply(this,args);
+  };
+
+  const wrappedCode = \`
+    \${code}
+
+    if(typeof setup==='function'){
+      const userSetup=setup;
+      setup=function(){
+        try{
+          userSetup();
+          if(!window._p5UserDefinedCanvas && typeof createCanvas==='function'){
+            createCanvas(window.innerWidth,window.innerHeight);
+            window._p5UserAutoFill=true;
+          }
+          if(!window._p5UserBackground && typeof background==='function'){
+            background(255);
+            window._p5LastBackgroundArgs=[255];
+          }
+        }catch(e){
+          if(!window._p5ErrorLogged){
+            window._p5ErrorLogged=true;
+            showError("[RUNTIME ERROR] "+e.message);
+            vscode.postMessage({type:"showError",message:e.message});
+          }
+          throw e;
+        }
+      }
     }
-    const msg=formatError(e.message,"SYNTAX ERROR","${fileName}",lineNum);
-    showError(msg);
-    vscode.postMessage({type:"showError",message:msg});
-    return;
-  }
 
-  try{
-    const proto=p5.prototype;
-    const origCreateCanvas=proto.createCanvas;
-    proto.createCanvas=function(w,h,...args){
-      window._p5UserDefinedCanvas=true;
-      if(w===window.innerWidth && h===window.innerHeight){ window._p5UserAutoFill=true; }
-      return origCreateCanvas.call(this,w,h,...args);
-    };
-    const origBackground=proto.background;
-    proto.background=function(...args){
-      window._p5UserBackground=true;
-      window._p5LastBackgroundArgs=args;
-      return origBackground.apply(this,args);
-    };
-
-    const wrappedCode = \`
-      \${code}
-
-      if(typeof setup==='function'){
-        const userSetup=setup;
-        setup=function(){
-          try{
-            userSetup();
-            if(!window._p5UserDefinedCanvas && typeof createCanvas==='function'){
-              createCanvas(window.innerWidth,window.innerHeight);
-              window._p5UserAutoFill=true;
-            }
-            if(!window._p5UserBackground && typeof background==='function'){
-              background(255);
-              window._p5LastBackgroundArgs=[255];
-            }
-            clearError();
-          }catch(e){ const msg=formatError(e.message,"SETUP ERROR","${fileName}",getLineNumberFromStack(e)); showError(msg); vscode.postMessage({type:"showError",message:msg}); throw e;}
+    if(typeof draw==='function'){
+      const userDraw=draw;
+      draw=function(){
+        try{
+          userDraw();
+        }catch(e){
+          if(!window._p5ErrorLogged){
+            window._p5ErrorLogged=true;
+            showError("[RUNTIME ERROR] "+e.message);
+            vscode.postMessage({type:"showError",message:e.message});
+          }
+          throw e;
         }
       }
+    }
 
-      if(typeof draw==='function'){
-        const userDraw=draw;
-        draw=function(){
-          try{ userDraw(); }catch(e){ const msg=formatError(e.message,"DRAW ERROR","${fileName}",getLineNumberFromStack(e)); showError(msg); vscode.postMessage({type:"showError",message:msg}); throw e;}
-        }
-      }
-    \`;
+    if(typeof setup!=='function' && typeof draw!=='function'){
+      throw new Error("Missing required function: setup() or draw()");
+    }
+  \`;
 
-    const s=document.createElement("script");
-    s.type="text/javascript"; s.dataset.userCode="true"; s.textContent=wrappedCode;
-    document.body.appendChild(s);
+  const s=document.createElement("script");
+  s.type="text/javascript"; s.dataset.userCode="true"; s.textContent=wrappedCode;
+  document.body.appendChild(s);
 
-    window._p5Instance=new p5();
-
-  }catch(e){
-    const msg=formatError(e.message,"RUNTIME ERROR","${fileName}",getLineNumberFromStack(e));
-    showError(msg); vscode.postMessage({type:"showError",message:msg});
-  }
+  window._p5Instance=new p5();
 }
 
-function getLineNumberFromStack(e){
-  if(!e||!e.stack) return "?";
-  const m=e.stack.match(/:(\\d+):\\d+/);
-  return m?parseInt(m[1],10):"?";
-}
-
-// --- Load p5.js ---
 const p5Script=document.createElement("script");
 p5Script.src="${p5Uri}";
 p5Script.onload=()=>{ runUserSketch(\`${escapedCode}\`); };
 p5Script.onerror=()=>{ showError("Failed to load p5.js"); };
 document.body.appendChild(p5Script);
 
-// --- Reload button ---
 document.getElementById("reload-button").addEventListener("click",()=>{vscode.postMessage({type:"reload-button-clicked"});});
 
-// --- Resize ---
-window.addEventListener("resize",()=>{
+window.addEventListener("resize",()=>{ 
   if(window._p5Instance?._renderer && window._p5UserAutoFill){
     window._p5Instance.resizeCanvas(window.innerWidth,window.innerHeight);
     const bgArgs = window._p5LastBackgroundArgs || [255];
@@ -254,14 +199,13 @@ window.addEventListener("resize",()=>{
   }
 });
 
-// --- Messages from extension ---
-window.addEventListener("message",e=>{
-  const data=e.data;
+window.addEventListener("message", e => {
+  const data = e.data;
   switch(data.type){
     case "reload": runUserSketch(data.code); break;
-    case "stop": if(window._p5Instance){window._p5Instance.remove();window._p5Instance=null;} document.querySelectorAll("canvas").forEach(c=>c.remove()); break;
-    case "toggleReloadButton": const btn=document.getElementById("reload-button"); if(btn) btn.style.display=data.show?"flex":"none"; break;
+    case "stop": if(window._p5Instance){window._p5Instance.remove(); window._p5Instance=null;} document.querySelectorAll("canvas").forEach(c=>c.remove()); break;
     case "showError": showError(data.message); break;
+    case "toggleReloadButton": document.getElementById("reload-button").style.display = data.show ? "flex" : "none"; break;
   }
 });
 </script>
@@ -273,6 +217,7 @@ window.addEventListener("message",e=>{
 // Activate
 // ----------------------------
 export function activate(context: vscode.ExtensionContext) {
+
   function updateP5Context(editor?: vscode.TextEditor) {
     editor = editor || vscode.window.activeTextEditor;
     if (!editor) return vscode.commands.executeCommand('setContext', 'isP5js', false);
@@ -299,7 +244,6 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   const debounceMap = new Map<string, Function>();
-
   function debounceDocumentUpdate(document: vscode.TextDocument) {
     const docUri = document.uri.toString();
     if (!debounceMap.has(docUri)) debounceMap.set(docUri, debounce(() => updateDocumentPanel(document), DEBOUNCE_DELAY));
@@ -312,34 +256,25 @@ export function activate(context: vscode.ExtensionContext) {
     if (!panel) return;
 
     const code = document.getText();
+    try {
+      new Function(code); // syntax check
 
-    // Syntax check against original code
-    const result = checkSyntax(code);
-    const fileName = path.basename(document.fileName);
-    const uri = document.uri;
+      const hasSetup = /\bfunction\s+setup\s*\(/.test(code);
+      const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
 
-    if (result.valid) {
-      diagnosticsCollection.delete(uri);
-      panel.webview.postMessage({ type: 'reload', code });
-    } else {
-      const line = (result.line ?? 1) - 1; // zero-indexed for VS Code
-      const diagnostic = new vscode.Diagnostic(
-        new vscode.Range(line, 0, line, Number.MAX_VALUE),
-        result.message ?? 'Syntax Error',
-        vscode.DiagnosticSeverity.Error
-      );
-      diagnosticsCollection.set(uri, [diagnostic]);
-
-      panel.webview.postMessage({ type: 'stop' });
-      const msg = `[${getTime()} SYNTAX ERROR on Line ${result.line} in ${fileName}] ${result.message}`;
+      if (!hasSetup && !hasDraw) {
+        const msg = `[${getTime()} SYNTAX ERROR in ${path.basename(document.fileName)}] Missing required function: setup() or draw()`;
+        panel.webview.postMessage({ type: 'showError', message: msg });
+        outputChannel.appendLine(msg);
+        outputChannel.show(true);
+      } else {
+        panel.webview.postMessage({ type: 'reload', code });
+      }
+    } catch (err: any) {
+      const msg = `[${getTime()} SYNTAX ERROR in ${path.basename(document.fileName)}] ${err.message}`;
       panel.webview.postMessage({ type: 'showError', message: msg });
       outputChannel.appendLine(msg);
       outputChannel.show(true);
-
-      vscode.window.showTextDocument(uri, { preview: true }).then(editor => {
-        editor.revealRange(diagnostic.range, vscode.TextEditorRevealType.InCenter);
-        editor.selection = new vscode.Selection(diagnostic.range.start, diagnostic.range.start);
-      });
     }
   }
 
@@ -380,7 +315,7 @@ export function activate(context: vscode.ExtensionContext) {
             outputChannel.appendLine(msg.message);
             outputChannel.show(true);
           } else if (msg.type === 'reload-button-clicked') {
-            panel?.webview.postMessage({ type: 'reload', code: editor.document.getText() });
+            updateDocumentPanel(editor.document);
             vscode.window.showInformationMessage('P5 sketch reloaded!');
           }
         });
@@ -397,8 +332,12 @@ export function activate(context: vscode.ExtensionContext) {
         });
 
         panel.webview.html = await createHtml(editor.document.getText(), panel, context.extensionPath);
+
+        // Immediately run syntax check and load
+        updateDocumentPanel(editor.document);
       } else {
         panel.reveal(panel.viewColumn, true);
+        updateDocumentPanel(editor.document);
       }
 
       updateP5Context(editor);
@@ -413,13 +352,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('extension.reload-p5-sketch', () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
-      const docUri = editor.document.uri.toString();
-      const panel = webviewPanelMap.get(docUri);
-      if (!panel) {
-        vscode.window.showWarningMessage('No active P5 panel to reload.');
-        return;
-      }
-      panel.webview.postMessage({ type: 'reload', code: editor.document.getText() });
+      updateDocumentPanel(editor.document);
       vscode.window.showInformationMessage('P5 sketch reloaded!');
     })
   );
@@ -427,14 +360,15 @@ export function activate(context: vscode.ExtensionContext) {
   // ----------------------------
   // Open selected text in p5 reference
   // ----------------------------
-  const openSelectedTextCommand = vscode.commands.registerCommand('extension.openSelectedText', () => {
-    const editor = vscode.window.activeTextEditor;
-    if (editor && editor.selection && !editor.selection.isEmpty) {
-      const search = encodeURIComponent(editor.document.getText(editor.selection));
-      vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/p5/${search}`));
-    }
-  });
-  context.subscriptions.push(openSelectedTextCommand);
+  context.subscriptions.push(
+    vscode.commands.registerCommand('extension.openSelectedText', () => {
+      const editor = vscode.window.activeTextEditor;
+      if (editor && editor.selection && !editor.selection.isEmpty) {
+        const search = encodeURIComponent(editor.document.getText(editor.selection));
+        vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/p5/${search}`));
+      }
+    })
+  );
 
   // ----------------------------
   // P5 Reference status bar button
@@ -464,7 +398,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   // ----------------------------
-  // Auto-reload listeners (using your booleans)
+  // Auto-reload listeners
   // ----------------------------
   function updateAutoReloadListeners(editor: vscode.TextEditor) {
     const docUri = editor.document.uri.toString();
@@ -491,8 +425,6 @@ export function activate(context: vscode.ExtensionContext) {
 
     autoReloadListenersMap.set(docUri, { changeListener, saveListener });
   }
-
-  context.subscriptions.push(diagnosticsCollection);
 }
 
 export function deactivate() {
@@ -502,5 +434,4 @@ export function deactivate() {
     listeners.changeListener?.dispose();
     listeners.saveListener?.dispose();
   });
-  diagnosticsCollection.clear();
 }
