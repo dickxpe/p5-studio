@@ -83,6 +83,11 @@ window._p5UserBackground = false;
 window._p5LastBackgroundArgs = null;
 window._p5ErrorLogged = false;
 
+// Notify extension that webview is loaded
+window.addEventListener('DOMContentLoaded', () => {
+  vscode.postMessage({ type: 'webviewLoaded' });
+});
+
 function showError(msg){
   const el = document.getElementById("error-overlay");
   if(el){el.textContent = msg; el.style.display = "block";}
@@ -206,6 +211,8 @@ window.addEventListener("message", e => {
     case "stop": if(window._p5Instance){window._p5Instance.remove(); window._p5Instance=null;} document.querySelectorAll("canvas").forEach(c=>c.remove()); break;
     case "showError": showError(data.message); break;
     case "toggleReloadButton": document.getElementById("reload-button").style.display = data.show ? "flex" : "none"; break;
+    case "resetErrorFlag": window._p5ErrorLogged = false; break;
+    case "syntaxError": showError(data.message); break; // <-- Add this line
   }
 });
 </script>
@@ -250,31 +257,42 @@ export function activate(context: vscode.ExtensionContext) {
     debounceMap.get(docUri)!();
   }
 
-  function updateDocumentPanel(document: vscode.TextDocument) {
+  async function updateDocumentPanel(document: vscode.TextDocument) {
     const docUri = document.uri.toString();
     const panel = webviewPanelMap.get(docUri);
     if (!panel) return;
 
     const code = document.getText();
+    let syntaxErrorMsg: string | null = null;
     try {
       new Function(code); // syntax check
-
       const hasSetup = /\bfunction\s+setup\s*\(/.test(code);
       const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
 
       if (!hasSetup && !hasDraw) {
-        const msg = `[${getTime()} SYNTAX ERROR in ${path.basename(document.fileName)}] Missing required function: setup() or draw()`;
-        panel.webview.postMessage({ type: 'showError', message: msg });
-        outputChannel.appendLine(msg);
-        outputChannel.show(true);
+        syntaxErrorMsg = `[${getTime()} SYNTAX ERROR in ${path.basename(document.fileName)}] Missing required function: setup() or draw()`;
+        panel.webview.html = await createHtml('', panel, context.extensionPath);
       } else {
-        panel.webview.postMessage({ type: 'reload', code });
+        panel.webview.html = await createHtml(code, panel, context.extensionPath);
       }
     } catch (err: any) {
-      const msg = `[${getTime()} SYNTAX ERROR in ${path.basename(document.fileName)}] ${err.message}`;
-      panel.webview.postMessage({ type: 'showError', message: msg });
-      outputChannel.appendLine(msg);
-      outputChannel.show(true);
+      syntaxErrorMsg = `[${getTime()} SYNTAX ERROR in ${path.basename(document.fileName)}] ${err.message}`;
+      panel.webview.html = await createHtml('', panel, context.extensionPath);
+    }
+
+    // Always log and show syntax errors after the webview is loaded
+    if (syntaxErrorMsg) {
+      const showSyntaxError = (e: any) => {
+        if (e.type === 'webviewLoaded') {
+          panel.webview.postMessage({ type: 'syntaxError', message: syntaxErrorMsg });
+          outputChannel.appendLine(syntaxErrorMsg!);
+          outputChannel.show(true);
+          panel.webview.onDidReceiveMessage(handler => {}); // Remove handler (noop)
+        }
+      };
+      // Remove any previous listeners to avoid multiple logs
+      panel.webview.onDidReceiveMessage(() => {});
+      panel.webview.onDidReceiveMessage(showSyntaxError);
     }
   }
 
@@ -315,7 +333,7 @@ export function activate(context: vscode.ExtensionContext) {
             outputChannel.appendLine(msg.message);
             outputChannel.show(true);
           } else if (msg.type === 'reload-button-clicked') {
-            updateDocumentPanel(editor.document);
+            debounceDocumentUpdate(editor.document);
             vscode.window.showInformationMessage('P5 sketch reloaded!');
           }
         });
@@ -331,10 +349,8 @@ export function activate(context: vscode.ExtensionContext) {
           autoReloadListenersMap.delete(docUri);
         });
 
-        panel.webview.html = await createHtml(editor.document.getText(), panel, context.extensionPath);
-
-        // Immediately run syntax check and load
-        updateDocumentPanel(editor.document);
+        // --- Always run updateDocumentPanel immediately after creating the panel ---
+        await updateDocumentPanel(editor.document);
       } else {
         panel.reveal(panel.viewColumn, true);
         updateDocumentPanel(editor.document);
@@ -349,10 +365,10 @@ export function activate(context: vscode.ExtensionContext) {
   // Reload sketch command
   // ----------------------------
   context.subscriptions.push(
-    vscode.commands.registerCommand('extension.reload-p5-sketch', () => {
+    vscode.commands.registerCommand('extension.reload-p5-sketch', async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
-      updateDocumentPanel(editor.document);
+      debounceDocumentUpdate(editor.document);
       vscode.window.showInformationMessage('P5 sketch reloaded!');
     })
   );
@@ -419,7 +435,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
     if (reloadOnSave) {
       saveListener = vscode.workspace.onDidSaveTextDocument(doc => {
-        if (doc.uri.toString() === docUri) updateDocumentPanel(doc);
+        if (doc.uri.toString() === docUri) debounceDocumentUpdate(doc);
       });
     }
 
@@ -435,3 +451,4 @@ export function deactivate() {
     listeners.saveListener?.dispose();
   });
 }
+
