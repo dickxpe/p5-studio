@@ -1,7 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 
-const outputChannel = vscode.window.createOutputChannel('LIVE P5');
 const webviewPanelMap = new Map<string, vscode.WebviewPanel>();
 let activeP5Panel: vscode.WebviewPanel | null = null;
 const DEBOUNCE_DELAY = 150;
@@ -224,6 +223,9 @@ window.addEventListener("message", e => {
 // Activate
 // ----------------------------
 export function activate(context: vscode.ExtensionContext) {
+  // Create output channel and register with context to ensure it appears in Output panel
+  const outputChannel = vscode.window.createOutputChannel('LIVE P5');
+  context.subscriptions.push(outputChannel);
 
   function updateP5Context(editor?: vscode.TextEditor) {
     editor = editor || vscode.window.activeTextEditor;
@@ -251,13 +253,13 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   const debounceMap = new Map<string, Function>();
-  function debounceDocumentUpdate(document: vscode.TextDocument) {
+  function debounceDocumentUpdate(document: vscode.TextDocument, forceLog = false) {
     const docUri = document.uri.toString();
-    if (!debounceMap.has(docUri)) debounceMap.set(docUri, debounce(() => updateDocumentPanel(document), DEBOUNCE_DELAY));
-    debounceMap.get(docUri)!();
+    if (!debounceMap.has(docUri)) debounceMap.set(docUri, debounce((doc, log) => updateDocumentPanel(doc, log), DEBOUNCE_DELAY));
+    debounceMap.get(docUri)!(document, forceLog);
   }
 
-  async function updateDocumentPanel(document: vscode.TextDocument) {
+  async function updateDocumentPanel(document: vscode.TextDocument, forceLog = false) {
     const docUri = document.uri.toString();
     const panel = webviewPanelMap.get(docUri);
     if (!panel) return;
@@ -280,19 +282,26 @@ export function activate(context: vscode.ExtensionContext) {
       panel.webview.html = await createHtml('', panel, context.extensionPath);
     }
 
-    // Always log and show syntax errors after the webview is loaded
+    // Always show syntax errors in overlay
     if (syntaxErrorMsg) {
-      const showSyntaxError = (e: any) => {
-        if (e.type === 'webviewLoaded') {
-          panel.webview.postMessage({ type: 'syntaxError', message: syntaxErrorMsg });
-          outputChannel.appendLine(syntaxErrorMsg!);
-          outputChannel.show(true);
-          panel.webview.onDidReceiveMessage(handler => {}); // Remove handler (noop)
-        }
-      };
-      // Remove any previous listeners to avoid multiple logs
-      panel.webview.onDidReceiveMessage(() => {});
-      panel.webview.onDidReceiveMessage(showSyntaxError);
+      setTimeout(() => {
+        panel.webview.postMessage({ type: 'syntaxError', message: syntaxErrorMsg });
+      }, 150);
+
+      // Only log if forceLog (save/reload) or the error is new (typing)
+      if (forceLog) {
+        outputChannel.show(true);
+        outputChannel.appendLine(syntaxErrorMsg);
+        (panel as any)._lastSyntaxError = syntaxErrorMsg;
+      } else if ((panel as any)._lastSyntaxError !== syntaxErrorMsg) {
+        outputChannel.show(true);
+        outputChannel.appendLine(syntaxErrorMsg);
+        (panel as any)._lastSyntaxError = syntaxErrorMsg;
+      }
+      // If the error is the same and not forceLog, do not log again
+    } else {
+      // Clear last error if code is now valid
+      (panel as any)._lastSyntaxError = null;
     }
   }
 
@@ -330,11 +339,22 @@ export function activate(context: vscode.ExtensionContext) {
             outputChannel.appendLine(`[${getTime()} LOG]: ${msg.message.join(' ')}`);
             outputChannel.show(true);
           } else if (msg.type === 'showError') {
-            outputChannel.appendLine(msg.message);
-            outputChannel.show(true);
+            // Only log runtime errors if different from last, or always on save/reload
+            const docUri = editor.document.uri.toString();
+            const panel = webviewPanelMap.get(docUri);
+            const lastRuntimeError = (panel as any)?._lastRuntimeError;
+            const forceLog = forceRuntimeLogMap.get(editor.document) === true;
+            if (msg.message !== lastRuntimeError || forceLog) {
+              outputChannel.appendLine(msg.message);
+              outputChannel.show(true);
+              if (panel) (panel as any)._lastRuntimeError = msg.message;
+            }
+            // Reset the force log flag after use
+            if (forceLog) forceRuntimeLogMap.set(editor.document, false);
           } else if (msg.type === 'reload-button-clicked') {
+            // Set a flag to force runtime error log on next error after reload
+            forceRuntimeLogMap.set(editor.document, true);
             debounceDocumentUpdate(editor.document);
-            vscode.window.showInformationMessage('P5 sketch reloaded!');
           }
         });
 
@@ -368,7 +388,9 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('extension.reload-p5-sketch', async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
-      debounceDocumentUpdate(editor.document);
+      // Use the document object as the key for WeakMap
+      forceRuntimeLogMap.set(editor.document, true);
+      debounceDocumentUpdate(editor.document, true); // force log on reload for syntax errors
       vscode.window.showInformationMessage('P5 sketch reloaded!');
     })
   );
@@ -430,25 +452,35 @@ export function activate(context: vscode.ExtensionContext) {
 
     if (reloadWhileTyping) {
       changeListener = vscode.workspace.onDidChangeTextDocument(e => {
-        if (e.document.uri.toString() === docUri) debounceDocumentUpdate(e.document);
+        if (e.document.uri.toString() === docUri) debounceDocumentUpdate(e.document, false);
       });
     }
     if (reloadOnSave) {
       saveListener = vscode.workspace.onDidSaveTextDocument(doc => {
-        if (doc.uri.toString() === docUri) debounceDocumentUpdate(doc);
+        if (doc.uri.toString() === docUri) {
+          // Set a flag to force runtime error log on next error after save
+          forceRuntimeLogMap.set(doc, true);
+          debounceDocumentUpdate(doc, true); // force log on save for syntax errors
+        }
       });
+
+      autoReloadListenersMap.set(docUri, { changeListener, saveListener });
     }
-
-    autoReloadListenersMap.set(docUri, { changeListener, saveListener });
   }
-}
 
+  // Add this WeakMap at the top of activate()
+  const forceRuntimeLogMap = new WeakMap<vscode.TextDocument, boolean>();
+}
 export function deactivate() {
   webviewPanelMap.forEach(panel => panel.dispose());
-  outputChannel.dispose();
   autoReloadListenersMap.forEach(listeners => {
     listeners.changeListener?.dispose();
     listeners.saveListener?.dispose();
   });
 }
+autoReloadListenersMap.forEach(listeners => {
+  listeners.changeListener?.dispose();
+  listeners.saveListener?.dispose();
+});
+
 
