@@ -288,20 +288,15 @@ export function activate(context: vscode.ExtensionContext) {
         panel.webview.postMessage({ type: 'syntaxError', message: syntaxErrorMsg });
       }, 150);
 
-      // Only log if forceLog (save/reload) or the error is new (typing)
-      if (forceLog) {
-        outputChannel.show(true);
-        outputChannel.appendLine(syntaxErrorMsg);
-        (panel as any)._lastSyntaxError = syntaxErrorMsg;
-      } else if ((panel as any)._lastSyntaxError !== syntaxErrorMsg) {
-        outputChannel.show(true);
-        outputChannel.appendLine(syntaxErrorMsg);
-        (panel as any)._lastSyntaxError = syntaxErrorMsg;
-      }
-      // If the error is the same and not forceLog, do not log again
+      // Always log syntax errors, regardless of last error or forceLog
+      outputChannel.show(true);
+      outputChannel.appendLine(syntaxErrorMsg);
+      (panel as any)._lastSyntaxError = syntaxErrorMsg;
+      // Reset forceRuntimeLogMap for this document so save/reload always logs
+      forceRuntimeLogMap.set(document, false);
     } else {
-      // Clear last error if code is now valid
       (panel as any)._lastSyntaxError = null;
+      forceRuntimeLogMap.set(document, false);
     }
   }
 
@@ -339,22 +334,26 @@ export function activate(context: vscode.ExtensionContext) {
             outputChannel.appendLine(`[${getTime()} LOG]: ${msg.message.join(' ')}`);
             outputChannel.show(true);
           } else if (msg.type === 'showError') {
-            // Only log runtime errors if different from last, or always on save/reload
+            // Always log runtime errors, regardless of last error or forceLog
+            outputChannel.appendLine(msg.message);
+            outputChannel.show(true);
             const docUri = editor.document.uri.toString();
             const panel = webviewPanelMap.get(docUri);
-            const lastRuntimeError = (panel as any)?._lastRuntimeError;
-            const forceLog = forceRuntimeLogMap.get(editor.document) === true;
-            if (msg.message !== lastRuntimeError || forceLog) {
-              outputChannel.appendLine(msg.message);
-              outputChannel.show(true);
-              if (panel) (panel as any)._lastRuntimeError = msg.message;
-            }
-            // Reset the force log flag after use
-            if (forceLog) forceRuntimeLogMap.set(editor.document, false);
+            if (panel) (panel as any)._lastRuntimeError = msg.message;
           } else if (msg.type === 'reload-button-clicked') {
-            // Set a flag to force runtime error log on next error after reload
-            forceRuntimeLogMap.set(editor.document, true);
-            debounceDocumentUpdate(editor.document);
+            // Always log on reload button press by triggering a manual runtime error log if present
+            debounceDocumentUpdate(editor.document, true); // forceLog = true for reload
+            setTimeout(() => {
+              // If there is a last runtime error, log it again
+              const docUri = editor.document.uri.toString();
+              const panel = webviewPanelMap.get(docUri);
+              const lastRuntimeError = (panel as any)?._lastRuntimeError;
+              if (lastRuntimeError) {
+                outputChannel.appendLine(lastRuntimeError);
+                outputChannel.show(true);
+              }
+            }, DEBOUNCE_DELAY + 50);
+            // Removed notification
           }
         });
 
@@ -388,10 +387,18 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('extension.reload-p5-sketch', async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
-      // Use the document object as the key for WeakMap
-      forceRuntimeLogMap.set(editor.document, true);
-      debounceDocumentUpdate(editor.document, true); // force log on reload for syntax errors
-      vscode.window.showInformationMessage('P5 sketch reloaded!');
+      debounceDocumentUpdate(editor.document, true);
+      setTimeout(() => {
+        // If there is a last runtime error, log it again
+        const docUri = editor.document.uri.toString();
+        const panel = webviewPanelMap.get(docUri);
+        const lastRuntimeError = (panel as any)?._lastRuntimeError;
+        if (lastRuntimeError) {
+          outputChannel.appendLine(lastRuntimeError);
+          outputChannel.show(true);
+        }
+      }, DEBOUNCE_DELAY + 50);
+      // Removed notification
     })
   );
 
@@ -458,9 +465,9 @@ export function activate(context: vscode.ExtensionContext) {
     if (reloadOnSave) {
       saveListener = vscode.workspace.onDidSaveTextDocument(doc => {
         if (doc.uri.toString() === docUri) {
-          // Set a flag to force runtime error log on next error after save
-          forceRuntimeLogMap.set(doc, true);
-          debounceDocumentUpdate(doc, true); // force log on save for syntax errors
+          // Always log on save
+          forceRuntimeLogMap.set(doc, false);
+          debounceDocumentUpdate(doc, true);
         }
       });
 
@@ -468,9 +475,10 @@ export function activate(context: vscode.ExtensionContext) {
     }
   }
 
-  // Add this WeakMap at the top of activate()
+  // Place this at the top of activate()
   const forceRuntimeLogMap = new WeakMap<vscode.TextDocument, boolean>();
 }
+
 export function deactivate() {
   webviewPanelMap.forEach(panel => panel.dispose());
   autoReloadListenersMap.forEach(listeners => {
