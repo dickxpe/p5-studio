@@ -85,6 +85,7 @@ window._p5UserAutoFill = false;
 window._p5UserBackground = false;
 window._p5LastBackgroundArgs = null;
 window._p5ErrorLogged = false;
+window._p5ErrorActive = false;
 
 // Notify extension that webview is loaded
 window.addEventListener('DOMContentLoaded', () => {
@@ -92,12 +93,20 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 function showError(msg){
+  window._p5ErrorActive = true;
   const el = document.getElementById("error-overlay");
   if(el){el.textContent = msg; el.style.display = "block";}
   if(window._p5Instance){window._p5Instance.remove(); window._p5Instance = null;}
   document.querySelectorAll("canvas").forEach(c=>c.remove());
+  // Prevent p5.js from calling user draw/setup again
+  window.draw = undefined;
+  window.setup = undefined;
 }
-function clearError(){ const el=document.getElementById("error-overlay"); if(el){el.textContent=""; el.style.display="none";} }
+function clearError(){
+  window._p5ErrorActive = false;
+  const el=document.getElementById("error-overlay");
+  if(el){el.textContent=""; el.style.display="none";}
+}
 
 (function(){
   const origLog=console.log;
@@ -352,9 +361,6 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Only set HTML on first open
         panel.webview.html = await createHtml(code, panel, context.extensionPath);
-        setTimeout(() => {
-          panel.webview.postMessage({ type: 'reload', code });
-        }, 100);
       } else {
         panel.reveal(panel.viewColumn, true);
         // Only send reload message on reveal, do not set HTML again
