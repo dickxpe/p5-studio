@@ -50,7 +50,11 @@ async function createHtml(
 
   const escapedCode = escapeBackticks(userCode);
 
+  const uniqueId = Date.now() + '-' + Math.random().toString(36).substr(2, 8);
+  const p5UriWithCacheBust = vscode.Uri.parse(p5Uri.toString() + `?v=${uniqueId}`);
+
   return `<!DOCTYPE html>
+<!-- cache-bust: ${uniqueId} -->
 <html>
 <head>
 <style>
@@ -132,11 +136,9 @@ function runUserSketch(code){
   if(window._p5Instance){window._p5Instance.remove();window._p5Instance=null;}
   document.querySelectorAll("canvas").forEach(c=>c.remove());
 
-  // Remove ALL previous <script> tags except the p5.js script
-  const scripts = Array.from(document.querySelectorAll('script'));
-  scripts.forEach(s => {
-    if (!s.src || !s.src.includes('p5.min.js')) s.parentNode && s.parentNode.removeChild(s);
-  });
+  // Remove ALL previous <script> tags with data-user-code="true"
+  const scripts = Array.from(document.querySelectorAll('script[data-user-code="true"]'));
+  scripts.forEach(s => s.parentNode && s.parentNode.removeChild(s));
 
   // Inject user code as a <script> tag (not Function constructor)
   const userScript = document.createElement('script');
@@ -149,7 +151,7 @@ function runUserSketch(code){
 }
 
 const p5Script=document.createElement("script");
-p5Script.src="${p5Uri}";
+p5Script.src="${p5UriWithCacheBust}";
 p5Script.onload=()=>{ runUserSketch(\`${escapedCode}\`); };
 p5Script.onerror=()=>{ showError("Failed to load p5.js"); };
 document.body.appendChild(p5Script);
