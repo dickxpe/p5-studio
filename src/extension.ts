@@ -238,6 +238,13 @@ export function activate(context: vscode.ExtensionContext) {
   p5RefStatusBar.tooltip = 'Open P5.js Reference';
   context.subscriptions.push(p5RefStatusBar);
 
+  context.subscriptions.push(
+    vscode.commands.registerCommand('extension.openP5Ref', () => {
+      vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/`));
+    })
+  );
+
+
   function updateJsOrTsContext(editor?: vscode.TextEditor) {
     editor = editor || vscode.window.activeTextEditor;
     const isJsOrTs = !!editor && ['javascript', 'typescript'].includes(editor.document.languageId);
