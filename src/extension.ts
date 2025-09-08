@@ -100,7 +100,16 @@ function clearError(){ const el=document.getElementById("error-overlay"); if(el)
   console.log=function(...args){vscode.postMessage({type:"log",message:args}); origLog.apply(console,args);}
   const origErr=console.error;
   console.error=function(...args){
-    let msg=args.join(" ");
+    // Always prefix with [RUNTIME ERROR] and stringify arguments, including Arguments objects and Error objects
+    let msg = Array.prototype.map.call(args, a => {
+      if (typeof a === "string") return a;
+      if (Object.prototype.toString.call(a) === "[object Arguments]") return Array.prototype.join.call(a, " ");
+      if (a instanceof Error) return a.message;
+      return (a && a.toString ? a.toString() : String(a));
+    }).join(" ");
+    if (!msg.startsWith("[RUNTIME ERROR]")) {
+      msg = "[RUNTIME ERROR] " + msg;
+    }
     if(!window._p5ErrorLogged){
       window._p5ErrorLogged=true;
       showError(msg);
@@ -212,6 +221,20 @@ window.addEventListener("message", e => {
     case "toggleReloadButton": document.getElementById("reload-button").style.display = data.show ? "flex" : "none"; break;
     case "resetErrorFlag": window._p5ErrorLogged = false; break;
     case "syntaxError": showError(data.message); break; // <-- Add this line
+    case "requestLastRuntimeError":
+      // If there was a runtime error, re-send it to the extension
+      if (window._p5ErrorLogged && window._p5Instance == null) {
+        const el = document.getElementById("error-overlay");
+        if (el && el.textContent) {
+          // --- FIX: Always prefix with [RUNTIME ERROR] if not present ---
+          let msg = el.textContent;
+          if (!msg.startsWith("[RUNTIME ERROR]")) {
+            msg = "[RUNTIME ERROR] " + msg;
+          }
+          vscode.postMessage({type:"showError",message:msg});
+        }
+      }
+      break;
   }
 });
 </script>
@@ -266,20 +289,23 @@ export function activate(context: vscode.ExtensionContext) {
 
     const code = document.getText();
     let syntaxErrorMsg: string | null = null;
+    let hadSyntaxError = false;
     try {
       new Function(code); // syntax check
       const hasSetup = /\bfunction\s+setup\s*\(/.test(code);
       const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
 
       if (!hasSetup && !hasDraw) {
-        syntaxErrorMsg = `[${getTime()} SYNTAX ERROR in ${path.basename(document.fileName)}] Missing required function: setup() or draw()`;
+        syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(document.fileName)}] Missing required function: setup() or draw()`;
         panel.webview.html = await createHtml('', panel, context.extensionPath);
+        hadSyntaxError = true;
       } else {
         panel.webview.html = await createHtml(code, panel, context.extensionPath);
       }
     } catch (err: any) {
-      syntaxErrorMsg = `[${getTime()} SYNTAX ERROR in ${path.basename(document.fileName)}] ${err.message}`;
+      syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(document.fileName)}] ${err.message}`;
       panel.webview.html = await createHtml('', panel, context.extensionPath);
+      hadSyntaxError = true;
     }
 
     // Always show syntax errors in overlay
@@ -297,7 +323,8 @@ export function activate(context: vscode.ExtensionContext) {
       (panel as any)._lastRuntimeError = null;
     } else {
       (panel as any)._lastSyntaxError = null;
-      // Do not clear _lastRuntimeError here, only clear on successful run or panel dispose
+      // If there is no syntax error, clear last runtime error as well (fixes repeated logging after fix)
+      (panel as any)._lastRuntimeError = null;
     }
   }
 
@@ -335,16 +362,26 @@ export function activate(context: vscode.ExtensionContext) {
             outputChannel.appendLine(`[${getTime()} LOG]: ${msg.message.join(' ')}`);
             outputChannel.show(true);
           } else if (msg.type === 'showError') {
-            // Always log runtime errors, regardless of last error or forceLog
-            outputChannel.appendLine(msg.message);
+            // Always prefix with timestamp and [RUNTIME ERROR] if not present
+            let message = msg.message;
+            if (typeof message === "string") {
+              if (!message.startsWith("[RUNTIME ERROR]")) {
+                message = `[RUNTIME ERROR] ${message}`;
+              }
+              // Add timestamp if not present
+              const time = getTime();
+              if (!/^\d{2}:\d{2}:\d{2}/.test(message)) {
+                message = `${time} ${message}`;
+              }
+            }
+            outputChannel.appendLine(message);
             outputChannel.show(true);
             const docUri = editor.document.uri.toString();
             const panel = webviewPanelMap.get(docUri);
-            if (panel) (panel as any)._lastRuntimeError = msg.message;
+            if (panel) (panel as any)._lastRuntimeError = message;
           } else if (msg.type === 'reload-button-clicked') {
-            debounceDocumentUpdate(editor.document, true); // forceLog = true for reload
+            debounceDocumentUpdate(editor.document, true);
             setTimeout(() => {
-              // Always log the last runtime error again after reload
               const docUri = editor.document.uri.toString();
               const panel = webviewPanelMap.get(docUri);
               const lastRuntimeError = (panel as any)?._lastRuntimeError;
@@ -353,7 +390,8 @@ export function activate(context: vscode.ExtensionContext) {
                 outputChannel.show(true);
               }
             }, DEBOUNCE_DELAY + 100);
-            // Removed notification
+          } else if (msg.type === 'requestLastRuntimeError') {
+            // No-op in extension, handled in webview below
           }
         });
 
@@ -389,13 +427,12 @@ export function activate(context: vscode.ExtensionContext) {
       if (!editor) return;
       debounceDocumentUpdate(editor.document, true);
       setTimeout(() => {
-        // Always log the last runtime error again after reload
         const docUri = editor.document.uri.toString();
         const panel = webviewPanelMap.get(docUri);
-        const lastRuntimeError = (panel as any)?._lastRuntimeError;
-        if (lastRuntimeError) {
-          outputChannel.appendLine(lastRuntimeError);
-          outputChannel.show(true);
+        // Only log runtime error if there is no syntax error AND the runtime error is not null
+        if (panel && !(panel as any)._lastSyntaxError) {
+          // Force the webview to re-send the current runtime error by posting a message
+          panel.webview.postMessage({ type: 'requestLastRuntimeError' });
         }
       }, DEBOUNCE_DELAY + 100);
       // Removed notification
@@ -465,15 +502,13 @@ export function activate(context: vscode.ExtensionContext) {
     if (reloadOnSave) {
       saveListener = vscode.workspace.onDidSaveTextDocument(doc => {
         if (doc.uri.toString() === docUri) {
-          // Always log on save
           debounceDocumentUpdate(doc, true);
           setTimeout(() => {
-            // Always log the last runtime error again after save
             const panel = webviewPanelMap.get(docUri);
-            const lastRuntimeError = (panel as any)?._lastRuntimeError;
-            if (lastRuntimeError) {
-              outputChannel.appendLine(lastRuntimeError);
-              outputChannel.show(true);
+            // Only log runtime error if there is no syntax error AND the runtime error is not null
+            if (panel && !(panel as any)._lastSyntaxError) {
+              // Force the webview to re-send the current runtime error by posting a message
+              panel.webview.postMessage({ type: 'requestLastRuntimeError' });
             }
           }, DEBOUNCE_DELAY + 100);
         }
