@@ -65,6 +65,24 @@
       {
         "command": "extension.openSelectedText",
         "title": "📕Search in P5 Reference"
+      },
+      {
+        "command": "liveP5.toggleReloadWhileTypingOn",
+        "title": "Disable Reload on Typing",
+        "icon": {
+          "light": "images/keyboard.svg",
+          "dark": "images/keyboard.svg"
+        },
+        "category": "LIVE P5"
+      },
+      {
+        "command": "liveP5.toggleReloadWhileTypingOff",
+        "title": "Enable Reload on Typing",
+        "icon": {
+          "light": "images/keyboard_off.svg",
+          "dark": "images/keyboard_off.svg"
+        },
+        "category": "LIVE P5"
       }
     ],
     "menus": {
@@ -78,6 +96,16 @@
           "command": "extension.reload-p5-sketch",
           "group": "navigation",
           "when": "isP5js && hasP5Webview && (editorLangId == javascript || editorLangId == typescript)"
+        },
+        {
+          "command": "liveP5.toggleReloadWhileTypingOn",
+          "group": "navigation@2",
+          "when": "isJsOrTs && liveP5ReloadWhileTypingEnabled == true"
+        },
+        {
+          "command": "liveP5.toggleReloadWhileTypingOff",
+          "group": "navigation@2",
+          "when": "isJsOrTs && liveP5ReloadWhileTypingEnabled != true"
         }
       ],
       "editor/context": [

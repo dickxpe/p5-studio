@@ -415,6 +415,12 @@ export function activate(context: vscode.ExtensionContext) {
           }
         );
 
+        // Focus the output channel for the new sketch immediately
+        const docUri = editor.document.uri.toString();
+        const fileName = path.basename(editor.document.fileName);
+        const outputChannel = getOrCreateOutputChannel(docUri, fileName);
+        outputChannel.show(true);
+
         webviewPanelMap.set(docUri, panel);
         activeP5Panel = panel;
         vscode.commands.executeCommand('setContext', 'hasP5Webview', true);
@@ -532,10 +538,23 @@ export function activate(context: vscode.ExtensionContext) {
   // ----------------------------
   // Auto-reload listeners
   // ----------------------------
+  // Track reloadWhileTyping and reloadOnSave as top-level variables
+  let reloadWhileTyping = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadWhileTyping', true);
+  let reloadOnSave = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadOnSave', true);
+
+  // Helper to update reloadWhileTyping/reloadOnSave variables and context key
+  async function updateReloadWhileTypingVarsAndContext() {
+    reloadWhileTyping = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadWhileTyping', true);
+    reloadOnSave = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadOnSave', true);
+    await vscode.commands.executeCommand('setContext', 'liveP5ReloadWhileTypingEnabled', reloadWhileTyping);
+  }
+
+  // Use the top-level reloadWhileTyping/reloadOnSave in updateAutoReloadListeners
   function updateAutoReloadListeners(editor: vscode.TextEditor) {
     const docUri = editor.document.uri.toString();
-    const reloadWhileTyping = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadWhileTyping', true);
-    const reloadOnSave = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadOnSave', true);
+    // Use the top-level variables
+    // const reloadWhileTyping = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadWhileTyping', true);
+    // const reloadOnSave = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadOnSave', true);
 
     const existing = autoReloadListenersMap.get(docUri);
     existing?.changeListener?.dispose();
@@ -572,6 +591,41 @@ export function activate(context: vscode.ExtensionContext) {
     if (channel) {
       channel.dispose();
       outputChannelMap.delete(docUri);
+    }
+  });
+
+  // Toggle reloadWhileTyping ON
+  context.subscriptions.push(
+    vscode.commands.registerCommand('liveP5.toggleReloadWhileTypingOn', async () => {
+      const config = vscode.workspace.getConfiguration('liveP5');
+      await config.update('reloadWhileTyping', false, vscode.ConfigurationTarget.Global);
+      await updateReloadWhileTypingVarsAndContext();
+      const editor = vscode.window.activeTextEditor;
+      if (editor) updateAutoReloadListeners(editor);
+      vscode.window.showInformationMessage('Reload on typing is now disabled.');
+    })
+  );
+  // Toggle reloadWhileTyping OFF
+  context.subscriptions.push(
+    vscode.commands.registerCommand('liveP5.toggleReloadWhileTypingOff', async () => {
+      const config = vscode.workspace.getConfiguration('liveP5');
+      await config.update('reloadWhileTyping', true, vscode.ConfigurationTarget.Global);
+      await updateReloadWhileTypingVarsAndContext();
+      const editor = vscode.window.activeTextEditor;
+      if (editor) updateAutoReloadListeners(editor);
+      vscode.window.showInformationMessage('Reload on typing is now enabled.');
+    })
+  );
+
+  // Call on activate
+  updateReloadWhileTypingVarsAndContext();
+  vscode.workspace.onDidChangeConfiguration(e => {
+    if (e.affectsConfiguration('liveP5.reloadWhileTyping') || e.affectsConfiguration('liveP5.reloadOnSave')) {
+      updateReloadWhileTypingVarsAndContext();
+    }
+    if (e.affectsConfiguration('liveP5.showReloadButton')) {
+      const show = vscode.workspace.getConfiguration('liveP5').get<boolean>('showReloadButton', true);
+      webviewPanelMap.forEach(panel => panel.webview.postMessage({ type: 'toggleReloadButton', show }));
     }
   });
 }
