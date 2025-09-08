@@ -125,73 +125,18 @@ function runUserSketch(code){
   if(window._p5Instance){window._p5Instance.remove();window._p5Instance=null;}
   document.querySelectorAll("canvas").forEach(c=>c.remove());
 
-  const proto = p5.prototype;
+  // Remove ALL previous <script> tags except the p5.js script
+  const scripts = Array.from(document.querySelectorAll('script'));
+  scripts.forEach(s => {
+    if (!s.src || !s.src.includes('p5.min.js')) s.parentNode && s.parentNode.removeChild(s);
+  });
 
-  const origCreateCanvas = proto.createCanvas;
-  proto.createCanvas = function(w,h,...args){
-    window._p5UserDefinedCanvas=true;
-    if(w===window.innerWidth && h===window.innerHeight) window._p5UserAutoFill=true;
-    return origCreateCanvas.call(this,w,h,...args);
-  };
-
-  const origBackground = proto.background;
-  proto.background = function(...args){
-    window._p5UserBackground=true;
-    window._p5LastBackgroundArgs=args;
-    return origBackground.apply(this,args);
-  };
-
-  const wrappedCode = \`
-    \${code}
-
-    if(typeof setup==='function'){
-      const userSetup=setup;
-      setup=function(){
-        try{
-          userSetup();
-          if(!window._p5UserDefinedCanvas && typeof createCanvas==='function'){
-            createCanvas(window.innerWidth,window.innerHeight);
-            window._p5UserAutoFill=true;
-          }
-          if(!window._p5UserBackground && typeof background==='function'){
-            background(255);
-            window._p5LastBackgroundArgs=[255];
-          }
-        }catch(e){
-          if(!window._p5ErrorLogged){
-            window._p5ErrorLogged=true;
-            showError("[RUNTIME ERROR] "+e.message);
-            vscode.postMessage({type:"showError",message:e.message});
-          }
-          throw e;
-        }
-      }
-    }
-
-    if(typeof draw==='function'){
-      const userDraw=draw;
-      draw=function(){
-        try{
-          userDraw();
-        }catch(e){
-          if(!window._p5ErrorLogged){
-            window._p5ErrorLogged=true;
-            showError("[RUNTIME ERROR] "+e.message);
-            vscode.postMessage({type:"showError",message:e.message});
-          }
-          throw e;
-        }
-      }
-    }
-
-    if(typeof setup!=='function' && typeof draw!=='function'){
-      throw new Error("Missing required function: setup() or draw()");
-    }
-  \`;
-
-  const s=document.createElement("script");
-  s.type="text/javascript"; s.dataset.userCode="true"; s.textContent=wrappedCode;
-  document.body.appendChild(s);
+  // Inject user code as a <script> tag (not Function constructor)
+  const userScript = document.createElement('script');
+  userScript.type = 'text/javascript';
+  userScript.dataset.userCode = 'true';
+  userScript.textContent = code;
+  document.body.appendChild(userScript);
 
   window._p5Instance=new p5();
 }
@@ -300,6 +245,7 @@ export function activate(context: vscode.ExtensionContext) {
         panel.webview.html = await createHtml('', panel, context.extensionPath);
         hadSyntaxError = true;
       } else {
+        // Always reload HTML for every code update to reset JS environment
         panel.webview.html = await createHtml(code, panel, context.extensionPath);
       }
     } catch (err: any) {
@@ -318,12 +264,9 @@ export function activate(context: vscode.ExtensionContext) {
       outputChannel.show(true);
       outputChannel.appendLine(syntaxErrorMsg);
       (panel as any)._lastSyntaxError = syntaxErrorMsg;
-
-      // Clear last runtime error so it doesn't get re-logged after a syntax error
       (panel as any)._lastRuntimeError = null;
     } else {
       (panel as any)._lastSyntaxError = null;
-      // If there is no syntax error, clear last runtime error as well (fixes repeated logging after fix)
       (panel as any)._lastRuntimeError = null;
     }
   }
@@ -337,6 +280,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (!editor) return;
       const docUri = editor.document.uri.toString();
       let panel = webviewPanelMap.get(docUri);
+      const code = editor.document.getText();
 
       if (!panel) {
         panel = vscode.window.createWebviewPanel(
@@ -380,16 +324,7 @@ export function activate(context: vscode.ExtensionContext) {
             const panel = webviewPanelMap.get(docUri);
             if (panel) (panel as any)._lastRuntimeError = message;
           } else if (msg.type === 'reload-button-clicked') {
-            debounceDocumentUpdate(editor.document, true);
-            setTimeout(() => {
-              const docUri = editor.document.uri.toString();
-              const panel = webviewPanelMap.get(docUri);
-              const lastRuntimeError = (panel as any)?._lastRuntimeError;
-              if (lastRuntimeError) {
-                outputChannel.appendLine(lastRuntimeError);
-                outputChannel.show(true);
-              }
-            }, DEBOUNCE_DELAY + 100);
+            debounceDocumentUpdate(editor.document, false); // use false to match typing
           } else if (msg.type === 'requestLastRuntimeError') {
             // No-op in extension, handled in webview below
           }
@@ -406,11 +341,17 @@ export function activate(context: vscode.ExtensionContext) {
           autoReloadListenersMap.delete(docUri);
         });
 
-        // --- Always run updateDocumentPanel immediately after creating the panel ---
-        await updateDocumentPanel(editor.document);
+        // Only set HTML on first open
+        panel.webview.html = await createHtml(code, panel, context.extensionPath);
+        setTimeout(() => {
+          panel.webview.postMessage({ type: 'reload', code });
+        }, 100);
       } else {
         panel.reveal(panel.viewColumn, true);
-        updateDocumentPanel(editor.document);
+        // Only send reload message on reveal, do not set HTML again
+        setTimeout(() => {
+          panel.webview.postMessage({ type: 'reload', code });
+        }, 100);
       }
 
       updateP5Context(editor);
@@ -425,17 +366,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('extension.reload-p5-sketch', async () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
-      debounceDocumentUpdate(editor.document, true);
-      setTimeout(() => {
-        const docUri = editor.document.uri.toString();
-        const panel = webviewPanelMap.get(docUri);
-        // Only log runtime error if there is no syntax error AND the runtime error is not null
-        if (panel && !(panel as any)._lastSyntaxError) {
-          // Force the webview to re-send the current runtime error by posting a message
-          panel.webview.postMessage({ type: 'requestLastRuntimeError' });
-        }
-      }, DEBOUNCE_DELAY + 100);
-      // Removed notification
+      debounceDocumentUpdate(editor.document, false); // use false to match typing
     })
   );
 
@@ -501,17 +432,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
     if (reloadOnSave) {
       saveListener = vscode.workspace.onDidSaveTextDocument(doc => {
-        if (doc.uri.toString() === docUri) {
-          debounceDocumentUpdate(doc, true);
-          setTimeout(() => {
-            const panel = webviewPanelMap.get(docUri);
-            // Only log runtime error if there is no syntax error AND the runtime error is not null
-            if (panel && !(panel as any)._lastSyntaxError) {
-              // Force the webview to re-send the current runtime error by posting a message
-              panel.webview.postMessage({ type: 'requestLastRuntimeError' });
-            }
-          }, DEBOUNCE_DELAY + 100);
-        }
+        if (doc.uri.toString() === docUri) debounceDocumentUpdate(doc, false); // use false to match typing
       });
 
       autoReloadListenersMap.set(docUri, { changeListener, saveListener });
