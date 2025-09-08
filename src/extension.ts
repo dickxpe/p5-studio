@@ -10,6 +10,17 @@ const autoReloadListenersMap = new Map<
   { changeListener?: vscode.Disposable; saveListener?: vscode.Disposable }
 >();
 
+// Map from document URI to output channel
+const outputChannelMap = new Map<string, vscode.OutputChannel>();
+function getOrCreateOutputChannel(docUri: string, fileName: string) {
+  let channel = outputChannelMap.get(docUri);
+  if (!channel) {
+    channel = vscode.window.createOutputChannel('LIVE P5: ' + fileName);
+    outputChannelMap.set(docUri, channel);
+  }
+  return channel;
+}
+
 function debounce<Func extends (...args: any[]) => void>(fn: Func, delay: number) {
   let timeout: NodeJS.Timeout;
   return (...args: Parameters<Func>) => {
@@ -210,8 +221,6 @@ window.addEventListener("message", e => {
 // ----------------------------
 export function activate(context: vscode.ExtensionContext) {
   // Create output channel and register with context to ensure it appears in Output panel
-  const outputChannel = vscode.window.createOutputChannel('LIVE P5');
-  context.subscriptions.push(outputChannel);
 
   function updateP5Context(editor?: vscode.TextEditor) {
     editor = editor || vscode.window.activeTextEditor;
@@ -236,6 +245,9 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.commands.executeCommand('setContext', 'hasP5Webview', false);
     }
     if (editor) updateAutoReloadListeners(editor);
+    // Focus the output channel for the active sketch
+    const channel = outputChannelMap.get(docUri);
+    if (channel) channel.show(true);
   });
 
   const debounceMap = new Map<string, Function>();
@@ -252,6 +264,8 @@ export function activate(context: vscode.ExtensionContext) {
     const docUri = document.uri.toString();
     const panel = webviewPanelMap.get(docUri);
     if (!panel) return;
+    const fileName = path.basename(document.fileName);
+    const outputChannel = getOrCreateOutputChannel(docUri, fileName);
 
     const code = document.getText();
     let syntaxErrorMsg: string | null = null;
@@ -281,10 +295,8 @@ export function activate(context: vscode.ExtensionContext) {
       setTimeout(() => {
         panel.webview.postMessage({ type: 'syntaxError', message: syntaxErrorMsg });
       }, 150);
-
-      // Always log syntax errors, regardless of last error or forceLog
-      outputChannel.show(true);
       outputChannel.appendLine(syntaxErrorMsg);
+      // outputChannel.show(true); // Do not focus on every error
       (panel as any)._lastSyntaxError = syntaxErrorMsg;
       (panel as any)._lastRuntimeError = null;
     } else {
@@ -341,10 +353,13 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.executeCommand('setContext', 'hasP5Webview', true);
 
         panel.webview.onDidReceiveMessage(msg => {
+          const fileName = path.basename(editor.document.fileName);
+          const docUri = editor.document.uri.toString();
+          const outputChannel = getOrCreateOutputChannel(docUri, fileName);
           if (msg.type === 'log') {
             if (ignoreLogs) return;
             outputChannel.appendLine(`${getTime()} [LOG]: ${msg.message.join(' ')}`);
-            outputChannel.show(true);
+            // outputChannel.show(true); // Do not focus on every log
           } else if (msg.type === 'showError') {
             // Always prefix with timestamp and [RUNTIME ERROR] if not present
             let message = msg.message;
@@ -359,7 +374,7 @@ export function activate(context: vscode.ExtensionContext) {
               }
             }
             outputChannel.appendLine(message);
-            outputChannel.show(true);
+            // outputChannel.show(true); // Do not focus on every error
             const docUri = editor.document.uri.toString();
             const panel = webviewPanelMap.get(docUri);
             if (panel) (panel as any)._lastRuntimeError = message;
@@ -374,11 +389,23 @@ export function activate(context: vscode.ExtensionContext) {
           webviewPanelMap.delete(docUri);
           if (activeP5Panel === panel) activeP5Panel = null;
           vscode.commands.executeCommand('setContext', 'hasP5Webview', false);
-
           const listeners = autoReloadListenersMap.get(docUri);
           listeners?.changeListener?.dispose();
           listeners?.saveListener?.dispose();
           autoReloadListenersMap.delete(docUri);
+          // Dispose output channel when panel is closed
+          const channel = outputChannelMap.get(docUri);
+          if (channel) {
+            channel.dispose();
+            outputChannelMap.delete(docUri);
+          }
+        });
+
+        panel.onDidChangeViewState(e => {
+          if (e.webviewPanel.active) {
+            const channel = outputChannelMap.get(docUri);
+            if (channel) channel.show(true);
+          }
         });
 
         // Only set HTML on first open
@@ -483,6 +510,20 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Place this at the top of activate()
   const forceRuntimeLogMap = new WeakMap<vscode.TextDocument, boolean>();
+  // Close webview panel when the corresponding document is closed
+  vscode.workspace.onDidCloseTextDocument(doc => {
+    const docUri = doc.uri.toString();
+    const panel = webviewPanelMap.get(docUri);
+    if (panel) {
+      panel.dispose();
+    }
+    // Dispose output channel when document is closed
+    const channel = outputChannelMap.get(docUri);
+    if (channel) {
+      channel.dispose();
+      outputChannelMap.delete(docUri);
+    }
+  });
 }
 
 export function deactivate() {
