@@ -1,11 +1,13 @@
 {
   "compilerOptions": {
     "target": "es6",
-    "checkJs": true
+    "module": "esnext",
+    "checkJs": false
   },
   "include": [
     "*.js",
     "**/*.js",
     "c:\\Users\\Peter\\.vscode\\extensions\\peterdickx.live-p5-launcher-1.0.0\\p5types\\global.d.ts"
-  ]
+  ],
+  "exclude": ["node_modules"]
 }

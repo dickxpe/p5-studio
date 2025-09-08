@@ -343,7 +343,7 @@ export function activate(context: vscode.ExtensionContext) {
         panel.webview.onDidReceiveMessage(msg => {
           if (msg.type === 'log') {
             if (ignoreLogs) return;
-            outputChannel.appendLine(`[${getTime()} LOG]: ${msg.message.join(' ')}`);
+            outputChannel.appendLine(`${getTime()} [LOG]: ${msg.message.join(' ')}`);
             outputChannel.show(true);
           } else if (msg.type === 'showError') {
             // Always prefix with timestamp and [RUNTIME ERROR] if not present
