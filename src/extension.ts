@@ -344,7 +344,9 @@ p5Script.onload=()=>{ runUserSketch(\`${escapedCode}\`); };
 p5Script.onerror=()=>{ showError("Failed to load p5.js"); };
 document.body.appendChild(p5Script);
 
-document.getElementById("reload-button").addEventListener("click",()=>{vscode.postMessage({type:"reload-button-clicked"});});
+document.getElementById("reload-button").addEventListener("click",()=>{
+  vscode.postMessage({type:"reload-button-clicked", preserveGlobals: true});
+});
 
 window.addEventListener("resize",()=>{ 
   if(window._p5Instance?._renderer && window._p5UserAutoFill){
@@ -357,7 +359,36 @@ window.addEventListener("resize",()=>{
 window.addEventListener("message", e => {
   const data = e.data;
   switch(data.type){
-    case "reload": runUserSketch(data.code); break;
+    case "reload":
+      if (data.preserveGlobals) {
+        // Save current global values
+        const prevGlobals = {};
+        if (window._p5GlobalVarTypes) {
+          Object.keys(window._p5GlobalVarTypes).forEach(name => {
+            prevGlobals[name] = window[name];
+          });
+        }
+        // Remove global var declarations and window assignments from code
+        let codeNoGlobals = data.code;
+        if (window._p5GlobalVarTypes) {
+          Object.keys(window._p5GlobalVarTypes).forEach(name => {
+            // Remove lines like 'var x = ...;' or 'var x;' (with or without semicolon)
+            codeNoGlobals = codeNoGlobals.replace(new RegExp('^\\s*var\\s+'+name+'(\\s*=.*)?;?\\s*$', 'gm'), '');
+            // Remove lines like 'window.x = x;' (with or without semicolon)
+            codeNoGlobals = codeNoGlobals.replace(new RegExp('^\\s*window\\.'+name+'\\s*=\\s*'+name+';?\\s*$', 'gm'), '');
+          });
+        }
+        runUserSketch(codeNoGlobals);
+        // Restore global values
+        if (window._p5GlobalVarTypes) {
+          Object.keys(prevGlobals).forEach(name => {
+            window[name] = prevGlobals[name];
+          });
+        }
+      } else {
+        runUserSketch(data.code);
+      }
+      break;
     case "stop": if(window._p5Instance){window._p5Instance.remove(); window._p5Instance=null;} document.querySelectorAll("canvas").forEach(c=>c.remove()); break;
     case "showError": showError(data.message); break;
     case "toggleReloadButton": document.getElementById("reload-button").style.display = data.show ? "flex" : "none"; break;
@@ -408,6 +439,12 @@ function updateGlobalVarInSketch(name, value) {
 function renderGlobalVarControls(vars) {
   const controls = document.getElementById('p5-var-controls');
   if (!controls) return;
+  if (!vars || vars.length === 0) {
+    controls.style.display = 'none';
+    controls.innerHTML = '';
+    return;
+  }
+  controls.style.display = 'flex';
   controls.innerHTML = '';
   vars.forEach(v => {
     const label = document.createElement('label');
@@ -552,6 +589,40 @@ export function activate(context: vscode.ExtensionContext) {
     }
   }
 
+  // Track reloadWhileTyping and reloadOnSave as top-level variables
+  let reloadWhileTyping = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadWhileTyping', true);
+  let reloadOnSave = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadOnSave', true);
+
+  // Helper to update reloadWhileTyping/reloadOnSave variables and context key
+  async function updateReloadWhileTypingVarsAndContext() {
+    reloadWhileTyping = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadWhileTyping', true);
+    reloadOnSave = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadOnSave', true);
+    await vscode.commands.executeCommand('setContext', 'liveP5ReloadWhileTypingEnabled', reloadWhileTyping);
+  }
+
+  // Restore updateAutoReloadListeners function inside activate for correct scope
+  function updateAutoReloadListeners(editor: vscode.TextEditor) {
+    const docUri = editor.document.uri.toString();
+    const existing = autoReloadListenersMap.get(docUri);
+    existing?.changeListener?.dispose();
+    existing?.saveListener?.dispose();
+
+    let changeListener: vscode.Disposable | undefined;
+    let saveListener: vscode.Disposable | undefined;
+
+    if (reloadWhileTyping) {
+      changeListener = vscode.workspace.onDidChangeTextDocument(e => {
+        if (e.document.uri.toString() === docUri) debounceDocumentUpdate(e.document, false);
+      });
+    }
+    if (reloadOnSave) {
+      saveListener = vscode.workspace.onDidSaveTextDocument(doc => {
+        if (doc.uri.toString() === docUri) debounceDocumentUpdate(doc, false); // use false to match typing
+      });
+    }
+    autoReloadListenersMap.set(docUri, { changeListener, saveListener });
+  }
+
   // ----------------------------
   // LIVE P5 panel command
   // ----------------------------
@@ -635,7 +706,11 @@ export function activate(context: vscode.ExtensionContext) {
             const panel = webviewPanelMap.get(docUri);
             if (panel) (panel as any)._lastRuntimeError = message;
           } else if (msg.type === 'reload-button-clicked') {
-            debounceDocumentUpdate(editor.document, false); // use false to match typing
+            // Forward preserveGlobals flag to webview, but send rewritten code
+            const code = editor.document.getText();
+            const globals = extractGlobalVariables(code);
+            const rewrittenCode = rewriteUserCodeWithWindowGlobals(code, globals);
+            panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: msg.preserveGlobals });
           } else if (msg.type === 'requestLastRuntimeError') {
             // No-op in extension, handled in webview below
           }
@@ -689,9 +764,7 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // ----------------------------
-  // Reload sketch command
-  // ----------------------------
+  // Register reload-p5-sketch command
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.reload-p5-sketch', async () => {
       const editor = vscode.window.activeTextEditor;
@@ -700,89 +773,7 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // ----------------------------
-  // Open selected text in p5 reference
-  // ----------------------------
-  context.subscriptions.push(
-    vscode.commands.registerCommand('extension.openSelectedText', () => {
-      const editor = vscode.window.activeTextEditor;
-      if (editor && editor.selection && !editor.selection.isEmpty) {
-        const search = encodeURIComponent(editor.document.getText(editor.selection));
-        vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/p5/${search}`));
-      }
-    })
-  );
-
-  // ----------------------------
-  // Show/hide reload button dynamically
-  // ----------------------------
-  vscode.workspace.onDidChangeConfiguration(e => {
-    if (e.affectsConfiguration('liveP5.showReloadButton')) {
-      const show = vscode.workspace.getConfiguration('liveP5').get<boolean>('showReloadButton', true);
-      webviewPanelMap.forEach(panel => panel.webview.postMessage({ type: 'toggleReloadButton', show }));
-    }
-  });
-
-  // ----------------------------
-  // Auto-reload listeners
-  // ----------------------------
-  // Track reloadWhileTyping and reloadOnSave as top-level variables
-  let reloadWhileTyping = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadWhileTyping', true);
-  let reloadOnSave = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadOnSave', true);
-
-  // Helper to update reloadWhileTyping/reloadOnSave variables and context key
-  async function updateReloadWhileTypingVarsAndContext() {
-    reloadWhileTyping = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadWhileTyping', true);
-    reloadOnSave = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadOnSave', true);
-    await vscode.commands.executeCommand('setContext', 'liveP5ReloadWhileTypingEnabled', reloadWhileTyping);
-  }
-
-  // Use the top-level reloadWhileTyping/reloadOnSave in updateAutoReloadListeners
-  function updateAutoReloadListeners(editor: vscode.TextEditor) {
-    const docUri = editor.document.uri.toString();
-    // Use the top-level variables
-    // const reloadWhileTyping = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadWhileTyping', true);
-    // const reloadOnSave = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadOnSave', true);
-
-    const existing = autoReloadListenersMap.get(docUri);
-    existing?.changeListener?.dispose();
-    existing?.saveListener?.dispose();
-
-    let changeListener: vscode.Disposable | undefined;
-    let saveListener: vscode.Disposable | undefined;
-
-    if (reloadWhileTyping) {
-      changeListener = vscode.workspace.onDidChangeTextDocument(e => {
-        if (e.document.uri.toString() === docUri) debounceDocumentUpdate(e.document, false);
-      });
-    }
-    if (reloadOnSave) {
-      saveListener = vscode.workspace.onDidSaveTextDocument(doc => {
-        if (doc.uri.toString() === docUri) debounceDocumentUpdate(doc, false); // use false to match typing
-      });
-
-      autoReloadListenersMap.set(docUri, { changeListener, saveListener });
-    }
-  }
-
-  // Place this at the top of activate()
-  const forceRuntimeLogMap = new WeakMap<vscode.TextDocument, boolean>();
-  // Close webview panel when the corresponding document is closed
-  vscode.workspace.onDidCloseTextDocument(doc => {
-    const docUri = doc.uri.toString();
-    const panel = webviewPanelMap.get(docUri);
-    if (panel) {
-      panel.dispose();
-    }
-    // Dispose output channel when document is closed
-    const channel = outputChannelMap.get(docUri);
-    if (channel) {
-      channel.dispose();
-      outputChannelMap.delete(docUri);
-    }
-  });
-
-  // Toggle reloadWhileTyping ON
+  // Register toggleReloadWhileTypingOn command
   context.subscriptions.push(
     vscode.commands.registerCommand('liveP5.toggleReloadWhileTypingOn', async () => {
       const config = vscode.workspace.getConfiguration('liveP5');
@@ -793,7 +784,7 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage('Reload on typing is now disabled.');
     })
   );
-  // Toggle reloadWhileTyping OFF
+  // Register toggleReloadWhileTypingOff command
   context.subscriptions.push(
     vscode.commands.registerCommand('liveP5.toggleReloadWhileTypingOff', async () => {
       const config = vscode.workspace.getConfiguration('liveP5');
@@ -804,30 +795,16 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage('Reload on typing is now enabled.');
     })
   );
-
-  // Call on activate
-  updateReloadWhileTypingVarsAndContext();
-  vscode.workspace.onDidChangeConfiguration(e => {
-    if (e.affectsConfiguration('liveP5.reloadWhileTyping') || e.affectsConfiguration('liveP5.reloadOnSave')) {
-      updateReloadWhileTypingVarsAndContext();
-    }
-    if (e.affectsConfiguration('liveP5.showReloadButton')) {
-      const show = vscode.workspace.getConfiguration('liveP5').get<boolean>('showReloadButton', true);
-      webviewPanelMap.forEach(panel => panel.webview.postMessage({ type: 'toggleReloadButton', show }));
-    }
-  });
+  // Register openSelectedText command
+  context.subscriptions.push(
+    vscode.commands.registerCommand('extension.openSelectedText', () => {
+      const editor = vscode.window.activeTextEditor;
+      if (editor && editor.selection && !editor.selection.isEmpty) {
+        const search = encodeURIComponent(editor.document.getText(editor.selection));
+        vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/p5/${search}`));
+      }
+    })
+  );
 }
-
-export function deactivate() {
-  webviewPanelMap.forEach(panel => panel.dispose());
-  autoReloadListenersMap.forEach(listeners => {
-    listeners.changeListener?.dispose();
-    listeners.saveListener?.dispose();
-  });
-}
-autoReloadListenersMap.forEach(listeners => {
-  listeners.changeListener?.dispose();
-  listeners.saveListener?.dispose();
-});
 
 
