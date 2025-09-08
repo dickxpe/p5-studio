@@ -81,14 +81,19 @@ async function createHtml(
   const uniqueId = Date.now() + '-' + Math.random().toString(36).substr(2, 8);
   const p5UriWithCacheBust = vscode.Uri.parse(p5Uri.toString() + `?v=${uniqueId}`);
 
-  // --- Inject common scripts ---
+  // --- Inject common and import scripts ---
   let scriptTags = '';
   try {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (workspaceFolder) {
-      const commonDir = path.join(workspaceFolder.uri.fsPath, 'common');
-      const commonFiles = await listFilesRecursively(vscode.Uri.file(commonDir), ['.js', '.ts']);
-      const scripts = commonFiles.map(s => panel.webview.asWebviewUri(vscode.Uri.file(s)));
+      const folders = ['common', 'import'];
+      let allFiles: string[] = [];
+      for (const folder of folders) {
+        const dir = path.join(workspaceFolder.uri.fsPath, folder);
+        const files = await listFilesRecursively(vscode.Uri.file(dir), ['.js', '.ts']);
+        allFiles = allFiles.concat(files);
+      }
+      const scripts = allFiles.map(s => panel.webview.asWebviewUri(vscode.Uri.file(s)));
       scriptTags = scripts.map(uri => `<script src='${uri}'></script>`).join('\n');
     }
   } catch (e) { /* ignore */ }
@@ -404,6 +409,7 @@ export function activate(context: vscode.ExtensionContext) {
               vscode.Uri.file(path.join(context.extensionPath, 'assets')),
               vscode.Uri.file(path.join(context.extensionPath, 'images')),
               vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'common')),
+              vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'import')),
             ],
             retainContextWhenHidden: true
           }
