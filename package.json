@@ -83,8 +83,8 @@
       "editor/context": [
         {
           "command": "extension.openSelectedText",
-          "when": "editorHasSelection",
-          "group": "navigation"
+          "when": "editorHasSelection && isJsOrTs",
+          "group": "navigation@0"
         }
       ]
     },

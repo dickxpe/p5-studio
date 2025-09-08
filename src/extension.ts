@@ -230,10 +230,31 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.executeCommand('setContext', 'isP5js', containsP5);
   }
 
+  // P5 Reference status bar button
+  const p5RefStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  p5RefStatusBar.command = 'extension.openP5Ref';
+  p5RefStatusBar.text = '$(book) P5 Reference';
+  p5RefStatusBar.color = '#ff0000';
+  p5RefStatusBar.tooltip = 'Open P5.js Reference';
+  context.subscriptions.push(p5RefStatusBar);
+
+  function updateJsOrTsContext(editor?: vscode.TextEditor) {
+    editor = editor || vscode.window.activeTextEditor;
+    const isJsOrTs = !!editor && ['javascript', 'typescript'].includes(editor.document.languageId);
+    vscode.commands.executeCommand('setContext', 'isJsOrTs', isJsOrTs);
+    if (isJsOrTs) {
+      p5RefStatusBar.show();
+    } else {
+      p5RefStatusBar.hide();
+    }
+  }
+
   updateP5Context();
+  updateJsOrTsContext();
 
   vscode.window.onDidChangeActiveTextEditor(editor => {
     updateP5Context(editor);
+    updateJsOrTsContext(editor);
     if (!editor) return;
     const docUri = editor.document.uri.toString();
     const panel = webviewPanelMap.get(docUri);
@@ -449,23 +470,6 @@ export function activate(context: vscode.ExtensionContext) {
         const search = encodeURIComponent(editor.document.getText(editor.selection));
         vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/p5/${search}`));
       }
-    })
-  );
-
-  // ----------------------------
-  // P5 Reference status bar button
-  // ----------------------------
-  const p5RefStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-  p5RefStatusBar.command = 'extension.openP5Ref';
-  p5RefStatusBar.text = '$(book) P5 Reference';
-  p5RefStatusBar.color = '#ff0000';
-  p5RefStatusBar.tooltip = 'Open P5.js Reference';
-  p5RefStatusBar.show();
-  context.subscriptions.push(p5RefStatusBar);
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('extension.openP5Ref', () => {
-      vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/`));
     })
   );
 
