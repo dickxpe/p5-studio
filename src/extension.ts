@@ -37,6 +37,23 @@ function getTime(): string {
   return `${h}:${m}:${s}`;
 }
 
+// Utility to recursively list .js/.ts files in a folder
+async function listFilesRecursively(dirUri: vscode.Uri, exts: string[]): Promise<string[]> {
+  let files: string[] = [];
+  try {
+    const entries = await vscode.workspace.fs.readDirectory(dirUri);
+    for (const [name, type] of entries) {
+      const entryUri = vscode.Uri.file(path.join(dirUri.fsPath, name));
+      if (type === vscode.FileType.File && exts.some(ext => name.endsWith(ext))) {
+        files.push(entryUri.fsPath);
+      } else if (type === vscode.FileType.Directory) {
+        files = files.concat(await listFilesRecursively(entryUri, exts));
+      }
+    }
+  } catch (e) { /* ignore if folder does not exist */ }
+  return files;
+}
+
 // ----------------------------
 // Create Webview HTML
 // ----------------------------
@@ -64,10 +81,23 @@ async function createHtml(
   const uniqueId = Date.now() + '-' + Math.random().toString(36).substr(2, 8);
   const p5UriWithCacheBust = vscode.Uri.parse(p5Uri.toString() + `?v=${uniqueId}`);
 
+  // --- Inject common scripts ---
+  let scriptTags = '';
+  try {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (workspaceFolder) {
+      const commonDir = path.join(workspaceFolder.uri.fsPath, 'common');
+      const commonFiles = await listFilesRecursively(vscode.Uri.file(commonDir), ['.js', '.ts']);
+      const scripts = commonFiles.map(s => panel.webview.asWebviewUri(vscode.Uri.file(s)));
+      scriptTags = scripts.map(uri => `<script src='${uri}'></script>`).join('\n');
+    }
+  } catch (e) { /* ignore */ }
+
   return `<!DOCTYPE html>
 <!-- cache-bust: ${uniqueId} -->
 <html>
 <head>
+${scriptTags}
 <style>
 html,body{margin:0;padding:0;overflow:hidden;width:100%;height:100%;background:transparent;}
 canvas.p5Canvas{display:block;}
@@ -361,7 +391,9 @@ export function activate(context: vscode.ExtensionContext) {
           syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(editor.document.fileName)}] ${err.message}`;
           codeToInject = '';
         }
-
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder)
+          return;
         panel = vscode.window.createWebviewPanel(
           'extension.live-p5',
           'LIVE: ' + path.basename(editor.document.fileName),
@@ -370,7 +402,8 @@ export function activate(context: vscode.ExtensionContext) {
             enableScripts: true,
             localResourceRoots: [
               vscode.Uri.file(path.join(context.extensionPath, 'assets')),
-              vscode.Uri.file(path.join(context.extensionPath, 'images'))
+              vscode.Uri.file(path.join(context.extensionPath, 'images')),
+              vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'common')),
             ],
             retainContextWhenHidden: true
           }
