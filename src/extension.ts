@@ -245,6 +245,9 @@ export function activate(context: vscode.ExtensionContext) {
     debounceMap.get(docUri)!(document, forceLog);
   }
 
+  // Add a flag to ignore logs after a syntax error
+  let ignoreLogs = false;
+
   async function updateDocumentPanel(document: vscode.TextDocument, forceLog = false) {
     const docUri = document.uri.toString();
     const panel = webviewPanelMap.get(docUri);
@@ -274,6 +277,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // Always show syntax errors in overlay
     if (syntaxErrorMsg) {
+      ignoreLogs = true;
       setTimeout(() => {
         panel.webview.postMessage({ type: 'syntaxError', message: syntaxErrorMsg });
       }, 150);
@@ -284,6 +288,7 @@ export function activate(context: vscode.ExtensionContext) {
       (panel as any)._lastSyntaxError = syntaxErrorMsg;
       (panel as any)._lastRuntimeError = null;
     } else {
+      ignoreLogs = false;
       (panel as any)._lastSyntaxError = null;
       (panel as any)._lastRuntimeError = null;
     }
@@ -301,6 +306,22 @@ export function activate(context: vscode.ExtensionContext) {
       const code = editor.document.getText();
 
       if (!panel) {
+        // Check for syntax errors before setting HTML
+        let syntaxErrorMsg: string | null = null;
+        let codeToInject = code;
+        try {
+          new Function(code);
+          const hasSetup = /\bfunction\s+setup\s*\(/.test(code);
+          const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
+          if (!hasSetup && !hasDraw) {
+            syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(editor.document.fileName)}] Missing required function: setup() or draw()`;
+            codeToInject = '';
+          }
+        } catch (err: any) {
+          syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(editor.document.fileName)}] ${err.message}`;
+          codeToInject = '';
+        }
+
         panel = vscode.window.createWebviewPanel(
           'extension.live-p5',
           'LIVE: ' + path.basename(editor.document.fileName),
@@ -321,6 +342,7 @@ export function activate(context: vscode.ExtensionContext) {
 
         panel.webview.onDidReceiveMessage(msg => {
           if (msg.type === 'log') {
+            if (ignoreLogs) return;
             outputChannel.appendLine(`[${getTime()} LOG]: ${msg.message.join(' ')}`);
             outputChannel.show(true);
           } else if (msg.type === 'showError') {
@@ -360,7 +382,12 @@ export function activate(context: vscode.ExtensionContext) {
         });
 
         // Only set HTML on first open
-        panel.webview.html = await createHtml(code, panel, context.extensionPath);
+        panel.webview.html = await createHtml(codeToInject, panel, context.extensionPath);
+        if (syntaxErrorMsg) {
+          setTimeout(() => {
+            panel.webview.postMessage({ type: 'syntaxError', message: syntaxErrorMsg });
+          }, 150);
+        }
       } else {
         panel.reveal(panel.viewColumn, true);
         // Only send reload message on reveal, do not set HTML again
