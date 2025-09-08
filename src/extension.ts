@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import * as recast from 'recast';
 
 const webviewPanelMap = new Map<string, vscode.WebviewPanel>();
 let activeP5Panel: vscode.WebviewPanel | null = null;
@@ -54,6 +55,110 @@ async function listFilesRecursively(dirUri: vscode.Uri, exts: string[]): Promise
   return files;
 }
 
+// Utility to extract global variables from user code
+function extractGlobalVariables(code: string): { name: string, value: any }[] {
+  const acorn = require('acorn');
+  const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
+  const globals: { name: string, value: any }[] = [];
+  function extractFromDecls(decls: any[]) {
+    for (const decl of decls) {
+      if (decl.id && decl.id.name) {
+        let value = undefined;
+        if (decl.init && decl.init.type === 'Literal') {
+          value = decl.init.value;
+        } else if (decl.init && decl.init.type === 'UnaryExpression' && decl.init.argument.type === 'Literal') {
+          value = decl.init.operator === '-' ? -decl.init.argument.value : decl.init.argument.value;
+        }
+        globals.push({ name: decl.id.name, value });
+      }
+    }
+  }
+  recast.types.visit(ast, {
+    visitVariableDeclaration(path) {
+      if (path.parentPath && path.parentPath.value.type === 'Program') {
+        extractFromDecls(path.value.declarations);
+      }
+      this.traverse(path);
+    }
+  });
+  // Fallback: also check top-level body for VariableDeclaration
+  if (ast.program && Array.isArray(ast.program.body)) {
+    for (const node of ast.program.body) {
+      if (node.type === 'VariableDeclaration') {
+        extractFromDecls(node.declarations);
+      }
+    }
+  }
+  return globals;
+}
+
+// Rewrite user code to replace all references to globals with window.<varname>
+function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string }[]): string {
+  if (!globals.length) return code;
+  const acorn = require('acorn');
+  const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
+  const globalNames = new Set(globals.map(g => g.name));
+  // Collect all top-level VariableDeclarations and rewrite let/const to var
+  const programBody = ast.program.body;
+  const newBody = [];
+  for (let i = 0; i < programBody.length; i++) {
+    let stmt = programBody[i];
+    if (stmt.type === 'VariableDeclaration' && (stmt.kind === 'let' || stmt.kind === 'const')) {
+      // Only rewrite if any of the declared variables are globals
+      if (stmt.declarations.some(decl => decl.id && decl.id.name && globalNames.has(decl.id.name))) {
+        stmt = Object.assign({}, stmt, { kind: 'var' });
+      }
+    }
+    newBody.push(stmt);
+    if (stmt.type === 'VariableDeclaration') {
+      for (const decl of stmt.declarations) {
+        if (decl.id && decl.id.name && globalNames.has(decl.id.name)) {
+          newBody.push(recast.types.builders.expressionStatement(
+            recast.types.builders.assignmentExpression('=',
+              recast.types.builders.memberExpression(
+                recast.types.builders.identifier('window'),
+                recast.types.builders.identifier(decl.id.name),
+                false
+              ),
+              recast.types.builders.identifier(decl.id.name)
+            )
+          ));
+        }
+      }
+    }
+  }
+  ast.program.body = newBody;
+  recast.types.visit(ast, {
+    visitIdentifier(path) {
+      const name = path.value.name;
+      if (
+        globalNames.has(name) &&
+        !(path.parentPath && path.parentPath.value &&
+          path.parentPath.value.type === 'MemberExpression' &&
+          path.parentPath.value.property === path.value &&
+          path.parentPath.value.object.type === 'Identifier' &&
+          path.parentPath.value.object.name === 'window') &&
+        !(path.parentPath && path.parentPath.value &&
+          ((path.parentPath.value.type === 'VariableDeclarator' && path.parentPath.value.id === path.value) ||
+            (path.parentPath.value.type === 'FunctionDeclaration' && path.parentPath.value.id === path.value) ||
+            (path.parentPath.value.type === 'FunctionExpression' && path.parentPath.value.id === path.value) ||
+            (path.parentPath.value.type === 'ClassDeclaration' && path.parentPath.value.id === path.value)))
+      ) {
+        return recast.types.builders.memberExpression(
+          recast.types.builders.identifier('window'),
+          recast.types.builders.identifier(name),
+          false
+        );
+      }
+      this.traverse(path);
+    }
+  });
+  const rewritten = recast.print(ast).code;
+  // DEBUG: log rewritten code
+  console.log('REWRITTEN CODE:', rewritten);
+  return rewritten;
+}
+
 // ----------------------------
 // Create Webview HTML
 // ----------------------------
@@ -76,7 +181,10 @@ async function createHtml(
     return str.replace(/`/g, '\\`');
   }
 
-  const escapedCode = escapeBackticks(userCode);
+  // Detect globals and rewrite code
+  const globals = extractGlobalVariables(userCode);
+  const rewrittenCode = rewriteUserCodeWithWindowGlobals(userCode, globals);
+  const escapedCode = escapeBackticks(rewrittenCode);
 
   const uniqueId = Date.now() + '-' + Math.random().toString(36).substr(2, 8);
   const p5UriWithCacheBust = vscode.Uri.parse(p5Uri.toString() + `?v=${uniqueId}`);
@@ -118,11 +226,25 @@ canvas.p5Canvas{display:block;}
   box-shadow: 0 2px 5px rgba(0,0,0,0.2);
 }
 #reload-button img { width: 12px; height: 12px; }
+#p5-var-controls {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  background: #fff8;
+  z-index: 10000;
+  padding: 8px 12px;
+  font-family: monospace;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+#p5-var-controls label { margin-right: 8px; }
+#p5-var-controls input { width: 60px; }
 </style>
 </head>
 <body>
 <div id="error-overlay"></div>
 <div id="reload-button"><img src="${reloadIconUri}" title="Reload P5 Sketch"></div>
+<div id="p5-var-controls"></div>
 <script>
 const vscode = acquireVsCodeApi();
 window._p5Instance = null;
@@ -202,6 +324,17 @@ function runUserSketch(code){
   userScript.textContent = code;
   document.body.appendChild(userScript);
 
+  // Attach globals to window for live editing
+  if (window._p5GlobalVarTypes) {
+    Object.keys(window._p5GlobalVarTypes).forEach(function(name) {
+      try {
+        if (typeof window[name] === 'undefined' && typeof eval(name) !== 'undefined') {
+          window[name] = eval(name);
+        }
+      } catch (e) {}
+    });
+  }
+
   window._p5Instance=new p5();
 }
 
@@ -229,7 +362,7 @@ window.addEventListener("message", e => {
     case "showError": showError(data.message); break;
     case "toggleReloadButton": document.getElementById("reload-button").style.display = data.show ? "flex" : "none"; break;
     case "resetErrorFlag": window._p5ErrorLogged = false; break;
-    case "syntaxError": showError(data.message); break; // <-- Add this line
+    case "syntaxError": showError(data.message); break;
     case "requestLastRuntimeError":
       // If there was a runtime error, re-send it to the extension
       if (window._p5ErrorLogged && window._p5Instance == null) {
@@ -244,8 +377,52 @@ window.addEventListener("message", e => {
         }
       }
       break;
+    case 'setGlobalVars':
+      renderGlobalVarControls(data.variables);
+      // Store types for later use
+      window._p5GlobalVarTypes = {};
+      data.variables.forEach(v => {
+        window._p5GlobalVarTypes[v.name] = typeof v.value;
+      });
+      break;
+    case 'updateGlobalVar':
+      updateGlobalVarInSketch(data.name, data.value);
+      break;
   }
 });
+
+function updateGlobalVarInSketch(name, value) {
+  if (typeof window[name] !== 'undefined') {
+    let type = (window._p5GlobalVarTypes && window._p5GlobalVarTypes[name]) || typeof window[name];
+    if (type === 'number') {
+      let num = Number(value);
+      if (!isNaN(num)) window[name] = num;
+    } else if (type === 'boolean') {
+      window[name] = (value === 'true' || value === true);
+    } else {
+      window[name] = value;
+    }
+  }
+}
+
+function renderGlobalVarControls(vars) {
+  const controls = document.getElementById('p5-var-controls');
+  if (!controls) return;
+  controls.innerHTML = '';
+  vars.forEach(v => {
+    const label = document.createElement('label');
+    label.textContent = v.name + ': ';
+    const input = document.createElement('input');
+    input.value = v.value !== undefined ? v.value : '';
+    input.setAttribute('data-var', v.name);
+    // Use 'input' event for instant feedback
+    input.addEventListener('input', () => {
+      updateGlobalVarInSketch(v.name, input.value);
+    });
+    label.appendChild(input);
+    controls.appendChild(label);
+  });
+}
 </script>
 </body>
 </html>`;
@@ -345,6 +522,12 @@ export function activate(context: vscode.ExtensionContext) {
       } else {
         // Always reload HTML for every code update to reset JS environment
         panel.webview.html = await createHtml(code, panel, context.extensionPath);
+        // After HTML is set, send global variables
+        const globals = extractGlobalVariables(code);
+        outputChannel.appendLine(`[DEBUG] Detected globals: ${JSON.stringify(globals)}`);
+        setTimeout(() => {
+          panel.webview.postMessage({ type: 'setGlobalVars', variables: globals });
+        }, 200);
       }
     } catch (err: any) {
       syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(document.fileName)}] ${err.message}`;
@@ -483,6 +666,11 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Only set HTML on first open
         panel.webview.html = await createHtml(codeToInject, panel, context.extensionPath);
+        // Send global variables immediately after setting HTML
+        const globals = extractGlobalVariables(codeToInject);
+        setTimeout(() => {
+          panel.webview.postMessage({ type: 'setGlobalVars', variables: globals });
+        }, 200);
         if (syntaxErrorMsg) {
           setTimeout(() => {
             panel.webview.postMessage({ type: 'syntaxError', message: syntaxErrorMsg });
