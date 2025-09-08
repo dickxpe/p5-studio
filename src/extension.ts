@@ -110,14 +110,21 @@ function clearError(){ const el=document.getElementById("error-overlay"); if(el)
     if (!msg.startsWith("[RUNTIME ERROR]")) {
       msg = "[RUNTIME ERROR] " + msg;
     }
-    if(!window._p5ErrorLogged){
-      window._p5ErrorLogged=true;
-      showError(msg);
-      vscode.postMessage({type:"showError",message:msg});
-    }
+    showError(msg); // Always show in overlay
+    vscode.postMessage({type:"showError",message:msg}); // Always log in output
     origErr.apply(console,args);
   }
 })();
+
+window.onerror = function(message, source, lineno, colno, error) {
+  let msg = message && message.toString ? message.toString() : String(message);
+  if (!msg.startsWith('[RUNTIME ERROR]')) {
+    msg = '[RUNTIME ERROR] ' + msg;
+  }
+  showError(msg);
+  vscode.postMessage({ type: 'showError', message: msg });
+  return false; // Let the error propagate in the console as well
+};
 
 function runUserSketch(code){
   clearError();
