@@ -243,13 +243,19 @@ async function createHtml(
         const files = await listFilesRecursively(vscode.Uri.file(dir), ['.js', '.ts']);
         allFiles = allFiles.concat(files);
       }
-      const scripts = allFiles.map(s => panel.webview.asWebviewUri(vscode.Uri.file(s)));
-      scriptTags = scripts.map(uri => `<script src='${uri}'></script>`).join('\n');
+      // Ensure p5.min.js is always loaded first
+      scriptTags = `<script src='${p5UriWithCacheBust}'></script>\n` +
+        allFiles.map(s => `<script src='${panel.webview.asWebviewUri(vscode.Uri.file(s))}'></script>`).join('\n');
+    } else {
+      // Fallback: just p5
+      scriptTags = `<script src='${p5UriWithCacheBust}'></script>`;
     }
   } catch (e) { /* ignore */ }
 
   // In createHtml, get debounceDelay from config and pass to webview
   const debounceDelay = vscode.workspace.getConfiguration('liveP5').get<number>('debounceDelay', 500);
+  // Get varDrawerDefaultState from config
+  const varDrawerDefaultState = vscode.workspace.getConfiguration('liveP5').get<string>('varDrawerDefaultState', 'open');
 
   return `<!DOCTYPE html>
 <!-- cache-bust: ${uniqueId} -->
@@ -276,7 +282,7 @@ canvas.p5Canvas{display:block;}
   left: 0; right: 0; bottom: 0;
   background: #1f1f1f;
   z-index: 10000;
-  padding: 8px 12px;
+  padding: 4px 12px;
   font-family: monospace;
   display: flex;
   flex-wrap: wrap;
@@ -284,36 +290,89 @@ canvas.p5Canvas{display:block;}
   gap: 12px;
   max-height: calc(3 * 2.5em);
   overflow-y: auto;
+  transition: transform 0.2s cubic-bezier(.4,0,.2,1), box-shadow 0.2s;
+  box-shadow: 0 -2px 8px rgba(0,0,0,0.2);
+}
+#p5-var-controls.drawer-hidden {
+  transform: translateY(100%);
+  box-shadow: none;
+}
+#p5-var-controls .drawer-toggle {
+  position: absolute;
+  top: 8px;
+  right: 4px;
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 18px;
+  cursor: pointer;
+  z-index: 10001;
+  padding: 2px 4px;
+  transition: color 0.2s;
+}
+#p5-var-controls .drawer-toggle:hover {
+  color: #ff0;
+}
+#p5-var-drawer-tab {
+  display: none;
+  position: fixed;
+  right: 0px;
+  bottom: 0;
+  background: #1f1f1f;
+  color: #fff;
+  border-radius: 6px 0px 0px 0px;
+  padding: 2px 4px 2px 4px;
+  font-family: monospace;
+  font-size: 18px;
+  z-index: 10001;
+  box-shadow: 0 -2px 8px rgba(0,0,0,0.2);
+  cursor: pointer;
+  min-width: 24px;
+  min-height: 33px;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: translateY(100%);
+  transition: opacity 0.2s cubic-bezier(.4,0,.2,1), transform 0.2s cubic-bezier(.4,0,.2,1);
+}
+#p5-var-drawer-tab.tab-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+#p5-var-controls input {
+  width: 60px;
 }
 #p5-var-controls label {
   margin-right: 8px;
   vertical-align: middle;
   display: inline-flex;
   align-items: center;
+  height: 32px;
 }
-#p5-var-controls label > input {
-  margin-left: 8px;
-}
-#p5-var-controls input { width: 60px; }
 #p5-var-controls input[type="checkbox"] {
-  width: auto;
+  width: 16px;
   min-width: 16px;
   max-width: 16px;
-  height: auto;
+  height: 16px;
   min-height: 16px;
   max-height: 16px;
   accent-color: #fff;
   color-scheme: light;
-  margin-right: 4px;
+  margin: 0 2px;
   vertical-align: middle;
+  display: inline-block;
 }
 </style>
 </head>
 <body>
 <div id="error-overlay"></div>
 <div id="reload-button"><img src="${reloadIconUri}" title="Reload P5 Sketch"></div>
-<div id="p5-var-controls" style="display:none"></div>
+<div id="p5-var-controls" style="display:none">
+  <button class="drawer-toggle" title="Hide controls">&#x25BC;</button>
+</div>
+<div id="p5-var-drawer-tab"><span class="arrow">&#x25B2;</span></div>
 <script>
+window._p5UserCode = ${JSON.stringify(escapedCode)};
 const vscode = acquireVsCodeApi();
 window._p5Instance = null;
 window._p5UserDefinedCanvas = false;
@@ -332,6 +391,7 @@ function debounceWebview(fn, delay) {
   };
 }
 window._p5DebounceDelay = ${debounceDelay};
+window._p5VarDrawerDefaultState = "${varDrawerDefaultState}";
 
 // Notify extension that webview is loaded
 window.addEventListener('DOMContentLoaded', () => {
@@ -416,11 +476,14 @@ function runUserSketch(code){
   window._p5Instance=new p5();
 }
 
-const p5Script=document.createElement("script");
-p5Script.src="${p5UriWithCacheBust}";
-p5Script.onload=()=>{ runUserSketch(\`${escapedCode}\`); };
-p5Script.onerror=()=>{ showError("Failed to load p5.js"); };
-document.body.appendChild(p5Script);
+function waitForP5AndRunSketch() {
+  if (window.p5) {
+    runUserSketch(window._p5UserCode);
+  } else {
+    setTimeout(waitForP5AndRunSketch, 10);
+  }
+}
+waitForP5AndRunSketch();
 
 document.getElementById("reload-button").addEventListener("click",()=>{
   vscode.postMessage({type:"reload-button-clicked", preserveGlobals: true});
@@ -517,16 +580,86 @@ function updateGlobalVarInSketch(name, value) {
   }
 }
 
+// Drawer logic
+const p5VarControls = document.getElementById('p5-var-controls');
+const p5VarDrawerTab = document.getElementById('p5-var-drawer-tab');
+const drawerToggleBtn = p5VarControls.querySelector('.drawer-toggle');
+function hideDrawer() {
+  p5VarControls.classList.add('drawer-hidden');
+  setTimeout(() => {
+    p5VarControls.style.display = 'none';
+    p5VarDrawerTab.style.display = 'flex';
+    p5VarDrawerTab.classList.add('tab-visible');
+  }, 200);
+}
+function showDrawer() {
+  p5VarControls.style.display = 'flex';
+  setTimeout(() => {
+    p5VarControls.classList.remove('drawer-hidden');
+    p5VarDrawerTab.classList.remove('tab-visible');
+    setTimeout(() => { p5VarDrawerTab.style.display = 'none'; }, 200);
+  }, 10);
+}
+drawerToggleBtn.addEventListener('click', hideDrawer);
+p5VarDrawerTab.addEventListener('click', showDrawer);
+
+// Set initial drawer state based on config
+(function setInitialDrawerState() {
+  const state = window._p5VarDrawerDefaultState;
+  if (state === 'hidden') {
+    p5VarControls.style.display = 'none';
+    p5VarDrawerTab.style.display = 'none';
+    p5VarControls.innerHTML = '';
+    return;
+  } else if (state === 'collapsed') {
+    p5VarControls.classList.add('drawer-hidden');
+    p5VarControls.style.display = 'none';
+    p5VarDrawerTab.style.display = 'flex'; // Show the tab when collapsed
+  } else {
+    // open
+    p5VarControls.classList.remove('drawer-hidden');
+    p5VarControls.style.display = 'flex';
+    p5VarDrawerTab.style.display = 'none';
+  }
+})();
+
 function renderGlobalVarControls(vars) {
   const controls = document.getElementById('p5-var-controls');
+  const tab = document.getElementById('p5-var-drawer-tab');
   if (!controls) return;
-  if (!vars || vars.length === 0) {
+  if (window._p5VarDrawerDefaultState === 'hidden') {
     controls.style.display = 'none';
+    tab.style.display = 'none';
+    tab.classList.remove('tab-visible');
     controls.innerHTML = '';
     return;
   }
-  controls.style.display = 'flex';
-  controls.innerHTML = '';
+  if (!vars || vars.length === 0) {
+    controls.innerHTML = '';
+    controls.style.display = 'none';
+    if (window._p5VarDrawerDefaultState === 'collapsed') {
+      tab.style.display = 'flex';
+      tab.classList.add('tab-visible');
+    } else {
+      tab.style.display = 'none';
+      tab.classList.remove('tab-visible');
+    }
+    return;
+  }
+  controls.innerHTML = '<button class="drawer-toggle" title="Hide controls">&#x25BC;</button>';
+  if (window._p5VarDrawerDefaultState === 'collapsed') {
+    tab.style.display = 'flex';
+    tab.classList.add('tab-visible');
+    controls.classList.add('drawer-hidden');
+    controls.style.display = 'none';
+  } else {
+    tab.style.display = 'none';
+    tab.classList.remove('tab-visible');
+    controls.classList.remove('drawer-hidden');
+    controls.style.display = 'flex';
+  }
+  const drawerToggleBtn = controls.querySelector('.drawer-toggle');
+  drawerToggleBtn.addEventListener('click', hideDrawer);
   vars.forEach(v => {
     const label = document.createElement('label');
     label.textContent = v.name + ': ';
@@ -942,6 +1075,7 @@ export function activate(context: vscode.ExtensionContext) {
         };
         fs.mkdirSync(workspaceFolder.uri.fsPath + "/common", { recursive: true });
         fs.mkdirSync(workspaceFolder.uri.fsPath + "/import", { recursive: true });
+        fs.mkdirSync(workspaceFolder.uri.fsPath + "/media", { recursive: true });
         fs.mkdirSync(workspaceFolder.uri.fsPath + "/sketches", { recursive: true });
         // Create empty utils.js if not exists
         const utilsPath = path.join(workspaceFolder.uri.fsPath, "common", "utils.js");
