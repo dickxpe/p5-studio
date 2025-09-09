@@ -1,6 +1,8 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import * as recast from 'recast';
+import * as fs from 'fs';
+import { writeFileSync } from 'fs';
 
 const webviewPanelMap = new Map<string, vscode.WebviewPanel>();
 let activeP5Panel: vscode.WebviewPanel | null = null;
@@ -825,6 +827,43 @@ export function activate(context: vscode.ExtensionContext) {
       if (editor && editor.selection && !editor.selection.isEmpty) {
         const search = encodeURIComponent(editor.document.getText(editor.selection));
         vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/p5/${search}`));
+      }
+    })
+  );
+
+  // Register create-jsconfig command
+  context.subscriptions.push(
+    vscode.commands.registerCommand('extension.create-jsconfig', async () => {
+      try {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) return;
+        // creates a jsconfig that tells vscode where to find the types file
+        const jsconfig = {
+          include: [
+            "*.js",
+            "**/*.js",
+            "*.ts",
+            "¨**/.ts",
+            path.join(context.extensionPath, "p5types", "global.d.ts")
+          ]
+        };
+        fs.mkdirSync(workspaceFolder.uri.fsPath + "/common", { recursive: true });
+        fs.mkdirSync(workspaceFolder.uri.fsPath + "/import", { recursive: true });
+        fs.mkdirSync(workspaceFolder.uri.fsPath + "/sketches", { recursive: true });
+        // Create empty utils.js if not exists
+        const utilsPath = path.join(workspaceFolder.uri.fsPath, "common", "utils.js");
+        if (!fs.existsSync(utilsPath)) {
+          fs.writeFileSync(utilsPath, "");
+        }
+        // Create sketch1.js in sketches if not exists
+        const sketch1Path = path.join(workspaceFolder.uri.fsPath, "sketches", "sketch1.js");
+        if (!fs.existsSync(sketch1Path)) {
+          fs.writeFileSync(sketch1Path, "function setup() {\n  //Start coding with P5 here!\n}\n");
+        }
+        const jsconfigPath = path.join(workspaceFolder.uri.fsPath, "jsconfig.json");
+        writeFileSync(jsconfigPath, JSON.stringify(jsconfig, null, 2));
+      } catch (e) {
+        console.error(e);
       }
     })
   );

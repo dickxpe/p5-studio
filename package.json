@@ -45,7 +45,8 @@
         "icon": {
           "light": "images/p5.svg",
           "dark": "images/p5.svg"
-        }
+        },
+        "when": "false"
       },
       {
         "command": "extension.reload-p5-sketch",
@@ -53,11 +54,12 @@
         "icon": {
           "light": "images/reload.svg",
           "dark": "images/reload.svg"
-        }
+        },
+        "when": "false"
       },
       {
         "command": "extension.create-jsconfig",
-        "title": "Setup P5 Project"
+        "title": "Live P5: Setup new P5 project"
       },
       {
         "command": "extension.openP5Ref",
@@ -65,7 +67,8 @@
       },
       {
         "command": "extension.openSelectedText",
-        "title": "📕Search in P5 Reference"
+        "title": "📕Search in P5 Reference",
+        "when": "false"
       },
       {
         "command": "liveP5.toggleReloadWhileTypingOn",
@@ -74,7 +77,8 @@
           "light": "images/keyboard.svg",
           "dark": "images/keyboard.svg"
         },
-        "category": "LIVE P5"
+        "category": "LIVE P5",
+        "when": "false"
       },
       {
         "command": "liveP5.toggleReloadWhileTypingOff",
@@ -83,7 +87,8 @@
           "light": "images/keyboard_off.svg",
           "dark": "images/keyboard_off.svg"
         },
-        "category": "LIVE P5"
+        "category": "LIVE P5",
+        "when": "false"
       }
     ],
     "menus": {
