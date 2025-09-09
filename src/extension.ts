@@ -508,9 +508,10 @@ export function activate(context: vscode.ExtensionContext) {
   // P5 Reference status bar button
   const p5RefStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   p5RefStatusBar.command = 'extension.openP5Ref';
-  p5RefStatusBar.text = '$(book) P5 Reference';
+  p5RefStatusBar.text = '$(book) P5 Reference'; // Status bar text
+  p5RefStatusBar.tooltip = '$(book) Open P5.js Reference'; // Tooltip text
   p5RefStatusBar.color = '#ff0000';
-  p5RefStatusBar.tooltip = 'Open P5.js Reference';
+  p5RefStatusBar.tooltip = '$(book) Open P5.js Reference';
   context.subscriptions.push(p5RefStatusBar);
 
   context.subscriptions.push(
@@ -551,6 +552,17 @@ export function activate(context: vscode.ExtensionContext) {
     // Focus the output channel for the active sketch
     const channel = outputChannelMap.get(docUri);
     if (channel) channel.show(true);
+  });
+
+  vscode.workspace.onDidChangeTextDocument(e => {
+    if (e.document === vscode.window.activeTextEditor?.document) {
+      updateP5Context(vscode.window.activeTextEditor);
+    }
+  });
+  vscode.workspace.onDidSaveTextDocument(doc => {
+    if (doc === vscode.window.activeTextEditor?.document) {
+      updateP5Context(vscode.window.activeTextEditor);
+    }
   });
 
   const debounceMap = new Map<string, Function>();

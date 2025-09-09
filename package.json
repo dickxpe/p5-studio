@@ -63,7 +63,7 @@
       },
       {
         "command": "extension.openP5Ref",
-        "title": "📕P5 Reference"
+        "title": "📕Open P5.js Reference"
       },
       {
         "command": "extension.openSelectedText",
@@ -106,12 +106,12 @@
         {
           "command": "liveP5.toggleReloadWhileTypingOn",
           "group": "navigation@2",
-          "when": "isJsOrTs && liveP5ReloadWhileTypingEnabled == true"
+          "when": "isP5js && liveP5ReloadWhileTypingEnabled == true && (editorLangId == javascript || editorLangId == typescript)"
         },
         {
           "command": "liveP5.toggleReloadWhileTypingOff",
           "group": "navigation@2",
-          "when": "isJsOrTs && liveP5ReloadWhileTypingEnabled != true"
+          "when": "isP5js && liveP5ReloadWhileTypingEnabled != true && (editorLangId == javascript || editorLangId == typescript)"
         }
       ],
       "editor/context": [
