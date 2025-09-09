@@ -4,7 +4,6 @@ import * as recast from 'recast';
 
 const webviewPanelMap = new Map<string, vscode.WebviewPanel>();
 let activeP5Panel: vscode.WebviewPanel | null = null;
-const DEBOUNCE_DELAY = 150;
 
 const autoReloadListenersMap = new Map<
   string,
@@ -36,6 +35,11 @@ function getTime(): string {
   const m = String(now.getMinutes()).padStart(2, '0');
   const s = String(now.getSeconds()).padStart(2, '0');
   return `${h}:${m}:${s}`;
+}
+
+// Get debounce delay from configuration
+function getDebounceDelay() {
+  return vscode.workspace.getConfiguration('liveP5').get<number>('debounceDelay', 500);
 }
 
 // Utility to recursively list .js/.ts files in a folder
@@ -229,7 +233,7 @@ canvas.p5Canvas{display:block;}
 #p5-var-controls {
   position: fixed;
   left: 0; right: 0; bottom: 0;
-  background: #fff8;
+  background: #1f1f1f;
   z-index: 10000;
   padding: 8px 12px;
   font-family: monospace;
@@ -244,7 +248,7 @@ canvas.p5Canvas{display:block;}
 <body>
 <div id="error-overlay"></div>
 <div id="reload-button"><img src="${reloadIconUri}" title="Reload P5 Sketch"></div>
-<div id="p5-var-controls"></div>
+<div id="p5-var-controls" style="display:none"></div>
 <script>
 const vscode = acquireVsCodeApi();
 window._p5Instance = null;
@@ -530,7 +534,7 @@ export function activate(context: vscode.ExtensionContext) {
   const debounceMap = new Map<string, Function>();
   function debounceDocumentUpdate(document: vscode.TextDocument, forceLog = false) {
     const docUri = document.uri.toString();
-    if (!debounceMap.has(docUri)) debounceMap.set(docUri, debounce((doc, log) => updateDocumentPanel(doc, log), DEBOUNCE_DELAY));
+    if (!debounceMap.has(docUri)) debounceMap.set(docUri, debounce((doc, log) => updateDocumentPanel(doc, log), getDebounceDelay()));
     debounceMap.get(docUri)!(document, forceLog);
   }
 
@@ -805,6 +809,13 @@ export function activate(context: vscode.ExtensionContext) {
       }
     })
   );
+
+  // Listen for debounceDelay config changes
+  vscode.workspace.onDidChangeConfiguration(e => {
+    if (e.affectsConfiguration('liveP5.debounceDelay')) {
+      debounceMap.clear(); // Clear so new debounceDelay is used on next change
+    }
+  });
 }
 
 

@@ -135,6 +135,12 @@
           "type": "boolean",
           "default": true,
           "description": "Determines if the reload button is shown on the P5 webpanel."
+        },
+        "liveP5.debounceDelay": {
+          "type": "number",
+          "default": 300,
+          "minimum": 100,
+          "description": "Debounce delay in milliseconds for live reload while typing."
         }
       }
     }
