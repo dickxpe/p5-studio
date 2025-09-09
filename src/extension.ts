@@ -210,6 +210,9 @@ async function createHtml(
     }
   } catch (e) { /* ignore */ }
 
+  // In createHtml, get debounceDelay from config and pass to webview
+  const debounceDelay = vscode.workspace.getConfiguration('liveP5').get<number>('debounceDelay', 500);
+
   return `<!DOCTYPE html>
 <!-- cache-bust: ${uniqueId} -->
 <html>
@@ -238,8 +241,11 @@ canvas.p5Canvas{display:block;}
   padding: 8px 12px;
   font-family: monospace;
   display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
   gap: 12px;
-  align-items: center;
+  max-height: calc(3 * 2.5em);
+  overflow-y: auto;
 }
 #p5-var-controls label { margin-right: 8px; }
 #p5-var-controls input { width: 60px; }
@@ -258,6 +264,16 @@ window._p5UserBackground = false;
 window._p5LastBackgroundArgs = null;
 window._p5ErrorLogged = false;
 window._p5ErrorActive = false;
+
+// Debounce utility for webview
+function debounceWebview(fn, delay) {
+  let timeout;
+  return function(...args) {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => fn.apply(this, args), delay);
+  };
+}
+window._p5DebounceDelay = ${debounceDelay};
 
 // Notify extension that webview is loaded
 window.addEventListener('DOMContentLoaded', () => {
@@ -413,6 +429,9 @@ window.addEventListener("message", e => {
       }
       break;
     case 'setGlobalVars':
+      if (typeof data.debounceDelay === 'number') {
+        window._p5DebounceDelay = data.debounceDelay;
+      }
       renderGlobalVarControls(data.variables);
       // Store types for later use
       window._p5GlobalVarTypes = {};
@@ -456,10 +475,11 @@ function renderGlobalVarControls(vars) {
     const input = document.createElement('input');
     input.value = v.value !== undefined ? v.value : '';
     input.setAttribute('data-var', v.name);
-    // Use 'input' event for instant feedback
-    input.addEventListener('input', () => {
+    // Use debounced input event for instant feedback
+    const debouncedUpdate = debounceWebview(() => {
       updateGlobalVarInSketch(v.name, input.value);
-    });
+    }, window._p5DebounceDelay);
+    input.addEventListener('input', debouncedUpdate);
     label.appendChild(input);
     controls.appendChild(label);
   });
@@ -565,7 +585,6 @@ export function activate(context: vscode.ExtensionContext) {
         panel.webview.html = await createHtml(code, panel, context.extensionPath);
         // After HTML is set, send global variables
         const globals = extractGlobalVariables(code);
-        outputChannel.appendLine(`[DEBUG] Detected globals: ${JSON.stringify(globals)}`);
         setTimeout(() => {
           panel.webview.postMessage({ type: 'setGlobalVars', variables: globals });
         }, 200);
