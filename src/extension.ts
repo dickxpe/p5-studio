@@ -249,8 +249,24 @@ canvas.p5Canvas{display:block;}
   max-height: calc(3 * 2.5em);
   overflow-y: auto;
 }
-#p5-var-controls label { margin-right: 8px; }
+#p5-var-controls label {
+  margin-right: 8px;
+  vertical-align: middle;
+  display: inline-flex;
+  align-items: center;
+}
 #p5-var-controls input { width: 60px; }
+#p5-var-controls input[type="checkbox"] {
+  width: auto;
+  min-width: 16px;
+  max-width: 16px;
+  height: auto;
+  min-height: 16px;
+  max-height: 16px;
+  accent-color: unset;
+  margin-right: 4px;
+  vertical-align: middle;
+}
 </style>
 </head>
 <body>
@@ -474,14 +490,36 @@ function renderGlobalVarControls(vars) {
   vars.forEach(v => {
     const label = document.createElement('label');
     label.textContent = v.name + ': ';
-    const input = document.createElement('input');
-    input.value = v.value !== undefined ? v.value : '';
+    let input;
+    if (typeof v.value === 'number') {
+      input = document.createElement('input');
+      input.type = 'number';
+      input.value = v.value;
+      if (!Number.isInteger(v.value)) {
+        input.step = 'any'; // allow decimals
+      }
+    } else if (typeof v.value === 'boolean') {
+      input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = v.value;
+      input.addEventListener('change', () => {
+        updateGlobalVarInSketch(v.name, input.checked);
+        vscode.postMessage({ type: 'updateGlobalVar', name: v.name, value: input.checked });
+      });
+    } else {
+      input = document.createElement('input');
+      input.type = 'text';
+      input.value = v.value !== undefined ? v.value : '';
+    }
     input.setAttribute('data-var', v.name);
-    // Use debounced input event for instant feedback
-    const debouncedUpdate = debounceWebview(() => {
-      updateGlobalVarInSketch(v.name, input.value);
-    }, window._p5DebounceDelay);
-    input.addEventListener('input', debouncedUpdate);
+    if (typeof v.value !== 'boolean') {
+      // Use debounced input event for instant feedback
+      const debouncedUpdate = debounceWebview(() => {
+        updateGlobalVarInSketch(v.name, input.value);
+        vscode.postMessage({ type: 'updateGlobalVar', name: v.name, value: input.value });
+      }, window._p5DebounceDelay);
+      input.addEventListener('input', debouncedUpdate);
+    }
     label.appendChild(input);
     controls.appendChild(label);
   });
@@ -598,7 +636,9 @@ export function activate(context: vscode.ExtensionContext) {
         // Always reload HTML for every code update to reset JS environment
         panel.webview.html = await createHtml(code, panel, context.extensionPath);
         // After HTML is set, send global variables
-        const globals = extractGlobalVariables(code);
+        let globals = extractGlobalVariables(code);
+        // Only keep number, string, boolean
+        globals = globals.filter(g => ['number', 'string', 'boolean'].includes(typeof g.value));
         setTimeout(() => {
           panel.webview.postMessage({ type: 'setGlobalVars', variables: globals });
         }, 200);
@@ -779,7 +819,8 @@ export function activate(context: vscode.ExtensionContext) {
         // Only set HTML on first open
         panel.webview.html = await createHtml(codeToInject, panel, context.extensionPath);
         // Send global variables immediately after setting HTML
-        const globals = extractGlobalVariables(codeToInject);
+        let globals = extractGlobalVariables(codeToInject);
+        globals = globals.filter(g => ['number', 'string', 'boolean'].includes(typeof g.value));
         setTimeout(() => {
           panel.webview.postMessage({ type: 'setGlobalVars', variables: globals });
         }, 200);
