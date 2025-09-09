@@ -104,13 +104,49 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string 
   const acorn = require('acorn');
   const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
   const globalNames = new Set(globals.map(g => g.name));
-  // Collect all top-level VariableDeclarations and rewrite let/const to var
   const programBody = ast.program.body;
   const newBody = [];
   for (let i = 0; i < programBody.length; i++) {
     let stmt = programBody[i];
+    // Detect setup function with createCanvas(windowWidth,windowHeight)
+    if (
+      stmt.type === 'FunctionDeclaration' &&
+      stmt.id && stmt.id.name === 'setup' &&
+      stmt.body && stmt.body.body
+    ) {
+      const newSetupBody = [];
+      for (let j = 0; j < stmt.body.body.length; j++) {
+        const b = stmt.body.body[j];
+        newSetupBody.push(b);
+        if (
+          b.type === 'ExpressionStatement' &&
+          b.expression.type === 'CallExpression' &&
+          b.expression.callee.name === 'createCanvas' &&
+          b.expression.arguments.length === 2 &&
+          b.expression.arguments[0].name === 'windowWidth' &&
+          b.expression.arguments[1].name === 'windowHeight'
+        ) {
+          // Inject resizeCanvas(window.innerWidth, window.innerHeight) immediately after createCanvas
+          newSetupBody.push(
+            recast.types.builders.expressionStatement(
+              recast.types.builders.callExpression(
+                recast.types.builders.identifier('resizeCanvas'),
+                [
+                  recast.types.builders.memberExpression(recast.types.builders.identifier('window'), recast.types.builders.identifier('innerWidth'), false),
+                  recast.types.builders.memberExpression(recast.types.builders.identifier('window'), recast.types.builders.identifier('innerHeight'), false)
+                ]
+              )
+            )
+          );
+        }
+      }
+      stmt = recast.types.builders.functionDeclaration(
+        stmt.id,
+        stmt.params,
+        recast.types.builders.blockStatement(newSetupBody)
+      );
+    }
     if (stmt.type === 'VariableDeclaration' && (stmt.kind === 'let' || stmt.kind === 'const')) {
-      // Only rewrite if any of the declared variables are globals
       if (stmt.declarations.some(decl => decl.id && decl.id.name && globalNames.has(decl.id.name))) {
         stmt = Object.assign({}, stmt, { kind: 'var' });
       }
@@ -255,6 +291,9 @@ canvas.p5Canvas{display:block;}
   display: inline-flex;
   align-items: center;
 }
+#p5-var-controls label > input {
+  margin-left: 8px;
+}
 #p5-var-controls input { width: 60px; }
 #p5-var-controls input[type="checkbox"] {
   width: auto;
@@ -263,7 +302,8 @@ canvas.p5Canvas{display:block;}
   height: auto;
   min-height: 16px;
   max-height: 16px;
-  accent-color: unset;
+  accent-color: #fff;
+  color-scheme: light;
   margin-right: 4px;
   vertical-align: middle;
 }
@@ -925,6 +965,14 @@ export function activate(context: vscode.ExtensionContext) {
   vscode.workspace.onDidChangeConfiguration(e => {
     if (e.affectsConfiguration('liveP5.debounceDelay')) {
       debounceMap.clear(); // Clear so new debounceDelay is used on next change
+    }
+  });
+
+  vscode.workspace.onDidCloseTextDocument(doc => {
+    const docUri = doc.uri.toString();
+    const panel = webviewPanelMap.get(docUri);
+    if (panel) {
+      panel.dispose();
     }
   });
 }
