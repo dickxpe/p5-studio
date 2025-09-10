@@ -51,8 +51,8 @@
         "command": "extension.reload-p5-sketch",
         "title": "Reload P5 Sketch",
         "icon": {
-          "light": "images/reload.svg",
-          "dark": "images/reload.svg"
+          "light": "images/run.svg",
+          "dark": "images/run.svg"
         }
       },
       {

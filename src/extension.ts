@@ -367,10 +367,6 @@ canvas.p5Canvas{display:block;}
 <body>
 <div id="error-overlay"></div>
 <div id="reload-button"><img src="${reloadIconUri}" title="Reload P5 Sketch"></div>
-<div id="p5-var-controls" style="display:none">
-  <button class="drawer-toggle" title="Hide controls">&#x25BC;</button>
-</div>
-<div id="p5-var-drawer-tab"><span class="arrow">&#x25B2;</span></div>
 <script>
 window._p5UserCode = ${JSON.stringify(escapedCode)};
 const vscode = acquireVsCodeApi();
@@ -580,71 +576,53 @@ function updateGlobalVarInSketch(name, value) {
   }
 }
 
-// Drawer logic
-const p5VarControls = document.getElementById('p5-var-controls');
-const p5VarDrawerTab = document.getElementById('p5-var-drawer-tab');
-const drawerToggleBtn = p5VarControls.querySelector('.drawer-toggle');
+// Drawer logic (removed static references, now handled in renderGlobalVarControls)
+// Set initial drawer state based on config (removed static logic, now handled in renderGlobalVarControls)
+
 function hideDrawer() {
-  p5VarControls.classList.add('drawer-hidden');
+  const controls = document.getElementById('p5-var-controls');
+  const tab = document.getElementById('p5-var-drawer-tab');
+  if (!controls || !tab) return;
+  controls.classList.add('drawer-hidden');
   setTimeout(() => {
-    p5VarControls.style.display = 'none';
-    p5VarDrawerTab.style.display = 'flex';
-    p5VarDrawerTab.classList.add('tab-visible');
+    controls.style.display = 'none';
+    tab.style.display = 'flex';
+    tab.classList.add('tab-visible');
   }, 200);
 }
 function showDrawer() {
-  p5VarControls.style.display = 'flex';
-  setTimeout(() => {
-    p5VarControls.classList.remove('drawer-hidden');
-    p5VarDrawerTab.classList.remove('tab-visible');
-    setTimeout(() => { p5VarDrawerTab.style.display = 'none'; }, 200);
-  }, 10);
-}
-drawerToggleBtn.addEventListener('click', hideDrawer);
-p5VarDrawerTab.addEventListener('click', showDrawer);
-
-// Set initial drawer state based on config
-(function setInitialDrawerState() {
-  const state = window._p5VarDrawerDefaultState;
-  if (state === 'hidden') {
-    p5VarControls.style.display = 'none';
-    p5VarDrawerTab.style.display = 'none';
-    p5VarControls.innerHTML = '';
-    return;
-  } else if (state === 'collapsed') {
-    p5VarControls.classList.add('drawer-hidden');
-    p5VarControls.style.display = 'none';
-    p5VarDrawerTab.style.display = 'flex'; // Show the tab when collapsed
-  } else {
-    // open
-    p5VarControls.classList.remove('drawer-hidden');
-    p5VarControls.style.display = 'flex';
-    p5VarDrawerTab.style.display = 'none';
-  }
-})();
-
-function renderGlobalVarControls(vars) {
   const controls = document.getElementById('p5-var-controls');
   const tab = document.getElementById('p5-var-drawer-tab');
-  if (!controls) return;
-  if (window._p5VarDrawerDefaultState === 'hidden') {
-    controls.style.display = 'none';
-    tab.style.display = 'none';
+  if (!controls || !tab) return;
+  controls.style.display = 'flex';
+  setTimeout(() => {
+    controls.classList.remove('drawer-hidden');
     tab.classList.remove('tab-visible');
-    controls.innerHTML = '';
+    setTimeout(() => { tab.style.display = 'none'; }, 200);
+  }, 10);
+}
+
+function renderGlobalVarControls(vars) {
+  let controls = document.getElementById('p5-var-controls');
+  let tab = document.getElementById('p5-var-drawer-tab');
+  if (!vars || vars.length === 0) {
+    if (controls) controls.remove();
+    if (tab) tab.remove();
     return;
   }
-  if (!vars || vars.length === 0) {
-    controls.innerHTML = '';
+  // If controls/tab do not exist, create and append them
+  if (!controls) {
+    controls = document.createElement('div');
+    controls.id = 'p5-var-controls';
     controls.style.display = 'none';
-    if (window._p5VarDrawerDefaultState === 'collapsed') {
-      tab.style.display = 'flex';
-      tab.classList.add('tab-visible');
-    } else {
-      tab.style.display = 'none';
-      tab.classList.remove('tab-visible');
-    }
-    return;
+    controls.innerHTML = '<button class="drawer-toggle" title="Hide controls">&#x25BC;</button>';
+    document.body.appendChild(controls);
+  }
+  if (!tab) {
+    tab = document.createElement('div');
+    tab.id = 'p5-var-drawer-tab';
+    tab.innerHTML = '<span class="arrow">&#x25B2;</span>';
+    document.body.appendChild(tab);
   }
   controls.innerHTML = '<button class="drawer-toggle" title="Hide controls">&#x25BC;</button>';
   if (window._p5VarDrawerDefaultState === 'collapsed') {
@@ -696,6 +674,9 @@ function renderGlobalVarControls(vars) {
     label.appendChild(input);
     controls.appendChild(label);
   });
+  // Re-attach drawer logic if needed
+  controls.querySelector('.drawer-toggle').addEventListener('click', hideDrawer);
+  tab.addEventListener('click', showDrawer);
 }
 </script>
 </body>
