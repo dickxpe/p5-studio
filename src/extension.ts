@@ -711,9 +711,8 @@ export function activate(context: vscode.ExtensionContext) {
   function updateP5Context(editor?: vscode.TextEditor) {
     editor = editor || vscode.window.activeTextEditor;
     if (!editor) return vscode.commands.executeCommand('setContext', 'isP5js', false);
-    const text = editor.document.getText();
-    const containsP5 = /\bfunction\s+setup\s*\(/.test(text) || /\bfunction\s+draw\s*\(/.test(text);
-    vscode.commands.executeCommand('setContext', 'isP5js', containsP5);
+    const isJsOrTs = ['javascript', 'typescript'].includes(editor.document.languageId);
+    vscode.commands.executeCommand('setContext', 'isP5js', isJsOrTs);
   }
 
   // P5 Reference status bar button
@@ -793,7 +792,7 @@ export function activate(context: vscode.ExtensionContext) {
     const fileName = path.basename(document.fileName);
     const outputChannel = getOrCreateOutputChannel(docUri, fileName);
 
-    const code = document.getText();
+    let code = document.getText();
     let syntaxErrorMsg: string | null = null;
     let hadSyntaxError = false;
     try {
@@ -802,20 +801,18 @@ export function activate(context: vscode.ExtensionContext) {
       const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
 
       if (!hasSetup && !hasDraw) {
-        syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(document.fileName)}] Missing required function: setup() or draw()`;
-        panel.webview.html = await createHtml('', panel, context.extensionPath);
-        hadSyntaxError = true;
-      } else {
-        // Always reload HTML for every code update to reset JS environment
-        panel.webview.html = await createHtml(code, panel, context.extensionPath);
-        // After HTML is set, send global variables
-        let globals = extractGlobalVariables(code);
-        // Only keep number, string, boolean
-        globals = globals.filter(g => ['number', 'string', 'boolean'].includes(typeof g.value));
-        setTimeout(() => {
-          panel.webview.postMessage({ type: 'setGlobalVars', variables: globals });
-        }, 200);
+        // Wrap code in a setup function
+        code = `function setup() {\n${code}\n}`;
       }
+      // Always reload HTML for every code update to reset JS environment
+      panel.webview.html = await createHtml(code, panel, context.extensionPath);
+      // After HTML is set, send global variables
+      let globals = extractGlobalVariables(code);
+      // Only keep number, string, boolean
+      globals = globals.filter(g => ['number', 'string', 'boolean'].includes(typeof g.value));
+      setTimeout(() => {
+        panel.webview.postMessage({ type: 'setGlobalVars', variables: globals });
+      }, 200);
     } catch (err: any) {
       syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(document.fileName)}] ${err.message}`;
       panel.webview.html = await createHtml('', panel, context.extensionPath);
@@ -882,7 +879,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (!editor) return;
       const docUri = editor.document.uri.toString();
       let panel = webviewPanelMap.get(docUri);
-      const code = editor.document.getText();
+      let code = editor.document.getText();
 
       if (!panel) {
         // Check for syntax errors before setting HTML
@@ -893,8 +890,8 @@ export function activate(context: vscode.ExtensionContext) {
           const hasSetup = /\bfunction\s+setup\s*\(/.test(code);
           const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
           if (!hasSetup && !hasDraw) {
-            syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(editor.document.fileName)}] Missing required function: setup() or draw()`;
-            codeToInject = '';
+            // Wrap code in a setup function
+            codeToInject = `function setup() {\n${code}\n}`;
           }
         } catch (err: any) {
           syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(editor.document.fileName)}] ${err.message}`;
@@ -957,9 +954,18 @@ export function activate(context: vscode.ExtensionContext) {
             if (panel) (panel as any)._lastRuntimeError = message;
           } else if (msg.type === 'reload-button-clicked') {
             // Forward preserveGlobals flag to webview, but send rewritten code
-            const code = editor.document.getText();
+            let code = editor.document.getText();
             const globals = extractGlobalVariables(code);
-            const rewrittenCode = rewriteUserCodeWithWindowGlobals(code, globals);
+            let rewrittenCode = rewriteUserCodeWithWindowGlobals(code, globals);
+            if (msg.preserveGlobals && globals.length > 0) {
+              // Remove global var declarations and window assignments
+              globals.forEach(g => {
+                // Remove lines like 'var x = ...;' or 'var x;' (with or without semicolon)
+                rewrittenCode = rewrittenCode.replace(new RegExp('^\\s*var\\s+' + g.name + '(\\s*=.*)?;?\\s*$', 'gm'), '');
+                // Remove lines like 'window.x = x;' (with or without semicolon)
+                rewrittenCode = rewrittenCode.replace(new RegExp('^\\s*window\\.' + g.name + '\\s*=\\s*' + g.name + ';?\\s*$', 'gm'), '');
+              });
+            }
             panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: msg.preserveGlobals });
           } else if (msg.type === 'requestLastRuntimeError') {
             // No-op in extension, handled in webview below
@@ -1006,7 +1012,13 @@ export function activate(context: vscode.ExtensionContext) {
         panel.reveal(panel.viewColumn, true);
         // Only send reload message on reveal, do not set HTML again
         setTimeout(() => {
-          panel.webview.postMessage({ type: 'reload', code });
+          let codeToSend = code;
+          const hasSetup = /\bfunction\s+setup\s*\(/.test(code);
+          const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
+          if (!hasSetup && !hasDraw) {
+            codeToSend = `function setup() {\n${code}\n}`;
+          }
+          panel.webview.postMessage({ type: 'reload', code: codeToSend });
         }, 100);
       }
 
