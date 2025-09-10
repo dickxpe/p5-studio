@@ -14,6 +14,9 @@ const autoReloadListenersMap = new Map<
 
 // Map from document URI to output channel
 const outputChannelMap = new Map<string, vscode.OutputChannel>();
+
+// Returns the output channel for a document, creating it if needed
+// Used for logging and error output per sketch
 function getOrCreateOutputChannel(docUri: string, fileName: string) {
   let channel = outputChannelMap.get(docUri);
   if (!channel) {
@@ -23,6 +26,8 @@ function getOrCreateOutputChannel(docUri: string, fileName: string) {
   return channel;
 }
 
+// Debounce utility: delays function execution by a given delay
+// Used to avoid excessive reloads while typing
 function debounce<Func extends (...args: any[]) => void>(fn: Func, delay: number) {
   let timeout: NodeJS.Timeout;
   return (...args: Parameters<Func>) => {
@@ -31,6 +36,7 @@ function debounce<Func extends (...args: any[]) => void>(fn: Func, delay: number
   };
 }
 
+// Returns current time as HH:MM:SS string for log timestamps
 function getTime(): string {
   const now = new Date();
   const h = String(now.getHours()).padStart(2, '0');
@@ -39,12 +45,12 @@ function getTime(): string {
   return `${h}:${m}:${s}`;
 }
 
-// Get debounce delay from configuration
+// Reads debounce delay from user config
 function getDebounceDelay() {
   return vscode.workspace.getConfiguration('liveP5').get<number>('debounceDelay', 500);
 }
 
-// Utility to recursively list .js/.ts files in a folder
+// Recursively lists .js/.ts files in a folder (for common/import scripts)
 async function listFilesRecursively(dirUri: vscode.Uri, exts: string[]): Promise<string[]> {
   let files: string[] = [];
   try {
@@ -61,7 +67,7 @@ async function listFilesRecursively(dirUri: vscode.Uri, exts: string[]): Promise
   return files;
 }
 
-// Utility to extract global variables from user code
+// Extracts top-level global variables from user code (number, string, boolean)
 function extractGlobalVariables(code: string): { name: string, value: any }[] {
   const acorn = require('acorn');
   const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
@@ -98,7 +104,7 @@ function extractGlobalVariables(code: string): { name: string, value: any }[] {
   return globals;
 }
 
-// Rewrite user code to replace all references to globals with window.<varname>
+// Rewrites user code so global variables are attached to window (for live editing)
 function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string }[]): string {
   if (!globals.length) return code;
   const acorn = require('acorn');
@@ -304,7 +310,7 @@ canvas.p5Canvas{display:block;}
   background: none;
   border: none;
   color: #fff;
-  font-size: 18px;
+  font-size: 16px;
   cursor: pointer;
   z-index: 10001;
   padding: 2px 4px;
@@ -323,7 +329,7 @@ canvas.p5Canvas{display:block;}
   border-radius: 6px 0px 0px 0px;
   padding: 2px 4px 2px 4px;
   font-family: monospace;
-  font-size: 18px;
+  font-size: 20px;
   z-index: 10001;
   box-shadow: 0 -2px 8px rgba(0,0,0,0.2);
   cursor: pointer;
@@ -576,9 +582,7 @@ function updateGlobalVarInSketch(name, value) {
   }
 }
 
-// Drawer logic (removed static references, now handled in renderGlobalVarControls)
-// Set initial drawer state based on config (removed static logic, now handled in renderGlobalVarControls)
-
+// Hides the variable drawer UI in the webview
 function hideDrawer() {
   const controls = document.getElementById('p5-var-controls');
   const tab = document.getElementById('p5-var-drawer-tab');
@@ -590,6 +594,8 @@ function hideDrawer() {
     tab.classList.add('tab-visible');
   }, 200);
 }
+
+// Shows the variable drawer UI in the webview
 function showDrawer() {
   const controls = document.getElementById('p5-var-controls');
   const tab = document.getElementById('p5-var-drawer-tab');
@@ -602,6 +608,7 @@ function showDrawer() {
   }, 10);
 }
 
+// Dynamically creates/removes the variable drawer and tab, and sets up event listeners for variable changes
 function renderGlobalVarControls(vars) {
   let controls = document.getElementById('p5-var-controls');
   let tab = document.getElementById('p5-var-drawer-tab');
@@ -766,6 +773,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Add a flag to ignore logs after a syntax error
   let ignoreLogs = false;
 
+  // Updates the webview panel with new code, handles syntax errors, and sends global variables
   async function updateDocumentPanel(document: vscode.TextDocument, forceLog = false) {
     const docUri = document.uri.toString();
     const panel = webviewPanelMap.get(docUri);
@@ -828,7 +836,7 @@ export function activate(context: vscode.ExtensionContext) {
     await vscode.commands.executeCommand('setContext', 'liveP5ReloadWhileTypingEnabled', reloadWhileTyping);
   }
 
-  // Restore updateAutoReloadListeners function inside activate for correct scope
+  // Sets up listeners for reload-on-typing and reload-on-save per document
   function updateAutoReloadListeners(editor: vscode.TextEditor) {
     const docUri = editor.document.uri.toString();
     const existing = autoReloadListenersMap.get(docUri);
@@ -1063,6 +1071,8 @@ export function activate(context: vscode.ExtensionContext) {
             "**/*.js",
             "*.ts",
             "¨**/.ts",
+            "common/*.js",
+            "import/*.js",
             path.join(context.extensionPath, "p5types", "global.d.ts")
           ]
         };
