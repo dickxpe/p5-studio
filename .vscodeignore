@@ -1,4 +1,3 @@
-
 # Exclude source, test, and dev files
 **/*.map
 **/src/**
@@ -10,7 +9,7 @@
 npm-debug.log
 README.md
 CHANGELOG.md
+!p5types/**/*.ts
 **/*.ts
 **/P5TestProject/**
 **/typescript/**
-**/p5types/**

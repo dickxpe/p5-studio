@@ -902,12 +902,7 @@ export function activate(context: vscode.ExtensionContext) {
         let codeToInject = code;
         try {
           new Function(code);
-          const hasSetup = /\bfunction\s+setup\s*\(/.test(code);
-          const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
-          if (!hasSetup && !hasDraw) {
-            // Wrap code in a setup function
-            codeToInject = `function setup() {\n${code}\n}`;
-          }
+          codeToInject = wrapInSetupIfNeeded(code);
         } catch (err: any) {
           syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(editor.document.fileName)}] ${err.message}`;
           codeToInject = '';
@@ -972,14 +967,13 @@ export function activate(context: vscode.ExtensionContext) {
           } else if (msg.type === 'reload-button-clicked') {
             // Forward preserveGlobals flag to webview, but send rewritten code
             let code = editor.document.getText();
+            code = wrapInSetupIfNeeded(code);
             const globals = extractGlobalVariables(code);
             let rewrittenCode = rewriteUserCodeWithWindowGlobals(code, globals);
             if (msg.preserveGlobals && globals.length > 0) {
               // Remove global var declarations and window assignments
               globals.forEach(g => {
-                // Remove lines like 'var x = ...;' or 'var x;' (with or without semicolon)
                 rewrittenCode = rewrittenCode.replace(new RegExp('^\\s*var\\s+' + g.name + '(\\s*=.*)?;?\\s*$', 'gm'), '');
-                // Remove lines like 'window.x = x;' (with or without semicolon)
                 rewrittenCode = rewrittenCode.replace(new RegExp('^\\s*window\\.' + g.name + '\\s*=\\s*' + g.name + ';?\\s*$', 'gm'), '');
               });
             }
@@ -1027,14 +1021,8 @@ export function activate(context: vscode.ExtensionContext) {
         }
       } else {
         panel.reveal(panel.viewColumn, true);
-        // Only send reload message on reveal, do not set HTML again
         setTimeout(() => {
-          let codeToSend = code;
-          const hasSetup = /\bfunction\s+setup\s*\(/.test(code);
-          const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
-          if (!hasSetup && !hasDraw) {
-            codeToSend = `function setup() {\n${code}\n}`;
-          }
+          let codeToSend = wrapInSetupIfNeeded(code);
           panel.webview.postMessage({ type: 'reload', code: codeToSend });
         }, 100);
       }
@@ -1160,6 +1148,16 @@ export function activate(context: vscode.ExtensionContext) {
       panel.dispose();
     }
   });
+}
+
+// Helper: Wrap code in setup() if no setup/draw present
+function wrapInSetupIfNeeded(code: string): string {
+  const hasSetup = /\bfunction\s+setup\s*\(/.test(code);
+  const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
+  if (!hasSetup && !hasDraw) {
+    return `function setup() {\n${code}\n}`;
+  }
+  return code;
 }
 
 
