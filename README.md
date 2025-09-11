@@ -3,6 +3,8 @@
 ## Introduction
 LIVE P5 LAUNCHER is a Visual Studio Code extension that brings live coding and rapid prototyping to p5.js sketches. It provides an interactive webview panel for instant feedback, variable control, and error reporting, making it ideal for creative coding, teaching, and experimentation with p5.js in JavaScript or TypeScript.
 
+![LIVE P5 Launcher Screenshot](./readme/p5live_Screenshot.png)
+
 ## Features
 - **Live Preview:** Instantly see your p5.js sketch update as you type or save.
 - **Global Variable Controls:** Automatically detects global variables and provides a UI to adjust them in real time.

@@ -2,7 +2,7 @@
   "name": "live-p5-launcher",
   "displayName": "LIVE P5 LAUNCHER",
   "description": "Launch and edit P5 in VS Code",
-  "version": "1.1.2",
+  "version": "1.1.4",
   "icon": "images/ICON.png",
   "author": {
     "name": "peterdickx"
@@ -22,8 +22,7 @@
     "Other"
   ],
   "activationEvents": [
-    "onLanguage:javascript",
-    "onLanguage:typescript"
+    "onStartupFinished"
   ],
   "main": "./dist/extension.js",
   "files": [

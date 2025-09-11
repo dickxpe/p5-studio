@@ -1104,29 +1104,51 @@ export function activate(context: vscode.ExtensionContext) {
             "import/*.js",
             path.join(context.extensionPath, "p5types", "global.d.ts"),
             path.join(context.extensionPath, "p5types", "p5helper.d.ts"),
-
           ]
         };
         fs.mkdirSync(workspaceFolder.uri.fsPath + "/common", { recursive: true });
         fs.mkdirSync(workspaceFolder.uri.fsPath + "/import", { recursive: true });
         fs.mkdirSync(workspaceFolder.uri.fsPath + "/media", { recursive: true });
         fs.mkdirSync(workspaceFolder.uri.fsPath + "/sketches", { recursive: true });
+
         // Create empty utils.js if not exists
         const utilsPath = path.join(workspaceFolder.uri.fsPath, "common", "utils.js");
         if (!fs.existsSync(utilsPath)) {
           fs.writeFileSync(utilsPath, "");
         }
-        // Create sketch1.js in sketches if not exists
+
+        // Create sketch1.js only if it doesn't exist and remember whether we created it
         const sketch1Path = path.join(workspaceFolder.uri.fsPath + "/sketches", "sketch1.js");
-        if (!fs.existsSync(sketch1Path)) {
-          fs.writeFileSync(sketch1Path, "function setup() {\n  //Start coding with P5 here!\n}\n");
+        const sketch1Existed = fs.existsSync(sketch1Path);
+
+        const sketchString = `//Start coding with P5 here!
+//Have a look at the P5 Reference: https://p5js.org/reference/ 
+//Click the P5 button at the top to run your sketch! ⤴
+
+noStroke();
+fill("red");
+circle(50, 50, 80);
+fill("white");
+textFont("Arial", 36);
+textAlign(CENTER, CENTER);
+text("P5", 50, 52);`;
+        if (!sketch1Existed) {
+          fs.writeFileSync(sketch1Path, sketchString);
         }
+
         const jsconfigPath = path.join(workspaceFolder.uri.fsPath, "jsconfig.json");
         writeFileSync(jsconfigPath, JSON.stringify(jsconfig, null, 2));
         vscode.window.showInformationMessage('P5 project setup complete!');
+
         // If a folder was selected via dialog, open it as the workspace
         if (selectedFolderUri) {
           await vscode.commands.executeCommand('vscode.openFolder', selectedFolderUri, false);
+        } else {
+          // Open sketch1.js only if it was created just now and we remain in the same workspace
+          if (!sketch1Existed) {
+            const doc = await vscode.workspace.openTextDocument(sketch1Path);
+            await vscode.window.showTextDocument(doc, { preview: false });
+          }
         }
       } catch (e) {
         console.error(e);
@@ -1148,6 +1170,22 @@ export function activate(context: vscode.ExtensionContext) {
       panel.dispose();
     }
   });
+
+  // --- Show notification to setup P5 project if not already set up ---
+  (async function showSetupNotificationIfNeeded() {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) return;
+    const jsconfigPath = path.join(workspaceFolder.uri.fsPath, "jsconfig.json");
+    if (!fs.existsSync(jsconfigPath)) {
+      const action = await vscode.window.showInformationMessage(
+        "This project isn't configured for P5 yet. Would you like to set it up now?",
+        "Setup P5 Project"
+      );
+      if (action === "Setup P5 Project") {
+        vscode.commands.executeCommand('extension.create-jsconfig');
+      }
+    }
+  })();
 }
 
 // Helper: Wrap code in setup() if no setup/draw present
