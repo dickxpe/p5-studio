@@ -14,7 +14,7 @@ LIVE P5 LAUNCHER is a Visual Studio Code extension that brings live coding and r
 - **Workspace Imports:** Automatically loads scripts from `common/` and `import/` folders in your workspace.
 - **Resizable Canvas:** Supports auto-resizing.
 - **P5 Reference Integration:** Quick access to the p5.js reference and lookup for selected text.
-- **Project Bootstrap:** Command to create a folder structure for p5.js projects and `jsconfig.json`. 
+- **Project Bootstrap:** Quick setup to create a folder structure for p5.js projects and a `jsconfig.json` for p5js types intellisense.
 
 ## How to Use
 1. **Install the Extension:**
@@ -26,12 +26,12 @@ LIVE P5 LAUNCHER is a Visual Studio Code extension that brings live coding and r
 
 2. **Open or Create a Sketch:**
    - Open a `.js` or `.ts` file with your p5.js code.
-   - Use the command palette (`Ctrl+Shift+P` or `Cmd+Shift+P`) and run `Live P5: Open P5 Panel` (or use the status bar button).
+   - Use P5 Live BUTTON (or the command palette (`Ctrl+Shift+P` or `Cmd+Shift+P`) and run `Live P5: Open P5 Panel`.
 
 3. **Live Coding:**
    - Edit your code and see changes instantly in the webview panel.
    - Adjust global variables using the controls at the bottom of the panel.
-   - Errors will appear as overlays and in the Output panel.
+   - Errors will appear as overlays and in a dedicated output channel per sketch.
 
 4. **Reload Options:**
    - Use the reload button in the webview to manually reload and preserve variable values.
@@ -44,7 +44,7 @@ LIVE P5 LAUNCHER is a Visual Studio Code extension that brings live coding and r
 
 6. **P5 Reference:**
    - Use the status bar button or command palette to quickly open the p5.js reference.
-   - Select text in your code and run `Live: Lookup in P5 Reference` to search the docs.
+   - Select text in your code, right click and choose "Search in P5 reference" for a shortcut.
 
 ## Configuration
 - `liveP5.debounceDelay`: Delay (ms) for live reload on typing.

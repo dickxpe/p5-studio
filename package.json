@@ -2,7 +2,7 @@
   "name": "live-p5-launcher",
   "displayName": "LIVE P5 LAUNCHER",
   "description": "Launch and edit P5 in VS Code",
-  "version": "1.1.6",
+  "version": "1.1.7",
   "icon": "images/ICON.png",
   "author": {
     "name": "peterdickx"
@@ -145,6 +145,11 @@
           ],
           "default": "collapsed",
           "description": "Default state of the global variable drawer in the P5 panel. 'open' shows the drawer by, 'collapsed' shows only the tab, 'hidden' hides the drawer completely."
+        },
+        "liveP5.showSetupNotification": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a setup prompt when the workspace has no P5 configuration (jsconfig.json). Choose 'Don't show again' to turn this off."
         }
       }
     }

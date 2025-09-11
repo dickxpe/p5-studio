@@ -1175,14 +1175,23 @@ text("P5", 50, 52);`;
   (async function showSetupNotificationIfNeeded() {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) return;
+
+    // NEW: read setting to allow disabling the notification
+    const config = vscode.workspace.getConfiguration('liveP5');
+    const showSetupNotification = config.get<boolean>('showSetupNotification', true);
+    if (!showSetupNotification) return;
+
     const jsconfigPath = path.join(workspaceFolder.uri.fsPath, "jsconfig.json");
     if (!fs.existsSync(jsconfigPath)) {
       const action = await vscode.window.showInformationMessage(
         "This project isn't configured for P5 yet. Would you like to set it up now?",
-        "Setup P5 Project"
+        "Setup P5 Project",
+        "Don't show again"
       );
       if (action === "Setup P5 Project") {
         vscode.commands.executeCommand('extension.create-jsconfig');
+      } else if (action === "Don't show again") {
+        await config.update('showSetupNotification', false, vscode.ConfigurationTarget.Global);
       }
     }
   })();
