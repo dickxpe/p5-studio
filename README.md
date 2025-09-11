@@ -58,4 +58,11 @@ LIVE P5 LAUNCHER is a Visual Studio Code extension that brings live coding and r
 - Prototype extensions (e.g., `p5.prototype.myFunc`) may require a `.d.ts` or JSDoc shim for IntelliSense.
 
 ## License
-MIT
+Unlicense https://unlicense.org
+
+## Attributions
+Shout out to: https://github.com/filipesabella/
+with his extension vscode-live-p5
+His project was the start for mine, initially i made a few UI Changes,
+but i had a different vision for this tool and went back to the drawing board.
+Not much of the original code is left in my project, but I still wanted to give credit to Filipe for his great work and inspiration!
