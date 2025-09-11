@@ -1,6 +1,16 @@
-src/**
+
+# Exclude source, test, and dev files
 **/*.map
+**/src/**
+**/test/**
+**/out/test/**
+.vscode/**
+.git/**
 .gitignore
-tsconfig.json
-image.gif
-!node_modules/
+npm-debug.log
+README.md
+CHANGELOG.md
+**/*.ts
+**/P5TestProject/**
+**/typescript/**
+**/p5types/**

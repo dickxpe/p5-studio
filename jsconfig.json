@@ -7,7 +7,7 @@
   "include": [
     "*.js",
     "**/*.js",
-    "c:\\Users\\Peter\\.vscode\\extensions\\peterdickx.live-p5-launcher-1.0.0\\p5types\\global.d.ts"
-  ],
+    "c:\\Users\\Peter\\.vscode\\extensions\\peterdickx.live-p5-launcher-1.0.0\\p5types\\global.d.ts",
+   "c:\\Users\\Peter\\.vscode\\extensions\\peterdickx.live-p5-launcher-1.0.0\\p5types\\p5helper.d.ts"],
   "exclude": ["node_modules"]
 }

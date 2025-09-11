@@ -218,6 +218,10 @@ async function createHtml(
   const p5Path = vscode.Uri.file(path.join(extensionPath, 'assets', 'p5.min.js'));
   const p5Uri = panel.webview.asWebviewUri(p5Path);
 
+  // Add p5.sound.min.js
+  const p5SoundPath = vscode.Uri.file(path.join(extensionPath, 'assets', 'p5.sound.min.js'));
+  const p5SoundUri = panel.webview.asWebviewUri(p5SoundPath);
+
   const reloadIconPath = vscode.Uri.file(path.join(extensionPath, 'images', 'reload.svg'));
   const reloadIconUri = panel.webview.asWebviewUri(reloadIconPath);
 
@@ -226,7 +230,7 @@ async function createHtml(
     .get<boolean>('showReloadButton', true);
 
   function escapeBackticks(str: string) {
-    return str.replace(/`/g, '\\`');
+    return str.replace(/`/g, '\`');
   }
 
   // Detect globals and rewrite code
@@ -236,6 +240,7 @@ async function createHtml(
 
   const uniqueId = Date.now() + '-' + Math.random().toString(36).substr(2, 8);
   const p5UriWithCacheBust = vscode.Uri.parse(p5Uri.toString() + `?v=${uniqueId}`);
+  const p5SoundUriWithCacheBust = vscode.Uri.parse(p5SoundUri.toString() + `?v=${uniqueId}`);
 
   // --- Inject common and import scripts ---
   let scriptTags = '';
@@ -249,12 +254,14 @@ async function createHtml(
         const files = await listFilesRecursively(vscode.Uri.file(dir), ['.js', '.ts']);
         allFiles = allFiles.concat(files);
       }
-      // Ensure p5.min.js is always loaded first
+      // Ensure p5.min.js and p5.sound.min.js are always loaded first
       scriptTags = `<script src='${p5UriWithCacheBust}'></script>\n` +
+        `<script src='${p5SoundUriWithCacheBust}'></script>\n` +
         allFiles.map(s => `<script src='${panel.webview.asWebviewUri(vscode.Uri.file(s))}'></script>`).join('\n');
     } else {
-      // Fallback: just p5
-      scriptTags = `<script src='${p5UriWithCacheBust}'></script>`;
+      // Fallback: just p5 and p5.sound
+      scriptTags = `<script src='${p5UriWithCacheBust}'></script>\n` +
+        `<script src='${p5SoundUriWithCacheBust}'></script>`;
     }
   } catch (e) { /* ignore */ }
 
@@ -262,6 +269,17 @@ async function createHtml(
   const debounceDelay = vscode.workspace.getConfiguration('liveP5').get<number>('debounceDelay', 500);
   // Get varDrawerDefaultState from config
   const varDrawerDefaultState = vscode.workspace.getConfiguration('liveP5').get<string>('varDrawerDefaultState', 'open');
+
+  // Get the webview URI for the media folder (if it exists)
+  let mediaWebviewUriPrefix = '';
+  try {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (workspaceFolder) {
+      const mediaFolder = path.join(workspaceFolder.uri.fsPath, 'media');
+      const mediaUri = vscode.Uri.file(mediaFolder);
+      mediaWebviewUriPrefix = panel.webview.asWebviewUri(mediaUri).toString();
+    }
+  } catch (e) { /* ignore */ }
 
   return `<!DOCTYPE html>
 <!-- cache-bust: ${uniqueId} -->
@@ -374,6 +392,9 @@ canvas.p5Canvas{display:block;}
 <div id="error-overlay"></div>
 <div id="reload-button"><img src="${reloadIconUri}" title="Reload P5 Sketch"></div>
 <script>
+// --- Provide MEDIA_FOLDER global for user sketches ---
+const MEDIA_FOLDER = ${JSON.stringify(mediaWebviewUriPrefix)};
+
 window._p5UserCode = ${JSON.stringify(escapedCode)};
 const vscode = acquireVsCodeApi();
 window._p5Instance = null;
@@ -587,11 +608,13 @@ function hideDrawer() {
   const controls = document.getElementById('p5-var-controls');
   const tab = document.getElementById('p5-var-drawer-tab');
   if (!controls || !tab) return;
-  controls.classList.add('drawer-hidden');
+  if (controls) controls.classList.add('drawer-hidden');
   setTimeout(() => {
-    controls.style.display = 'none';
-    tab.style.display = 'flex';
-    tab.classList.add('tab-visible');
+    if (controls) controls.style.display = 'none';
+    if (tab) {
+      tab.style.display = 'flex';
+      tab.classList.add('tab-visible');
+    }
   }, 200);
 }
 
@@ -600,11 +623,11 @@ function showDrawer() {
   const controls = document.getElementById('p5-var-controls');
   const tab = document.getElementById('p5-var-drawer-tab');
   if (!controls || !tab) return;
-  controls.style.display = 'flex';
+  if (controls) controls.style.display = 'flex';
   setTimeout(() => {
-    controls.classList.remove('drawer-hidden');
-    tab.classList.remove('tab-visible');
-    setTimeout(() => { tab.style.display = 'none'; }, 200);
+    if (controls) controls.classList.remove('drawer-hidden');
+    if (tab) tab.classList.remove('tab-visible');
+    setTimeout(() => { if (tab) tab.style.display = 'none'; }, 200);
   }, 10);
 }
 
@@ -836,6 +859,9 @@ export function activate(context: vscode.ExtensionContext) {
     await vscode.commands.executeCommand('setContext', 'liveP5ReloadWhileTypingEnabled', reloadWhileTyping);
   }
 
+  // --- Ensure context key is set on activation ---
+  updateReloadWhileTypingVarsAndContext();
+
   // Sets up listeners for reload-on-typing and reload-on-save per document
   function updateAutoReloadListeners(editor: vscode.TextEditor) {
     const docUri = editor.document.uri.toString();
@@ -900,6 +926,8 @@ export function activate(context: vscode.ExtensionContext) {
               vscode.Uri.file(path.join(context.extensionPath, 'images')),
               vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'common')),
               vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'import')),
+              vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'media')),
+
             ],
             retainContextWhenHidden: true
           }
@@ -1062,8 +1090,21 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.create-jsconfig', async () => {
       try {
-        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-        if (!workspaceFolder) return;
+        let workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        let selectedFolderUri: vscode.Uri | undefined;
+        if (!workspaceFolder) {
+          // Prompt user to select a folder if none is open
+          const folderUris = await vscode.window.showOpenDialog({
+            canSelectFolders: true,
+            canSelectFiles: false,
+            canSelectMany: false,
+            openLabel: 'Select folder for new P5 project'
+          });
+          if (!folderUris || folderUris.length === 0) return;
+          selectedFolderUri = folderUris[0];
+          workspaceFolder = { uri: selectedFolderUri, name: '', index: 0 };
+        }
+        vscode.window.showInformationMessage('Setting up new P5 project...');
         // creates a jsconfig that tells vscode where to find the types file
         const jsconfig = {
           include: [
@@ -1073,7 +1114,9 @@ export function activate(context: vscode.ExtensionContext) {
             "¨**/.ts",
             "common/*.js",
             "import/*.js",
-            path.join(context.extensionPath, "p5types", "global.d.ts")
+            path.join(context.extensionPath, "p5types", "global.d.ts"),
+            path.join(context.extensionPath, "p5types", "p5helper.d.ts"),
+
           ]
         };
         fs.mkdirSync(workspaceFolder.uri.fsPath + "/common", { recursive: true });
@@ -1086,12 +1129,17 @@ export function activate(context: vscode.ExtensionContext) {
           fs.writeFileSync(utilsPath, "");
         }
         // Create sketch1.js in sketches if not exists
-        const sketch1Path = path.join(workspaceFolder.uri.fsPath, "sketches", "sketch1.js");
+        const sketch1Path = path.join(workspaceFolder.uri.fsPath + "/sketches", "sketch1.js");
         if (!fs.existsSync(sketch1Path)) {
           fs.writeFileSync(sketch1Path, "function setup() {\n  //Start coding with P5 here!\n}\n");
         }
         const jsconfigPath = path.join(workspaceFolder.uri.fsPath, "jsconfig.json");
         writeFileSync(jsconfigPath, JSON.stringify(jsconfig, null, 2));
+        vscode.window.showInformationMessage('P5 project setup complete!');
+        // If a folder was selected via dialog, open it as the workspace
+        if (selectedFolderUri) {
+          await vscode.commands.executeCommand('vscode.openFolder', selectedFolderUri, false);
+        }
       } catch (e) {
         console.error(e);
       }

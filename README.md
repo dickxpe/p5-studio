@@ -10,17 +10,21 @@ LIVE P5 LAUNCHER is a Visual Studio Code extension that brings live coding and r
 - **Reload Button:** Manually reload your sketch and preserve variable values.
 - **Auto Reload:** Optionally reload on typing or only on save (configurable).
 - **Workspace Imports:** Automatically loads scripts from `common/` and `import/` folders in your workspace.
-- **Resizable Canvas:** Supports auto-resizing for `createCanvas(windowWidth, windowHeight)`.
+- **Resizable Canvas:** Supports auto-resizing.
 - **P5 Reference Integration:** Quick access to the p5.js reference and lookup for selected text.
-- **Project Bootstrap:** Command to create a starter `jsconfig.json` and folder structure for p5.js projects.
+- **Project Bootstrap:** Command to create a folder structure for p5.js projects and `jsconfig.json`. 
 
 ## How to Use
 1. **Install the Extension:**
-   - Search for `LiveCodingP5` in the VS Code Extensions marketplace and install it.
+   - Search for `P5 LIVE LAUNCHER` in the VS Code Extensions marketplace and install it.
+
+2. **Project Setup:**
+   - Run `Live P5: Setup new P5 Project` to scaffold a p5.js project structure with `common/`, `import/`, `media/`, and `sketches/` folders and a jsconfig to enable autocompletion for p5.
+   - If no folder/workspace is open, select a folder or create a new one using the dialog window.
 
 2. **Open or Create a Sketch:**
    - Open a `.js` or `.ts` file with your p5.js code.
-   - Use the command palette (`Ctrl+Shift+P` or `Cmd+Shift+P`) and run `Live: Open P5 Panel` (or use the status bar button).
+   - Use the command palette (`Ctrl+Shift+P` or `Cmd+Shift+P`) and run `Live P5: Open P5 Panel` (or use the status bar button).
 
 3. **Live Coding:**
    - Edit your code and see changes instantly in the webview panel.
@@ -29,17 +33,16 @@ LIVE P5 LAUNCHER is a Visual Studio Code extension that brings live coding and r
 
 4. **Reload Options:**
    - Use the reload button in the webview to manually reload and preserve variable values.
-   - Toggle auto-reload on typing or on save via the command palette or settings.
+   - Toggle auto-reload on typing or on save via in the settings.
 
 5. **Import Scripts:**
    - Place shared code in `common/` or `import/` folders in your workspace. These scripts are loaded automatically in every sketch.
+   - Place media in the `media/` folder and reference them with the MEDIA_FOLDER variable
+   ex: mySound = loadSound(MEDIA_FOLDER + '/doorbell');
 
 6. **P5 Reference:**
    - Use the status bar button or command palette to quickly open the p5.js reference.
    - Select text in your code and run `Live: Lookup in P5 Reference` to search the docs.
-
-7. **Project Setup:**
-   - Run `Live: Create jsconfig` to scaffold a p5.js project structure with `common/`, `import/`, `media/`, and `sketches/` folders.
 
 ## Configuration
 - `liveP5.debounceDelay`: Delay (ms) for live reload on typing.
