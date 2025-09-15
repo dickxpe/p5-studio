@@ -131,8 +131,8 @@
           "description": "Show the reload button in the webview toolbar."
         },
         "liveP5.showRecordButton": {
-          "type": "false",
-          "default": true,
+          "type": "boolean",
+          "default": false,
           "description": "Show the record (capture) button in the webview toolbar."
         },
         "liveP5.debounceDelay": {

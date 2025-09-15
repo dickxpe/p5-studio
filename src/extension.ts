@@ -818,6 +818,37 @@ window.addEventListener("message", e => {
     case 'updateGlobalVar':
       updateGlobalVarInSketch(data.name, data.value);
       break;
+    case "toggleRecordButton":
+      {
+        const captureBtn = document.getElementById('capture-toggle-button');
+        // Remove any previous observer to avoid duplicates
+        if (window._p5cContainerObserver) {
+          window._p5cContainerObserver.disconnect();
+          window._p5cContainerObserver = null;
+        }
+        if (captureBtn) {
+          if (data.show) {
+            captureBtn.style.display = "";
+            // Remove all .p5c-container divs and stop removing future ones
+            // (Let the normal capture logic handle visibility)
+            // --- Reload the sketch to re-inject the p5c-container ---
+            if (window._p5UserCode) {
+              // Use the same reload logic as the reload button
+              vscode.postMessage({type:"reload-button-clicked", preserveGlobals: true});
+            }
+          } else {
+            captureBtn.style.display = "none";
+            // Remove all .p5c-container divs and prevent future ones from being added
+            document.querySelectorAll('.p5c-container').forEach(div => div.remove());
+            // Set up a MutationObserver to remove future .p5c-container divs
+            window._p5cContainerObserver = new MutationObserver(() => {
+              document.querySelectorAll('.p5c-container').forEach(div => div.remove());
+            });
+            window._p5cContainerObserver.observe(document.body, { childList: true, subtree: true });
+          }
+        }
+      }
+      break;
   }
 });
 
@@ -1418,6 +1449,20 @@ text("P5", 50, 52);`;
       updateReloadWhileTypingVarsAndContext();
       const editor = vscode.window.activeTextEditor;
       if (editor) updateAutoReloadListeners(editor);
+    }
+    // --- Immediately apply showReloadButton/showRecordButton changes in all open panels ---
+    if (
+      e.affectsConfiguration('liveP5.showReloadButton') ||
+      e.affectsConfiguration('liveP5.showRecordButton')
+    ) {
+      for (const [docUri, panel] of webviewPanelMap.entries()) {
+        // Update reload button
+        const showReload = vscode.workspace.getConfiguration('liveP5').get<boolean>('showReloadButton', true);
+        panel.webview.postMessage({ type: 'toggleReloadButton', show: showReload });
+        // Update record button (show/hide and remove capture panel if needed)
+        const showRecord = vscode.workspace.getConfiguration('liveP5').get<boolean>('showRecordButton', true);
+        panel.webview.postMessage({ type: 'toggleRecordButton', show: showRecord });
+      }
     }
   });
 
