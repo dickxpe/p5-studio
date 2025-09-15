@@ -331,12 +331,20 @@ async function createHtml(
   const p5SoundPath = vscode.Uri.file(path.join(extensionPath, 'assets', 'p5.sound.min.js'));
   const p5SoundUri = panel.webview.asWebviewUri(p5SoundPath);
 
+  const p5CapturePath = vscode.Uri.file(path.join(extensionPath, 'assets', 'p5.capture.umd.min.js'));
+  const p5CaptureUri = panel.webview.asWebviewUri(p5CapturePath);
+
   const reloadIconPath = vscode.Uri.file(path.join(extensionPath, 'images', 'reload.svg'));
   const reloadIconUri = panel.webview.asWebviewUri(reloadIconPath);
 
   const showReloadButton = vscode.workspace
     .getConfiguration('liveP5')
     .get<boolean>('showReloadButton', true);
+
+  // Add: showRecordButton setting
+  const showRecordButton = vscode.workspace
+    .getConfiguration('liveP5')
+    .get<boolean>('showRecordButton', true);
 
   function escapeBackticks(str: string) {
     return str.replace(/`/g, '\`');
@@ -350,7 +358,7 @@ async function createHtml(
   const uniqueId = Date.now() + '-' + Math.random().toString(36).substr(2, 8);
   const p5UriWithCacheBust = vscode.Uri.parse(p5Uri.toString() + `?v=${uniqueId}`);
   const p5SoundUriWithCacheBust = vscode.Uri.parse(p5SoundUri.toString() + `?v=${uniqueId}`);
-
+  const p5CaptureUriWithCacheBust = vscode.Uri.parse(p5CaptureUri.toString() + `?v=${uniqueId}`);
   // --- Inject common and import scripts ---
   let scriptTags = '';
   try {
@@ -363,14 +371,24 @@ async function createHtml(
         const files = await listFilesRecursively(vscode.Uri.file(dir), ['.js', '.ts']);
         allFiles = allFiles.concat(files);
       }
+      // --- Only inject each script ONCE by keeping track of their basenames ---
+      const seen = new Set<string>();
+      const uniqueFiles = allFiles.filter(f => {
+        const base = path.basename(f);
+        if (seen.has(base)) return false;
+        seen.add(base);
+        return true;
+      });
       // Ensure p5.min.js and p5.sound.min.js are always loaded first
       scriptTags = `<script src='${p5UriWithCacheBust}'></script>\n` +
         `<script src='${p5SoundUriWithCacheBust}'></script>\n` +
-        allFiles.map(s => `<script src='${panel.webview.asWebviewUri(vscode.Uri.file(s))}'></script>`).join('\n');
+        `<script src='${p5CaptureUriWithCacheBust}'></script>\n` +
+        uniqueFiles.map(s => `<script src='${panel.webview.asWebviewUri(vscode.Uri.file(s))}'></script>`).join('\n');
     } else {
       // Fallback: just p5 and p5.sound
       scriptTags = `<script src='${p5UriWithCacheBust}'></script>\n` +
         `<script src='${p5SoundUriWithCacheBust}'></script>`;
+      `<script src='${p5CaptureUriWithCacheBust}'></script>`;
     }
   } catch (e) { /* ignore */ }
 
@@ -390,6 +408,10 @@ async function createHtml(
     }
   } catch (e) { /* ignore */ }
 
+  // Add record icons (inline SVGs)
+  const recordRedSvg = `<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#ff3333" stroke="#b00" stroke-width="2"/></svg>`;
+  const recordGraySvg = `<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#bbb" stroke="#888" stroke-width="2"/></svg>`;
+
   return `<!DOCTYPE html>
 <!-- cache-bust: ${uniqueId} -->
 <html>
@@ -403,13 +425,32 @@ canvas.p5Canvas{display:block;}
   background:rgba(255,0,0,0.95); color:#fff; font-family:monospace; padding:10px;
   display:none; z-index:9999; white-space:pre-wrap; overflow:auto;
 }
+#p5-toolbar {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+  z-index: 9999;
+}
 #reload-button {
-  position: fixed; top: 10px; right: 10px; width: 16px; height: 16px;
-  background: white; border-radius: 4px; display: ${showReloadButton ? "flex" : "none"};
-  align-items: center; justify-content: center; cursor: pointer; z-index: 9999;
+  width: 16px; height: 16px;
+  background: white; border-radius: 4px; display: flex;
+  align-items: center; justify-content: center; cursor: pointer;
   box-shadow: 0 2px 5px rgba(0,0,0,0.2);
 }
 #reload-button img { width: 12px; height: 12px; }
+#reload-button[style*="display: none"] { display: none !important; }
+#capture-toggle-button {
+  width: 16px; height: 16px;
+  background: white; border-radius: 4px; display: flex;
+  align-items: center; justify-content: center; cursor: pointer;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+  /* Add display:none if hidden by setting */
+  ${showRecordButton ? '' : 'display:none !important;'}
+}
+#capture-toggle-button svg { width: 12px; height: 12px; display: block; }
 #p5-var-controls {
   position: fixed;
   left: 0; right: 0; bottom: 0;
@@ -499,7 +540,89 @@ canvas.p5Canvas{display:block;}
 </head>
 <body>
 <div id="error-overlay"></div>
-<div id="reload-button"><img src="${reloadIconUri}" title="Reload P5 Sketch"></div>
+<div id="p5-toolbar">
+  <div id="reload-button" style="display:${showReloadButton ? 'flex' : 'none'}"><img src="${reloadIconUri}" title="Reload P5 Sketch"></div>
+  <div id="capture-toggle-button" title="Toggle P5 Capture Panel"></div>
+</div>
+<script>
+// --- P5 Capture Toggle Button Logic ---
+(function() {
+  // Hide record button if setting is false
+  if (!${showRecordButton}) {
+    const captureBtn = document.getElementById('capture-toggle-button');
+    if (captureBtn) captureBtn.style.display = "none";
+    // Remove all .p5c-container divs if present, and prevent future ones from being added
+    document.querySelectorAll('.p5c-container').forEach(div => div.remove());
+    // Observe DOM and remove any .p5c-container that gets added later
+    const observer = new MutationObserver(() => {
+      document.querySelectorAll('.p5c-container').forEach(div => div.remove());
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return;
+  }
+  const captureBtn = document.getElementById('capture-toggle-button');
+  const reloadBtn = document.getElementById('reload-button');
+  let enabled = false;
+  function setIcon() {
+    // REVERSED: gray when enabled (visible), red when disabled (hidden)
+    captureBtn.innerHTML = enabled
+      ? \`${recordGraySvg}\`
+      : \`${recordRedSvg}\`;
+  }
+  function setCaptureVisibility() {
+    // Only affect the first .p5c-container and never create or remove any divs
+    const captureDiv = document.querySelector('.p5c-container');
+    if (captureDiv) {
+      captureDiv.style.display = enabled ? '' : 'none';
+    }
+  }
+  // Remove all but the first .p5c-container if multiple exist (cleanup on reload)
+  function removeDuplicateCaptureDivs() {
+    const divs = document.querySelectorAll('.p5c-container');
+    if (divs.length > 1) {
+      for (let i = 1; i < divs.length; ++i) {
+        divs[i].remove();
+      }
+    }
+  }
+  captureBtn.addEventListener('click', () => {
+    enabled = !enabled;
+    setIcon();
+    setCaptureVisibility();
+  });
+  // Initialize as disabled (hidden)
+  enabled = false;
+  setIcon();
+  setCaptureVisibility();
+  removeDuplicateCaptureDivs();
+  // If the capture div is dynamically added, observe DOM changes
+  const observer = new MutationObserver(() => {
+    removeDuplicateCaptureDivs();
+    setCaptureVisibility();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  // Observe reload button visibility to update layout
+  const reloadObserver = new MutationObserver(() => {
+    // If reload is hidden, move capture to the right (toolbar stays at right:10px)
+    if (reloadBtn && reloadBtn.style.display === "none") {
+      // Only capture button is visible, so no margin needed
+      captureBtn.style.marginLeft = "0px";
+    } else {
+      // Both visible, keep default gap
+      captureBtn.style.marginLeft = "0px";
+    }
+  });
+  if (reloadBtn) {
+    reloadObserver.observe(reloadBtn, { attributes: true, attributeFilter: ['style'] });
+  }
+  window.addEventListener('resize', () => {
+    // If reload button is visible, no margin; if not, margin-left: 0
+    const reloadVisible = reloadBtn && reloadBtn.style.display !== "none";
+    captureBtn.style.marginLeft = reloadVisible ? "0px" : "0px";
+  });
+})();
+</script>
 <script>
 // --- Provide MEDIA_FOLDER global for user sketches ---
 const MEDIA_FOLDER = ${JSON.stringify(mediaWebviewUriPrefix)};
@@ -648,7 +771,7 @@ window.addEventListener("message", e => {
             // Remove lines like 'var x = ...;' or 'var x;' (with or without semicolon)
             codeNoGlobals = codeNoGlobals.replace(new RegExp('^\\s*var\\s+'+name+'(\\s*=.*)?;?\\s*$', 'gm'), '');
             // Remove lines like 'window.x = x;' (with or without semicolon)
-            codeNoGlobals = codeNoGlobals.replace(new RegExp('^\\s*window\\.'+name+'\\s*=\\s*'+name+';?\\s*$', 'gm'), '');
+            codeNoGlobals = codeNoGlobals.replace(new RegExp('^\\s*window\\.'+name+'\\s*=\\s*' + name + ';?\\s*$', 'gm'), '');
           });
         }
         runUserSketch(codeNoGlobals);
@@ -818,8 +941,8 @@ function renderGlobalVarControls(vars) {
   tab.addEventListener('click', showDrawer);
 }
 </script>
-</body>
-</html>`;
+<!-- ...rest of HTML... -->
+`;
 }
 
 // ----------------------------
@@ -1228,7 +1351,7 @@ export function activate(context: vscode.ExtensionContext) {
             "*.js",
             "**/*.js",
             "*.ts",
-            "¨**/.ts",
+            "**/.ts",
             "common/*.js",
             "import/*.js",
             path.join(context.extensionPath, "p5types", "global.d.ts"),
@@ -1289,6 +1412,12 @@ text("P5", 50, 52);`;
   vscode.workspace.onDidChangeConfiguration(e => {
     if (e.affectsConfiguration('liveP5.debounceDelay')) {
       debounceMap.clear(); // Clear so new debounceDelay is used on next change
+    }
+    // --- Sync reloadWhileTyping context key and button icon if setting changed via settings UI ---
+    if (e.affectsConfiguration('liveP5.reloadWhileTyping')) {
+      updateReloadWhileTypingVarsAndContext();
+      const editor = vscode.window.activeTextEditor;
+      if (editor) updateAutoReloadListeners(editor);
     }
   });
 

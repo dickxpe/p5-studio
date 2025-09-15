@@ -128,7 +128,12 @@
         "liveP5.showReloadButton": {
           "type": "boolean",
           "default": true,
-          "description": "Determines if the reload button is shown on the P5 webpanel."
+          "description": "Show the reload button in the webview toolbar."
+        },
+        "liveP5.showRecordButton": {
+          "type": "false",
+          "default": true,
+          "description": "Show the record (capture) button in the webview toolbar."
         },
         "liveP5.debounceDelay": {
           "type": "number",
