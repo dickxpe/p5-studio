@@ -67,6 +67,66 @@ async function listFilesRecursively(dirUri: vscode.Uri, exts: string[]): Promise
   return files;
 }
 
+// Add a list of reserved/built-in global names (p5.js, browser, etc.)
+const RESERVED_GLOBALS = new Set([
+  // p5.js color functions
+  "hue", "saturation", "brightness", "red", "green", "blue", "alpha", "lightness",
+  // p5.js core
+  "width", "height", "frameCount", "frameRate", "mouseX", "mouseY", "pmouseX", "pmouseY",
+  "mouseButton", "key", "keyCode", "keyIsPressed", "mouseIsPressed", "touches",
+  // p5.js functions (partial list)
+  "createCanvas", "background", "fill", "stroke", "noStroke", "ellipse", "rect", "line", "text", "textFont", "textAlign", "textSize", "color", "random", "noise", "map", "dist", "constrain", "lerp", "push", "pop", "translate", "rotate", "scale", "saveCanvas", "loadImage", "image", "loadFont", "loadJSON", "loadStrings", "loadTable", "loadXML", "loadBytes", "loadShader", "createGraphics", "createCapture", "createVideo", "createAudio", "createInput", "createButton", "createCheckbox", "createSelect", "createSlider", "createRadio", "createColorPicker", "createElement", "createDiv", "createSpan", "createP", "createImg", "createA", "createSlider", "createCanvas", "resizeCanvas", "remove", "clear", "redraw", "loop", "noLoop", "push", "pop", "translate", "rotate", "scale", "shearX", "shearY", "applyMatrix", "resetMatrix", "print", "println", "save", "saveJSON", "saveStrings", "saveTable", "saveXML",
+  // browser globals
+  "window", "document", "navigator", "location", "console", "setTimeout", "setInterval", "clearTimeout", "clearInterval", "alert", "prompt", "confirm", "requestAnimationFrame", "cancelAnimationFrame",
+  // JS built-ins
+  "Array", "Object", "Function", "String", "Number", "Boolean", "Symbol", "Date", "Math", "RegExp", "Error", "EvalError", "RangeError", "ReferenceError", "SyntaxError", "TypeError", "URIError", "JSON", "parseInt", "parseFloat", "isNaN", "isFinite", "decodeURI", "decodeURIComponent", "encodeURI", "encodeURIComponent", "escape", "unescape", "Infinity", "NaN", "undefined", "null",
+  // VS Code injected
+  "acquireVsCodeApi"
+]);
+
+// Extracts top-level global variables from user code (number, string, boolean)
+// Now also returns a list of ignored/conflicting names
+function extractGlobalVariablesWithConflicts(code: string): { globals: { name: string, value: any }[], conflicts: string[] } {
+  const acorn = require('acorn');
+  const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
+  const globals: { name: string, value: any }[] = [];
+  const conflicts: string[] = [];
+  function extractFromDecls(decls: any[]) {
+    for (const decl of decls) {
+      if (decl.id && decl.id.name) {
+        let value = undefined;
+        if (decl.init && decl.init.type === 'Literal') {
+          value = decl.init.value;
+        } else if (decl.init && decl.init.type === 'UnaryExpression' && decl.init.argument.type === 'Literal') {
+          value = decl.init.operator === '-' ? -decl.init.argument.value : decl.init.argument.value;
+        }
+        if (RESERVED_GLOBALS.has(decl.id.name)) {
+          conflicts.push(decl.id.name);
+        } else {
+          globals.push({ name: decl.id.name, value });
+        }
+      }
+    }
+  }
+  recast.types.visit(ast, {
+    visitVariableDeclaration(path) {
+      if (path.parentPath && path.parentPath.value.type === 'Program') {
+        extractFromDecls(path.value.declarations);
+      }
+      this.traverse(path);
+    }
+  });
+  // Fallback: also check top-level body for VariableDeclaration
+  if (ast.program && Array.isArray(ast.program.body)) {
+    for (const node of ast.program.body) {
+      if (node.type === 'VariableDeclaration') {
+        extractFromDecls(node.declarations);
+      }
+    }
+  }
+  return { globals, conflicts };
+}
+
 // Extracts top-level global variables from user code (number, string, boolean)
 function extractGlobalVariables(code: string): { name: string, value: any }[] {
   const acorn = require('acorn');
@@ -101,7 +161,8 @@ function extractGlobalVariables(code: string): { name: string, value: any }[] {
       }
     }
   }
-  return globals;
+  // At the end, filter out reserved/built-in globals
+  return globals.filter(g => !RESERVED_GLOBALS.has(g.name));
 }
 
 // Rewrites user code so global variables are attached to window (for live editing)
@@ -234,7 +295,7 @@ async function createHtml(
   }
 
   // Detect globals and rewrite code
-  const globals = extractGlobalVariables(userCode);
+  const { globals, conflicts } = extractGlobalVariablesWithConflicts(userCode);
   const rewrittenCode = rewriteUserCodeWithWindowGlobals(userCode, globals);
   const escapedCode = escapeBackticks(rewrittenCode);
 
@@ -808,6 +869,15 @@ export function activate(context: vscode.ExtensionContext) {
     let syntaxErrorMsg: string | null = null;
     let hadSyntaxError = false;
     try {
+      // --- Check for reserved global conflicts before syntax check ---
+      const { globals, conflicts } = extractGlobalVariablesWithConflicts(code);
+      if (conflicts.length > 0) {
+        syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${fileName}] Reserved variable name(s) used: ${conflicts.join(', ')}`;
+        panel.webview.html = await createHtml('', panel, context.extensionPath);
+        hadSyntaxError = true;
+        throw new Error(syntaxErrorMsg);
+      }
+
       new Function(code); // syntax check
       const hasSetup = /\bfunction\s+setup\s*\(/.test(code);
       const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
@@ -819,14 +889,15 @@ export function activate(context: vscode.ExtensionContext) {
       // Always reload HTML for every code update to reset JS environment
       panel.webview.html = await createHtml(code, panel, context.extensionPath);
       // After HTML is set, send global variables
-      let globals = extractGlobalVariables(code);
-      // Only keep number, string, boolean
-      globals = globals.filter(g => ['number', 'string', 'boolean'].includes(typeof g.value));
+      const { globals: filteredGlobals } = extractGlobalVariablesWithConflicts(code);
+      const filtered = filteredGlobals.filter(g => ['number', 'string', 'boolean'].includes(typeof g.value));
       setTimeout(() => {
-        panel.webview.postMessage({ type: 'setGlobalVars', variables: globals });
+        panel.webview.postMessage({ type: 'setGlobalVars', variables: filtered });
       }, 200);
     } catch (err: any) {
-      syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(document.fileName)}] ${err.message}`;
+      if (!syntaxErrorMsg) {
+        syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(document.fileName)}] ${err.message}`;
+      }
       panel.webview.html = await createHtml('', panel, context.extensionPath);
       hadSyntaxError = true;
     }
@@ -895,16 +966,24 @@ export function activate(context: vscode.ExtensionContext) {
       const docUri = editor.document.uri.toString();
       let panel = webviewPanelMap.get(docUri);
       let code = editor.document.getText();
-
       if (!panel) {
         // Check for syntax errors before setting HTML
         let syntaxErrorMsg: string | null = null;
         let codeToInject = code;
         try {
+          // --- Check for reserved global conflicts before syntax check ---
+          const { globals, conflicts } = extractGlobalVariablesWithConflicts(codeToInject);
+          if (conflicts.length > 0) {
+            syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(editor.document.fileName)}] Reserved variable name(s) used: ${conflicts.join(', ')}`;
+            codeToInject = '';
+            throw new Error(syntaxErrorMsg);
+          }
           new Function(code);
           codeToInject = wrapInSetupIfNeeded(code);
         } catch (err: any) {
-          syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(editor.document.fileName)}] ${err.message}`;
+          if (!syntaxErrorMsg) {
+            syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(editor.document.fileName)}] ${err.message}`;
+          }
           codeToInject = '';
         }
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
@@ -1009,15 +1088,17 @@ export function activate(context: vscode.ExtensionContext) {
         // Only set HTML on first open
         panel.webview.html = await createHtml(codeToInject, panel, context.extensionPath);
         // Send global variables immediately after setting HTML
-        let globals = extractGlobalVariables(codeToInject);
-        globals = globals.filter(g => ['number', 'string', 'boolean'].includes(typeof g.value));
+        const { globals } = extractGlobalVariablesWithConflicts(codeToInject);
+        const filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(typeof g.value));
         setTimeout(() => {
-          panel.webview.postMessage({ type: 'setGlobalVars', variables: globals });
+          panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals });
         }, 200);
         if (syntaxErrorMsg) {
           setTimeout(() => {
             panel.webview.postMessage({ type: 'syntaxError', message: syntaxErrorMsg });
           }, 150);
+          const outputChannel = getOrCreateOutputChannel(docUri, path.basename(editor.document.fileName));
+          outputChannel.appendLine(syntaxErrorMsg);
         }
       } else {
         panel.reveal(panel.viewColumn, true);
