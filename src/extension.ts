@@ -828,13 +828,15 @@ window.addEventListener("message", e => {
         }
         if (captureBtn) {
           if (data.show) {
+            // Always show the button and remove any .p5c-container observer
             captureBtn.style.display = "";
             // Remove all .p5c-container divs and stop removing future ones
             // (Let the normal capture logic handle visibility)
             // --- Reload the sketch to re-inject the p5c-container ---
             if (window._p5UserCode) {
-              // Use the same reload logic as the reload button
-              vscode.postMessage({type:"reload-button-clicked", preserveGlobals: true});
+              setTimeout(() => {
+                vscode.postMessage({type:"reload-button-clicked", preserveGlobals: true});
+              }, 0);
             }
           } else {
             captureBtn.style.display = "none";
