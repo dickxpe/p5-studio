@@ -368,7 +368,10 @@ async function createHtml(
     if (panel && (panel as any)._sketchFilePath) {
       const sketchDir = path.dirname((panel as any)._sketchFilePath);
       const includeDir = path.join(sketchDir, 'include');
-      includeFiles = await listFilesRecursively(vscode.Uri.file(includeDir), ['.js', '.ts']);
+      // Only try to list files if the include folder exists
+      if (fs.existsSync(includeDir) && fs.statSync(includeDir).isDirectory()) {
+        includeFiles = await listFilesRecursively(vscode.Uri.file(includeDir), ['.js', '.ts']);
+      }
     }
     if (workspaceFolder) {
       // --- Collect import, common, and include scripts in the requested order ---
