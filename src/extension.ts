@@ -359,31 +359,31 @@ async function createHtml(
   const p5UriWithCacheBust = vscode.Uri.parse(p5Uri.toString() + `?v=${uniqueId}`);
   const p5SoundUriWithCacheBust = vscode.Uri.parse(p5SoundUri.toString() + `?v=${uniqueId}`);
   const p5CaptureUriWithCacheBust = vscode.Uri.parse(p5CaptureUri.toString() + `?v=${uniqueId}`);
-  // --- Inject common and import scripts ---
+  // --- Inject common, import, and include scripts ---
   let scriptTags = '';
   try {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    // --- Determine sketch file's folder for "include" ---
+    let includeFiles: string[] = [];
+    if (panel && (panel as any)._sketchFilePath) {
+      const sketchDir = path.dirname((panel as any)._sketchFilePath);
+      const includeDir = path.join(sketchDir, 'include');
+      includeFiles = await listFilesRecursively(vscode.Uri.file(includeDir), ['.js', '.ts']);
+    }
     if (workspaceFolder) {
-      const folders = ['common', 'import'];
-      let allFiles: string[] = [];
-      for (const folder of folders) {
-        const dir = path.join(workspaceFolder.uri.fsPath, folder);
-        const files = await listFilesRecursively(vscode.Uri.file(dir), ['.js', '.ts']);
-        allFiles = allFiles.concat(files);
-      }
-      // --- Only inject each script ONCE by keeping track of their basenames ---
-      const seen = new Set<string>();
-      const uniqueFiles = allFiles.filter(f => {
-        const base = path.basename(f);
-        if (seen.has(base)) return false;
-        seen.add(base);
-        return true;
-      });
-      // Ensure p5.min.js and p5.sound.min.js are always loaded first
+      // --- Collect import, common, and include scripts in the requested order ---
+      const importDir = path.join(workspaceFolder.uri.fsPath, 'import');
+      const commonDir = path.join(workspaceFolder.uri.fsPath, 'common');
+      const importFiles = await listFilesRecursively(vscode.Uri.file(importDir), ['.js', '.ts']);
+      const commonFiles = await listFilesRecursively(vscode.Uri.file(commonDir), ['.js', '.ts']);
+      // includeFiles already set above
+
+      const allFiles = [...importFiles, ...commonFiles, ...includeFiles];
+
       scriptTags = `<script src='${p5UriWithCacheBust}'></script>\n` +
         `<script src='${p5SoundUriWithCacheBust}'></script>\n` +
         `<script src='${p5CaptureUriWithCacheBust}'></script>\n` +
-        uniqueFiles.map(s => `<script src='${panel.webview.asWebviewUri(vscode.Uri.file(s))}'></script>`).join('\n');
+        allFiles.map(s => `<script src='${panel.webview.asWebviewUri(vscode.Uri.file(s))}'></script>`).join('\n');
     } else {
       // Fallback: just p5 and p5.sound
       scriptTags = `<script src='${p5UriWithCacheBust}'></script>\n` +
@@ -417,13 +417,16 @@ async function createHtml(
 <html>
 <head>
 ${scriptTags}
+<script data-user-code="true">
+${escapedCode}
+</script>
 <style>
 html,body{margin:0;padding:0;overflow:hidden;width:100%;height:100%;background:transparent;}
 canvas.p5Canvas{display:block;}
 #error-overlay{
   position:fixed; top:0; left:0; right:0; bottom:0;
   background:rgba(255,0,0,0.95); color:#fff; font-family:monospace; padding:10px;
-  display:none; z-index:9999; white-space:pre-wrap; overflow:auto;
+  display:none; z-index: 9999; white-space:pre-wrap; overflow:auto;
 }
 #p5-toolbar {
   position: fixed;
@@ -700,6 +703,29 @@ window.onerror = function(message, source, lineno, colno, error) {
   return false; // Let the error propagate in the console as well
 };
 
+// --- Add this handler for unhandled promise rejections ---
+window.onunhandledrejection = function(event) {
+  let msg = '';
+  if (event && event.reason) {
+    if (typeof event.reason === 'string') {
+      msg = event.reason;
+    } else if (event.reason && event.reason.message) {
+      msg = event.reason.message;
+    } else {
+      msg = JSON.stringify(event.reason);
+    }
+  } else {
+    msg = 'Unhandled promise rejection';
+  }
+  if (!msg.startsWith('[RUNTIME ERROR]')) {
+    msg = '[RUNTIME ERROR] ' + msg;
+  }
+  showError(msg);
+  vscode.postMessage({ type: 'showError', message: msg });
+  // Prevent default logging to console (optional)
+  // event.preventDefault();
+};
+
 function runUserSketch(code){
   clearError();
   window._p5ErrorLogged = false;
@@ -707,27 +733,11 @@ function runUserSketch(code){
   document.querySelectorAll("canvas").forEach(c=>c.remove());
 
   // Remove ALL previous <script> tags with data-user-code="true"
-  const scripts = Array.from(document.querySelectorAll('script[data-user-code="true"]'));
-  scripts.forEach(s => s.parentNode && s.parentNode.removeChild(s));
+  // (No longer needed, user code is inline in HTML)
+  // const scripts = Array.from(document.querySelectorAll('script[data-user-code="true"]'));
+  // scripts.forEach(s => s.parentNode && s.parentNode.removeChild(s));
 
-  // Inject user code as a <script> tag (not Function constructor)
-  const userScript = document.createElement('script');
-  userScript.type = 'text/javascript';
-  userScript.dataset.userCode = 'true';
-  userScript.textContent = code;
-  document.body.appendChild(userScript);
-
-  // Attach globals to window for live editing
-  if (window._p5GlobalVarTypes) {
-    Object.keys(window._p5GlobalVarTypes).forEach(function(name) {
-      try {
-        if (typeof window[name] === 'undefined' && typeof eval(name) !== 'undefined') {
-          window[name] = eval(name);
-        }
-      } catch (e) {}
-    });
-  }
-
+  // User code is already loaded as a <script> tag in HTML, so just instantiate p5
   window._p5Instance=new p5();
 }
 
@@ -1077,6 +1087,8 @@ export function activate(context: vscode.ExtensionContext) {
       const { globals, conflicts } = extractGlobalVariablesWithConflicts(code);
       if (conflicts.length > 0) {
         syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${fileName}] Reserved variable name(s) used: ${conflicts.join(', ')}`;
+        // Format error message
+        syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
         panel.webview.html = await createHtml('', panel, context.extensionPath);
         hadSyntaxError = true;
         throw new Error(syntaxErrorMsg);
@@ -1101,6 +1113,7 @@ export function activate(context: vscode.ExtensionContext) {
     } catch (err: any) {
       if (!syntaxErrorMsg) {
         syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(document.fileName)}] ${err.message}`;
+        syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
       }
       panel.webview.html = await createHtml('', panel, context.extensionPath);
       hadSyntaxError = true;
@@ -1109,8 +1122,10 @@ export function activate(context: vscode.ExtensionContext) {
     // Always show syntax errors in overlay
     if (syntaxErrorMsg) {
       ignoreLogs = true;
+      // Fix [object Arguments] for overlay as well
+      const overlayMsg = syntaxErrorMsg.replace(/\[object Arguments\]/gi, "no argument(s) ");
       setTimeout(() => {
-        panel.webview.postMessage({ type: 'syntaxError', message: syntaxErrorMsg });
+        panel.webview.postMessage({ type: 'syntaxError', message: overlayMsg });
       }, 150);
       outputChannel.appendLine(syntaxErrorMsg);
       // outputChannel.show(true); // Do not focus on every error
@@ -1179,6 +1194,7 @@ export function activate(context: vscode.ExtensionContext) {
           const { globals, conflicts } = extractGlobalVariablesWithConflicts(codeToInject);
           if (conflicts.length > 0) {
             syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(editor.document.fileName)}] Reserved variable name(s) used: ${conflicts.join(', ')}`;
+            syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
             codeToInject = '';
             throw new Error(syntaxErrorMsg);
           }
@@ -1187,29 +1203,41 @@ export function activate(context: vscode.ExtensionContext) {
         } catch (err: any) {
           if (!syntaxErrorMsg) {
             syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(editor.document.fileName)}] ${err.message}`;
+            syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
           }
           codeToInject = '';
         }
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
         if (!workspaceFolder)
           return;
+        // --- Determine include folder for this sketch ---
+        const sketchFilePath = editor.document.fileName;
+        const sketchDir = path.dirname(sketchFilePath);
+        const includeDir = path.join(sketchDir, 'include');
+        let localResourceRoots = [
+          vscode.Uri.file(path.join(context.extensionPath, 'assets')),
+          vscode.Uri.file(path.join(context.extensionPath, 'images')),
+          vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'common')),
+          vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'import')),
+          vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'media')),
+        ];
+        // Only add includeDir if it exists
+        if (fs.existsSync(includeDir) && fs.statSync(includeDir).isDirectory()) {
+          localResourceRoots.push(vscode.Uri.file(includeDir));
+        }
         panel = vscode.window.createWebviewPanel(
           'extension.live-p5',
           'LIVE: ' + path.basename(editor.document.fileName),
           vscode.ViewColumn.Two,
           {
             enableScripts: true,
-            localResourceRoots: [
-              vscode.Uri.file(path.join(context.extensionPath, 'assets')),
-              vscode.Uri.file(path.join(context.extensionPath, 'images')),
-              vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'common')),
-              vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'import')),
-              vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'media')),
-
-            ],
+            localResourceRoots,
             retainContextWhenHidden: true
           }
         );
+
+        // --- Pass the sketch file path to the panel for include folder lookup ---
+        (panel as any)._sketchFilePath = editor.document.fileName;
 
         // Focus the output channel for the new sketch immediately
         const docUri = editor.document.uri.toString();
@@ -1241,12 +1269,25 @@ export function activate(context: vscode.ExtensionContext) {
               if (!/^\d{2}:\d{2}:\d{2}/.test(message)) {
                 message = `${time} ${message}`;
               }
+              // Format syntax error messages if present
+              if (message.includes("[SYNTAX ERROR")) {
+                message = formatSyntaxErrorMsg(message);
+              }
+              // Replace [object Arguments] with no argument(s)
+              message = message.replace(/\[object Arguments\]/gi, "no argument(s) ");
             }
             outputChannel.appendLine(message);
-            // outputChannel.show(true); // Do not focus on every error
+            // Also fix overlay message
+            const overlayMsg = typeof msg.message === "string"
+              ? msg.message.replace(/\[object Arguments\]/gi, "no argument(s) ")
+              : msg.message;
             const docUri = editor.document.uri.toString();
             const panel = webviewPanelMap.get(docUri);
             if (panel) (panel as any)._lastRuntimeError = message;
+            // Forward improved message to overlay if needed
+            if (panel) {
+              panel.webview.postMessage({ type: 'showError', message: overlayMsg });
+            }
           } else if (msg.type === 'reload-button-clicked') {
             // Forward preserveGlobals flag to webview, but send rewritten code
             let code = editor.document.getText();
@@ -1512,4 +1553,21 @@ function wrapInSetupIfNeeded(code: string): string {
   return code;
 }
 
+// Helper: Format syntax error message to include "on line N" and remove (N:M)
+function formatSyntaxErrorMsg(msg: string): string {
+  // Match: [SYNTAX ERROR in filename] ... (N:M)
+  // or: [SYNTAX ERROR in filename] ... (N)
+  // or: [SYNTAX ERROR in filename] ... (N:M)
+  // We want: [SYNTAX ERROR in filename on line N] ...
+  const regex = /(\[SYNTAX ERROR in [^\]\s]+)\]([^\n]*?)\s*\((\d+)(?::\d+)?\)\s*$/;
+  const match = msg.match(regex);
+  if (match) {
+    const before = match[1]; // [SYNTAX ERROR in filename
+    const rest = match[2] || '';
+    const line = match[3];
+    // Insert on line N before the closing ]
+    return msg.replace(regex, `${before} on line ${line}]${rest}`);
+  }
+  return msg;
+}
 
