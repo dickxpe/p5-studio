@@ -511,17 +511,11 @@ window.sendOSC = function(address, args) {
     vscode.postMessage({ type: "oscSend", address, args: Array.isArray(args) ? args : [] });
   }
 };
-// Optionally, you can use either window.onOSC or a global function receivedOSC(address, args)
-window.onOSC = function(address, args) {
-  // User can override this in their sketch: window.onOSC = function(address, args) { ... }
-};
+// Only window.receivedOSC(address, args) is supported for incoming OSC messages.
 window.addEventListener("message", function(e) {
   if (e.data && e.data.type === "oscReceive") {
-    // Prefer global receivedOSC if defined, else window.onOSC
     if (typeof window.receivedOSC === "function") {
       window.receivedOSC(e.data.address, e.data.args);
-    } else if (typeof window.onOSC === "function") {
-      window.onOSC(e.data.address, e.data.args);
     }
   }
 });
@@ -1609,6 +1603,7 @@ export function activate(context: vscode.ExtensionContext) {
           }
           // --- SAVE CANVAS IMAGE HANDLER ---
           else if (msg.type === 'saveCanvasImage') {
+
             try {
               // Prompt user for file path
               const uri = await vscode.window.showSaveDialog({
