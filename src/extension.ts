@@ -527,25 +527,27 @@ window.addEventListener("message", function(e) {
     style.textContent = \`
       .p5-custom-context-menu {
         position: fixed;
-        background: #222;
-        color: #fff;
+        background: #1F1F1F;
+        color: #cccccc;
         padding: 0;
         border: 2px solid #454545;
-        border-radius: 6px;
+        border-radius: 8px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.3);
         z-index: 10001;
         font-family: monospace;
         user-select: none;
-        min-width: 140px;
+     min-width: 120px;
         overflow: hidden;
       }
       .p5-custom-context-menu-item {
-        padding: 6px 18px;
+        padding: 5px 16px;
         cursor: pointer;
-        transition: background 0.15s;
+        transition: background 0.15s, color 0.15s;
+        border-radius: 5px;
+        margin: 1px 2px;
+        font-size: 13px;
       }
-      .p5-custom-context-menu-item:hover { padding: 6px 18px;
-
+      .p5-custom-context-menu-item:hover {
         background: #0078D4 !important;
         color: #fff !important;
       }
@@ -1610,6 +1612,7 @@ export function activate(context: vscode.ExtensionContext) {
               // Decode base64 data URL
               const base64 = msg.dataUrl.replace(/^data:image\/png;base64,/, '');
               const buffer = Buffer.from(base64, 'base64');
+
               await vscode.workspace.fs.writeFile(uri, buffer);
               // Show clickable filename in info message
               const fileName = uri.fsPath.split(/[\\/]/).pop() || uri.fsPath;
