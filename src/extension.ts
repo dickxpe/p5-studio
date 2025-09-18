@@ -768,6 +768,15 @@ canvas.p5Canvas{display:block;}
   <div id="capture-toggle-button" title="Toggle P5 Capture Panel"></div>
 </div>
 <script>
+// --- Prevent default VSCode context menu except on canvas ---
+document.addEventListener('contextmenu', function(e) {
+  // Allow context menu only on canvas with class 'p5Canvas'
+  if (!(e.target && e.target.classList && e.target.classList.contains('p5Canvas'))) {
+    e.preventDefault();
+  }
+});
+</script>
+<script>
 // --- P5 Capture Toggle Button Logic ---
 (function() {
   // Hide record button if setting is false
