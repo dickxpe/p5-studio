@@ -213,7 +213,15 @@ function extractGlobalVariables(code: string): { name: string, value: any }[] {
   return globals.filter(g => !RESERVED_GLOBALS.has(g.name));
 }
 
+// List of p5 event handler function names
+const P5_EVENT_HANDLERS = [
+  "mouseMoved", "mouseDragged", "mousePressed", "mouseReleased", "mouseClicked",
+  "doubleClicked", "mouseWheel", "touchStarted", "touchMoved", "touchEnded",
+  "keyPressed", "keyReleased", "keyTyped", "deviceMoved", "deviceTurned", "deviceShaken"
+];
+
 // Rewrites user code so global variables are attached to window (for live editing)
+// Also wraps event handlers to only run after setup has completed
 function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string }[]): string {
   if (!globals.length) return code;
   const acorn = require('acorn');
@@ -221,6 +229,8 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string 
   const globalNames = new Set(globals.map(g => g.name));
   const programBody = ast.program.body;
   const newBody = [];
+  let setupFound = false;
+
   for (let i = 0; i < programBody.length; i++) {
     let stmt = programBody[i];
     // Detect setup function with createCanvas(windowWidth,windowHeight)
@@ -229,6 +239,7 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string 
       stmt.id && stmt.id.name === 'setup' &&
       stmt.body && stmt.body.body
     ) {
+      setupFound = true;
       const newSetupBody = [];
       for (let j = 0; j < stmt.body.body.length; j++) {
         const b = stmt.body.body[j];
@@ -255,12 +266,55 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string 
           );
         }
       }
+      // At the end of setup, set window._p5SetupDone = true;
+      newSetupBody.push(
+        recast.types.builders.expressionStatement(
+          recast.types.builders.assignmentExpression(
+            '=',
+            recast.types.builders.memberExpression(
+              recast.types.builders.identifier('window'),
+              recast.types.builders.identifier('_p5SetupDone'),
+              false
+            ),
+            recast.types.builders.literal(true)
+          )
+        )
+      );
       stmt = recast.types.builders.functionDeclaration(
         stmt.id,
         stmt.params,
         recast.types.builders.blockStatement(newSetupBody)
       );
     }
+
+    // Wrap event handler functions to guard with window._p5SetupDone
+    if (
+      stmt.type === 'FunctionDeclaration' &&
+      stmt.id && P5_EVENT_HANDLERS.includes(stmt.id.name)
+    ) {
+      const origBody = stmt.body.body;
+      const guardedBody = [
+        recast.types.builders.ifStatement(
+          recast.types.builders.unaryExpression('!',
+            recast.types.builders.memberExpression(
+              recast.types.builders.identifier('window'),
+              recast.types.builders.identifier('_p5SetupDone'),
+              false
+            )
+          ),
+          recast.types.builders.blockStatement([
+            recast.types.builders.returnStatement(null) // <-- fix: pass null as argument
+          ])
+        ),
+        ...origBody
+      ];
+      stmt = recast.types.builders.functionDeclaration(
+        stmt.id,
+        stmt.params,
+        recast.types.builders.blockStatement(guardedBody)
+      );
+    }
+
     if (stmt.type === 'VariableDeclaration' && (stmt.kind === 'let' || stmt.kind === 'const')) {
       if (stmt.declarations.some(decl => decl.id && decl.id.name && globalNames.has(decl.id.name))) {
         stmt = Object.assign({}, stmt, { kind: 'var' });
@@ -284,6 +338,24 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string 
       }
     }
   }
+
+  // If no setup function, still ensure window._p5SetupDone is set to true after sketch runs
+  if (!setupFound) {
+    newBody.push(
+      recast.types.builders.expressionStatement(
+        recast.types.builders.assignmentExpression(
+          '=',
+          recast.types.builders.memberExpression(
+            recast.types.builders.identifier('window'),
+            recast.types.builders.identifier('_p5SetupDone'),
+            false
+          ),
+          recast.types.builders.literal(true)
+        )
+      )
+    );
+  }
+
   ast.program.body = newBody;
   recast.types.visit(ast, {
     visitIdentifier(path) {
@@ -732,6 +804,8 @@ window.onunhandledrejection = function(event) {
 function runUserSketch(code){
   clearError();
   window._p5ErrorLogged = false;
+  // --- Reset setup done flag before running user code ---
+  window._p5SetupDone = false;
   if(window._p5Instance){window._p5Instance.remove();window._p5Instance=null;}
   document.querySelectorAll("canvas").forEach(c=>c.remove());
 
