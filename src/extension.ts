@@ -518,6 +518,127 @@ window.addEventListener("message", function(e) {
     }
   }
 });
+// --- Custom context menu for "Save As png..." and "Copy image" on canvas ---
+(function() {
+  // Inject style for custom context menu hover effect
+  if (!document.getElementById('p5-custom-menu-style')) {
+    const style = document.createElement('style');
+    style.id = 'p5-custom-menu-style';
+    style.textContent = \`
+      .p5-custom-context-menu {
+        position: fixed;
+        background: #222;
+        color: #fff;
+        padding: 0;
+        border: 2px solid #454545;
+        border-radius: 6px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        z-index: 10001;
+        font-family: monospace;
+        user-select: none;
+        min-width: 140px;
+        overflow: hidden;
+      }
+      .p5-custom-context-menu-item {
+        padding: 6px 18px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .p5-custom-context-menu-item:hover { padding: 6px 18px;
+
+        background: #0078D4 !important;
+        color: #fff !important;
+      }
+    \`;
+    document.head.appendChild(style);
+  }
+  let customMenu = null;
+  document.addEventListener('contextmenu', function(e) {
+    // Only show on canvas (p5Canvas)
+    const canvas = e.target && e.target.classList && e.target.classList.contains('p5Canvas') ? e.target : null;
+    if (!canvas) return;
+    e.preventDefault();
+    // Remove any existing menu
+    if (customMenu) customMenu.remove();
+    customMenu = document.createElement('div');
+    customMenu.className = 'p5-custom-context-menu';
+    customMenu.style.left = e.clientX + 'px';
+    customMenu.style.top = e.clientY + 'px';
+
+    // Helper: get a PNG dataURL of the canvas at its display size (not upscaled by CSS)
+    function getCanvasDataUrlAtDisplaySize() {
+      // If canvas width/height != clientWidth/clientHeight, draw to a temp canvas at display size
+      const c = canvas;
+      const cssW = c.clientWidth;
+      const cssH = c.clientHeight;
+      const pxW = c.width;
+      const pxH = c.height;
+      if (pxW === cssW && pxH === cssH) {
+        return c.toDataURL('image/png');
+      }
+      // Downscale to display size
+      const tmp = document.createElement('canvas');
+      tmp.width = cssW;
+      tmp.height = cssH;
+      const ctx = tmp.getContext('2d');
+      ctx.drawImage(c, 0, 0, pxW, pxH, 0, 0, cssW, cssH);
+      return tmp.toDataURL('image/png');
+    }
+
+    // Save as png...
+    const saveItem = document.createElement('div');
+    saveItem.className = 'p5-custom-context-menu-item';
+    saveItem.textContent = 'Save as png...';
+    saveItem.addEventListener('mousedown', function(ev) { ev.stopPropagation(); ev.preventDefault(); });
+    saveItem.addEventListener('click', function() {
+      try {
+        const dataUrl = getCanvasDataUrlAtDisplaySize();
+        vscode.postMessage({ type: 'saveCanvasImage', dataUrl });
+      } catch (err) {
+        vscode.postMessage({ type: 'showError', message: 'Failed to export image: ' + err });
+      }
+      customMenu.remove();
+    });
+
+    // Copy image
+    const copyItem = document.createElement('div');
+    copyItem.className = 'p5-custom-context-menu-item';
+    copyItem.textContent = 'Copy image';
+    copyItem.addEventListener('mousedown', function(ev) { ev.stopPropagation(); ev.preventDefault(); });
+    copyItem.addEventListener('click', async function() {
+      try {
+        const dataUrl = getCanvasDataUrlAtDisplaySize();
+        // Try using Clipboard API if available
+        if (navigator.clipboard && window.ClipboardItem) {
+          const res = await fetch(dataUrl);
+          const blob = await res.blob();
+          const item = new window.ClipboardItem({ 'image/png': blob });
+          await navigator.clipboard.write([item]);
+          // Show notification in webview (since VSCode API not available here)
+          var cssW = canvas.clientWidth;
+          var cssH = canvas.clientHeight;
+          vscode.postMessage({ type: 'showInfo', message: 'Canvas image copied to clipboard (' + cssW + ' x ' + cssH + ')' });
+        } else {
+          vscode.postMessage({ type: 'copyCanvasImage', dataUrl });
+        }
+      } catch (err) {
+        vscode.postMessage({ type: 'showError', message: 'Failed to copy image: ' + err });
+      }
+      customMenu.remove();
+    });
+
+    customMenu.appendChild(saveItem);
+    customMenu.appendChild(copyItem);
+    document.body.appendChild(customMenu);
+
+    // Remove menu on click elsewhere or escape
+    function removeMenu() { if (customMenu) { customMenu.remove(); customMenu = null; } }
+    setTimeout(() => {
+      document.addEventListener('mousedown', removeMenu, { once: true });
+      document.addEventListener('keydown', function esc(ev) { if (ev.key === 'Escape') { removeMenu(); document.removeEventListener('keydown', esc); } });
+    }, 0);
+  });
+})();
 </script>
 <style>
 html,body{margin:0;padding:0;overflow:hidden;width:100%;height:100%;background:transparent;}
@@ -1394,7 +1515,7 @@ export function activate(context: vscode.ExtensionContext) {
         activeP5Panel = panel;
         vscode.commands.executeCommand('setContext', 'hasP5Webview', true);
 
-        panel.webview.onDidReceiveMessage(msg => {
+        panel.webview.onDidReceiveMessage(async msg => {
           const fileName = path.basename(editor.document.fileName);
           const docUri = editor.document.uri.toString();
           const outputChannel = getOrCreateOutputChannel(docUri, fileName);
@@ -1467,6 +1588,41 @@ export function activate(context: vscode.ExtensionContext) {
               console.error("OSC send error:", e);
             }
             return;
+          }
+          // --- SAVE CANVAS IMAGE HANDLER ---
+          else if (msg.type === 'saveCanvasImage') {
+            try {
+              // Prompt user for file path
+              const uri = await vscode.window.showSaveDialog({
+                filters: { 'PNG Image': ['png'] },
+                saveLabel: 'Save Canvas Image'
+              });
+              if (!uri) return;
+              // Decode base64 data URL
+              const base64 = msg.dataUrl.replace(/^data:image\/png;base64,/, '');
+              const buffer = Buffer.from(base64, 'base64');
+              await vscode.workspace.fs.writeFile(uri, buffer);
+              // Show clickable filename in info message
+              const fileName = uri.fsPath.split(/[\\/]/).pop() || uri.fsPath;
+              vscode.window.showInformationMessage(
+                `Canvas image saved: ${fileName}`,
+                'Open Location'
+              ).then(selection => {
+                if (selection === 'Open Location') {
+                  vscode.env.openExternal(uri);
+                }
+              });
+            } catch (e) {
+              vscode.window.showErrorMessage('Failed to save image: ' + e);
+            }
+          }
+          // --- COPY CANVAS IMAGE HANDLER (no-op, handled in webview) ---
+          else if (msg.type === 'copyCanvasImage') {
+            vscode.window.showWarningMessage('Copy image is only supported in browsers with Clipboard API.');
+          }
+          // --- SHOW INFO MESSAGE FROM WEBVIEW ---
+          else if (msg.type === 'showInfo' && typeof msg.message === 'string') {
+            vscode.window.showInformationMessage(msg.message);
           }
         });
 
@@ -1543,6 +1699,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
   // Register toggleReloadWhileTypingOff command
   context.subscriptions.push(
+
     vscode.commands.registerCommand('liveP5.toggleReloadWhileTypingOff', async () => {
       const config = vscode.workspace.getConfiguration('liveP5');
       await config.update('reloadWhileTyping', true, vscode.ConfigurationTarget.Global);
