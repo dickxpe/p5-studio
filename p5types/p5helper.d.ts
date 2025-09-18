@@ -3,3 +3,10 @@
  * Example: loadSound(MEDIA_FOLDER + '/mysound.mp3')
  */
 declare const MEDIA_FOLDER: string;
+
+/**
+ * Send an OSC message to the configured remote address/port.
+ * @param address The OSC address (e.g. "/foo/bar")
+ * @param args Arguments to send (numbers, strings, booleans)
+ */
+declare function sendOSC(address: string, args?: any[]): void;
