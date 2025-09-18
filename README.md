@@ -17,6 +17,7 @@ LIVE P5 LAUNCHER is a Visual Studio Code extension that brings live coding and r
 - **P5 Reference Integration:** Quick access to the p5.js reference and lookup for selected text.
 - **Project Bootstrap:** Quick setup to create a folder structure for p5.js projects and a `jsconfig.json` for p5js types intellisense.
 - **Capture:** Record animations or graphics from the webview with a record button.
+- **OSC Bridge:** Send and Receive OSC messages with SendOSC(address,arguments) and the receivedOSC eventhandler.
 
 ## How to Use
 1. **Install the Extension:**

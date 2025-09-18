@@ -1,6 +1,8 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import * as recast from 'recast';
+// Add OSC import
+import * as osc from 'osc';
 import * as fs from 'fs';
 import { writeFileSync } from 'fs';
 
@@ -494,6 +496,28 @@ async function createHtml(
 ${scriptTags}
 <script data-user-code="true">
 ${escapedCode}
+</script>
+<script>
+// --- OSC SEND/RECEIVE API for user sketches ---
+window.sendOSC = function(address, args) {
+  if (typeof vscode !== "undefined" && address) {
+    vscode.postMessage({ type: "oscSend", address, args: Array.isArray(args) ? args : [] });
+  }
+};
+// Optionally, you can use either window.onOSC or a global function receivedOSC(address, args)
+window.onOSC = function(address, args) {
+  // User can override this in their sketch: window.onOSC = function(address, args) { ... }
+};
+window.addEventListener("message", function(e) {
+  if (e.data && e.data.type === "oscReceive") {
+    // Prefer global receivedOSC if defined, else window.onOSC
+    if (typeof window.receivedOSC === "function") {
+      window.receivedOSC(e.data.address, e.data.args);
+    } else if (typeof window.onOSC === "function") {
+      window.onOSC(e.data.address, e.data.args);
+    }
+  }
+});
 </script>
 <style>
 html,body{margin:0;padding:0;overflow:hidden;width:100%;height:100%;background:transparent;}
@@ -1065,6 +1089,50 @@ function renderGlobalVarControls(vars) {
 `;
 }
 
+// --- OSC SETUP ---
+// Read from config, fallback to defaults if not set
+function getOscConfig() {
+  const config = vscode.workspace.getConfiguration('liveP5');
+  return {
+    remoteAddress: config.get<string>('oscRemoteAddress', '127.0.0.1'),
+    remotePort: config.get<number>('oscRemotePort', 57120),
+    localPort: config.get<number>('oscLocalPort', 57121)
+  };
+}
+
+let oscPort: osc.UDPPort | null = null;
+function setupOscPort() {
+  if (oscPort) {
+    try { oscPort.close(); } catch { }
+    oscPort = null;
+  }
+  const { remoteAddress, remotePort, localPort } = getOscConfig();
+  oscPort = new osc.UDPPort({
+    localAddress: "127.0.0.1", // Use 127.0.0.1 for local loopback to ensure self-sending works
+    localPort,
+    remoteAddress,
+    remotePort,
+    metadata: true
+  });
+  oscPort.open();
+
+  oscPort.on("ready", function () {
+    // Enable loopback for self-sent messages (for some platforms, not always needed)
+    // No-op: osc.js will deliver messages sent to remoteAddress:remotePort if that matches localAddress:localPort
+  });
+
+  oscPort.on("message", function (oscMsg: any) {
+    if (activeP5Panel) {
+      activeP5Panel.webview.postMessage({
+        type: "oscReceive",
+        address: oscMsg.address,
+        args: oscMsg.args
+      });
+    }
+  });
+}
+setupOscPort();
+
 // ----------------------------
 // Activate
 // ----------------------------
@@ -1382,6 +1450,24 @@ export function activate(context: vscode.ExtensionContext) {
           } else if (msg.type === 'requestLastRuntimeError') {
             // No-op in extension, handled in webview below
           }
+          // --- OSC SEND HANDLER ---
+          else if (msg.type === 'oscSend') {
+            try {
+              if (!oscPort) setupOscPort();
+              oscPort!.send({
+                address: msg.address,
+                args: (msg.args || []).map((a: any) => {
+                  if (typeof a === "number") return { type: "f", value: a };
+                  if (typeof a === "string") return { type: "s", value: a };
+                  if (typeof a === "boolean") return { type: a ? "T" : "F", value: a };
+                  return { type: "s", value: String(a) };
+                })
+              });
+            } catch (e) {
+              console.error("OSC send error:", e);
+            }
+            return;
+          }
         });
 
         panel.onDidDispose(() => {
@@ -1559,6 +1645,17 @@ text("P5", 50, 52);`;
     })
   );
 
+  // Listen for OSC config changes and re-create port if needed
+  vscode.workspace.onDidChangeConfiguration(e => {
+    if (
+      e.affectsConfiguration('liveP5.oscRemoteAddress') ||
+      e.affectsConfiguration('liveP5.oscRemotePort') ||
+      e.affectsConfiguration('liveP5.oscLocalPort')
+    ) {
+      setupOscPort();
+    }
+  });
+
   // Listen for debounceDelay config changes
   vscode.workspace.onDidChangeConfiguration(e => {
     if (e.affectsConfiguration('liveP5.debounceDelay')) {
@@ -1573,6 +1670,7 @@ text("P5", 50, 52);`;
     // --- Immediately apply showReloadButton/showRecordButton changes in all open panels ---
     if (
       e.affectsConfiguration('liveP5.showReloadButton') ||
+
       e.affectsConfiguration('liveP5.showRecordButton')
     ) {
       for (const [docUri, panel] of webviewPanelMap.entries()) {
