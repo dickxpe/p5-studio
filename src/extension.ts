@@ -416,9 +416,16 @@ async function createHtml(
     .get<boolean>('showReloadButton', true);
 
   // Add: showRecordButton setting
-  const showRecordButton = vscode.workspace
+  // const showRecordButton = vscode.workspace
+  //   .getConfiguration('liveP5')
+  //   .get<boolean>('showRecordButton', true);
+
+  // Only show if config is true AND code contains draw function
+  const showRecordButtonConfig = vscode.workspace
     .getConfiguration('liveP5')
     .get<boolean>('showRecordButton', true);
+  const hasDrawFunction = /\bfunction\s+draw\s*\(/.test(userCode);
+  const showRecordButton = showRecordButtonConfig && hasDrawFunction;
 
   function escapeBackticks(str: string) {
     return str.replace(/`/g, '\`');
@@ -781,7 +788,7 @@ document.addEventListener('contextmenu', function(e) {
 <script>
 // --- P5 Capture Toggle Button Logic ---
 (function() {
-  // Hide record button if setting is false
+  // Hide record button if setting is false or draw function is missing
   if (!${showRecordButton}) {
     const captureBtn = document.getElementById('capture-toggle-button');
     if (captureBtn) captureBtn.style.display = "none";
@@ -1847,7 +1854,13 @@ text("P5", 50, 52);`;
         const showReload = vscode.workspace.getConfiguration('liveP5').get<boolean>('showReloadButton', true);
         panel.webview.postMessage({ type: 'toggleReloadButton', show: showReload });
         // Update record button (show/hide and remove capture panel if needed)
-        const showRecord = vscode.workspace.getConfiguration('liveP5').get<boolean>('showRecordButton', true);
+        // Only show if config is true AND the code has a draw function
+        const showRecordConfig = vscode.workspace.getConfiguration('liveP5').get<boolean>('showRecordButton', true);
+        let code = '';
+        const editor = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === docUri);
+        if (editor) code = editor.document.getText();
+        const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
+        const showRecord = showRecordConfig && hasDraw;
         panel.webview.postMessage({ type: 'toggleRecordButton', show: showRecord });
       }
     }
