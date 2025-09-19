@@ -1,7 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import * as recast from 'recast';
-// Add OSC import
 import * as osc from 'osc';
 import * as fs from 'fs';
 import { writeFileSync } from 'fs';
@@ -14,11 +13,9 @@ const autoReloadListenersMap = new Map<
   { changeListener?: vscode.Disposable; saveListener?: vscode.Disposable }
 >();
 
-// Map from document URI to output channel
 const outputChannelMap = new Map<string, vscode.OutputChannel>();
 
-// Returns the output channel for a document, creating it if needed
-// Used for logging and error output per sketch
+// Get or create an output channel for a document, used for per-sketch logging and errors
 function getOrCreateOutputChannel(docUri: string, fileName: string) {
   let channel = outputChannelMap.get(docUri);
   if (!channel) {
@@ -28,8 +25,7 @@ function getOrCreateOutputChannel(docUri: string, fileName: string) {
   return channel;
 }
 
-// Debounce utility: delays function execution by a given delay
-// Used to avoid excessive reloads while typing
+// Debounce utility to delay function execution, used to avoid excessive reloads
 function debounce<Func extends (...args: any[]) => void>(fn: Func, delay: number) {
   let timeout: NodeJS.Timeout;
   return (...args: Parameters<Func>) => {
@@ -38,7 +34,7 @@ function debounce<Func extends (...args: any[]) => void>(fn: Func, delay: number
   };
 }
 
-// Returns current time as HH:MM:SS string for log timestamps
+// Get current time as HH:MM:SS string for log timestamps
 function getTime(): string {
   const now = new Date();
   const h = String(now.getHours()).padStart(2, '0');
@@ -47,12 +43,12 @@ function getTime(): string {
   return `${h}:${m}:${s}`;
 }
 
-// Reads debounce delay from user config
+// Read debounce delay from user config
 function getDebounceDelay() {
   return vscode.workspace.getConfiguration('liveP5').get<number>('debounceDelay', 500);
 }
 
-// Recursively lists .js/.ts files in a folder (for common/import scripts)
+// Recursively list .js/.ts files in a folder (for script imports)
 async function listFilesRecursively(dirUri: vscode.Uri, exts: string[]): Promise<string[]> {
   let files: string[] = [];
   try {
@@ -65,11 +61,11 @@ async function listFilesRecursively(dirUri: vscode.Uri, exts: string[]): Promise
         files = files.concat(await listFilesRecursively(entryUri, exts));
       }
     }
-  } catch (e) { /* ignore if folder does not exist */ }
+  } catch (e) { }
   return files;
 }
 
-// Expanded list of reserved/built-in global names (p5.js, browser, etc.)
+// Set of reserved/built-in global names (p5.js, browser, JS built-ins, etc.)
 const RESERVED_GLOBALS = new Set([
   // p5.js color functions and color mode
   "hue", "saturation", "brightness", "red", "green", "blue", "alpha", "lightness", "colorMode", "color",
@@ -134,8 +130,7 @@ const RESERVED_GLOBALS = new Set([
   "acquireVsCodeApi"
 ]);
 
-// Extracts top-level global variables from user code (number, string, boolean)
-// Now also returns a list of ignored/conflicting names
+// Extract top-level global variables and detect conflicts with reserved names
 function extractGlobalVariablesWithConflicts(code: string): { globals: { name: string, value: any }[], conflicts: string[] } {
   const acorn = require('acorn');
   const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
@@ -166,7 +161,6 @@ function extractGlobalVariablesWithConflicts(code: string): { globals: { name: s
       this.traverse(path);
     }
   });
-  // Fallback: also check top-level body for VariableDeclaration
   if (ast.program && Array.isArray(ast.program.body)) {
     for (const node of ast.program.body) {
       if (node.type === 'VariableDeclaration') {
@@ -177,7 +171,7 @@ function extractGlobalVariablesWithConflicts(code: string): { globals: { name: s
   return { globals, conflicts };
 }
 
-// Extracts top-level global variables from user code (number, string, boolean)
+// Extract top-level global variables, excluding reserved names
 function extractGlobalVariables(code: string): { name: string, value: any }[] {
   const acorn = require('acorn');
   const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
@@ -203,7 +197,6 @@ function extractGlobalVariables(code: string): { name: string, value: any }[] {
       this.traverse(path);
     }
   });
-  // Fallback: also check top-level body for VariableDeclaration
   if (ast.program && Array.isArray(ast.program.body)) {
     for (const node of ast.program.body) {
       if (node.type === 'VariableDeclaration') {
@@ -211,7 +204,6 @@ function extractGlobalVariables(code: string): { name: string, value: any }[] {
       }
     }
   }
-  // At the end, filter out reserved/built-in globals
   return globals.filter(g => !RESERVED_GLOBALS.has(g.name));
 }
 
@@ -222,8 +214,7 @@ const P5_EVENT_HANDLERS = [
   "keyPressed", "keyReleased", "keyTyped", "deviceMoved", "deviceTurned", "deviceShaken"
 ];
 
-// Rewrites user code so global variables are attached to window (for live editing)
-// Also wraps event handlers to only run after setup has completed
+// Rewrite user code so global variables are attached to window and event handlers are guarded
 function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string }[]): string {
   if (!globals.length) return code;
   const acorn = require('acorn');
@@ -1331,6 +1322,7 @@ function getOscConfig() {
 }
 
 let oscPort: osc.UDPPort | null = null;
+// Setup OSC UDP port for sending/receiving OSC messages
 function setupOscPort() {
   if (oscPort) {
     try { oscPort.close(); } catch { }
@@ -1369,6 +1361,7 @@ setupOscPort();
 export function activate(context: vscode.ExtensionContext) {
   // Create output channel and register with context to ensure it appears in Output panel
 
+  // Helper to update context key for p5.js file detection
   function updateP5Context(editor?: vscode.TextEditor) {
     editor = editor || vscode.window.activeTextEditor;
     if (!editor) return vscode.commands.executeCommand('setContext', 'isP5js', false);
@@ -1376,7 +1369,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.executeCommand('setContext', 'isP5js', isJsOrTs);
   }
 
-  // P5 Reference status bar button
+  // Status bar button for P5 Reference
   const p5RefStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   p5RefStatusBar.command = 'extension.openP5Ref';
   p5RefStatusBar.text = '$(book) P5 Reference'; // Status bar text
@@ -1392,6 +1385,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
 
+  // Helper to update context key for JS/TS file detection and show/hide status bar
   function updateJsOrTsContext(editor?: vscode.TextEditor) {
     editor = editor || vscode.window.activeTextEditor;
     const isJsOrTs = !!editor && ['javascript', 'typescript'].includes(editor.document.languageId);
@@ -1437,16 +1431,17 @@ export function activate(context: vscode.ExtensionContext) {
   });
 
   const debounceMap = new Map<string, Function>();
+  // Debounce document updates to avoid excessive reloads
   function debounceDocumentUpdate(document: vscode.TextDocument, forceLog = false) {
     const docUri = document.uri.toString();
     if (!debounceMap.has(docUri)) debounceMap.set(docUri, debounce((doc, log) => updateDocumentPanel(doc, log), getDebounceDelay()));
     debounceMap.get(docUri)!(document, forceLog);
   }
 
-  // Add a flag to ignore logs after a syntax error
+  // Flag to ignore logs after a syntax error
   let ignoreLogs = false;
 
-  // Updates the webview panel with new code, handles syntax errors, and sends global variables
+  // Update the webview panel with new code, handle syntax errors, and send global variables
   async function updateDocumentPanel(document: vscode.TextDocument, forceLog = false) {
     const docUri = document.uri.toString();
     const panel = webviewPanelMap.get(docUri);
@@ -1513,11 +1508,11 @@ export function activate(context: vscode.ExtensionContext) {
     }
   }
 
-  // Track reloadWhileTyping and reloadOnSave as top-level variables
+  // Track reloadWhileTyping and reloadOnSave settings
   let reloadWhileTyping = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadWhileTyping', true);
   let reloadOnSave = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadOnSave', true);
 
-  // Helper to update reloadWhileTyping/reloadOnSave variables and context key
+  // Update reloadWhileTyping/reloadOnSave variables and context key
   async function updateReloadWhileTypingVarsAndContext() {
     reloadWhileTyping = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadWhileTyping', true);
     reloadOnSave = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadOnSave', true);
@@ -1527,7 +1522,7 @@ export function activate(context: vscode.ExtensionContext) {
   // --- Ensure context key is set on activation ---
   updateReloadWhileTypingVarsAndContext();
 
-  // Sets up listeners for reload-on-typing and reload-on-save per document
+  // Set up listeners for reload-on-typing and reload-on-save per document
   function updateAutoReloadListeners(editor: vscode.TextEditor) {
     const docUri = editor.document.uri.toString();
     const existing = autoReloadListenersMap.get(docUri);
@@ -1788,7 +1783,7 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // Register reload-p5-sketch command
+  // Command to reload the current P5 sketch
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.reload-p5-sketch', async () => {
       const editor = vscode.window.activeTextEditor;
@@ -1797,7 +1792,7 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // Register toggleReloadWhileTypingOn command
+  // Command to disable reload while typing
   context.subscriptions.push(
     vscode.commands.registerCommand('liveP5.toggleReloadWhileTypingOn', async () => {
       const config = vscode.workspace.getConfiguration('liveP5');
@@ -1808,9 +1803,8 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage('Reload on typing is now disabled.');
     })
   );
-  // Register toggleReloadWhileTypingOff command
+  // Command to enable reload while typing
   context.subscriptions.push(
-
     vscode.commands.registerCommand('liveP5.toggleReloadWhileTypingOff', async () => {
       const config = vscode.workspace.getConfiguration('liveP5');
       await config.update('reloadWhileTyping', true, vscode.ConfigurationTarget.Global);
@@ -1820,7 +1814,7 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage('Reload on typing is now enabled.');
     })
   );
-  // Register openSelectedText command
+  // Command to open selected text in the P5 reference
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.openSelectedText', () => {
       const editor = vscode.window.activeTextEditor;
@@ -1831,7 +1825,7 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  // Register create-jsconfig command
+  // Command to create jsconfig.json and setup a new P5 project
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.create-jsconfig', async () => {
       try {
@@ -1924,7 +1918,7 @@ text("P5", 50, 52);`;
     }
   });
 
-  // Listen for debounceDelay config changes
+  // Listen for debounceDelay config changes and update debounce logic
   vscode.workspace.onDidChangeConfiguration(e => {
     if (e.affectsConfiguration('liveP5.debounceDelay')) {
       debounceMap.clear(); // Clear so new debounceDelay is used on next change
