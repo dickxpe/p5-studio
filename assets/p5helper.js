@@ -9,3 +9,13 @@ function sendOSC(address, args) {
     // This is a stub for autocompletion only.
     // The real implementation is injected in the webview.
 }
+
+/**
+ * Print output to the console and the VS Code output panel.
+ * Alias for console.log.
+ * @param {...any} args Values to print
+ */
+function output(...args) {
+    // This is a stub for autocompletion only.
+    // The real implementation is injected in the webview.
+}

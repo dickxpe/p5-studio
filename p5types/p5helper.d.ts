@@ -10,3 +10,10 @@ declare const MEDIA_FOLDER: string;
  * @param args Arguments to send (numbers, strings, booleans)
  */
 declare function sendOSC(address: string, args?: any[]): void;
+
+/**
+ * Print output to the console and the VS Code output panel.
+ * Alias for console.log.
+ * @param args Values to print
+ */
+declare function output(...args: any[]): void;

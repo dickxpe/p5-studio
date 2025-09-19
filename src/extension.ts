@@ -505,6 +505,8 @@ ${scriptTags}
 ${escapedCode}
 </script>
 <script>
+// --- output() alias for console.log ---
+window.output = function(...args) { console.log(...args); };
 // --- OSC SEND/RECEIVE API for user sketches ---
 window.sendOSC = function(address, args) {
   if (typeof vscode !== "undefined" && address) {
