@@ -2,7 +2,7 @@
   "name": "live-p5-launcher",
   "displayName": "LIVE P5 LAUNCHER",
   "description": "Launch and edit P5 in VS Code",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "icon": "images/ICON.png",
   "author": {
     "name": "peterdickx"
@@ -113,33 +113,38 @@
     },
     "configuration": {
       "type": "object",
-      "title": "LIVE P5 Settings",
+      "title": "LIVE P5 Launcher Settings",
       "properties": {
         "liveP5.reloadWhileTyping": {
           "type": "boolean",
           "default": true,
-          "description": "Determines if the P5 webpanel automatically reloads while typing."
+          "description": "Determines if the P5 webpanel automatically reloads while typing.",
+          "order": 1
         },
         "liveP5.reloadOnSave": {
           "type": "boolean",
           "default": true,
-          "description": "Determines if the P5 webpanel automatically reloads when saving the file."
+          "description": "Determines if the P5 webpanel automatically reloads when saving the file.",
+          "order": 0
         },
         "liveP5.showReloadButton": {
           "type": "boolean",
           "default": true,
-          "description": "Show the reload button in the webview toolbar."
+          "description": "Show the reload button in the webview toolbar.",
+          "order": 6
         },
         "liveP5.showRecordButton": {
           "type": "boolean",
           "default": false,
-          "description": "Show the record (capture) button in the webview toolbar."
+          "description": "Show the record (capture) button in the webview toolbar.",
+          "order": 7
         },
         "liveP5.debounceDelay": {
           "type": "number",
           "default": 300,
           "minimum": 100,
-          "description": "Debounce delay in milliseconds for live reload while typing."
+          "description": "Debounce delay in milliseconds for live reload while typing.",
+          "order": 3
         },
         "liveP5.varDrawerDefaultState": {
           "type": "string",
@@ -149,27 +154,39 @@
             "hidden"
           ],
           "default": "collapsed",
-          "description": "Default state of the global variable drawer in the P5 panel. 'open' shows the drawer by, 'collapsed' shows only the tab, 'hidden' hides the drawer completely."
+          "description": "Default state of the global variable drawer in the P5 panel. 'open' shows the drawer by, 'collapsed' shows only the tab, 'hidden' hides the drawer completely.",
+          "order": 4
         },
         "liveP5.showSetupNotification": {
           "type": "boolean",
           "default": true,
-          "description": "Show a setup prompt when the workspace has no P5 configuration (jsconfig.json). Choose 'Don't show again' to turn this off."
+          "description": "Show a setup prompt when the workspace has no P5 configuration (jsconfig.json). Choose 'Don't show again' to turn this off.",
+          "order": 8
         },
         "liveP5.oscRemoteAddress": {
           "type": "string",
           "default": "127.0.0.1",
-          "description": "OSC remote address (host to send OSC messages to)."
+          "description": "OSC remote address (host to send OSC messages to).",
+          "order": 9
         },
         "liveP5.oscRemotePort": {
           "type": "number",
           "default": 57120,
-          "description": "OSC remote port (port to send OSC messages to)."
+          "description": "OSC remote port (port to send OSC messages to).",
+          "order": 10
         },
         "liveP5.oscLocalPort": {
           "type": "number",
           "default": 57121,
-          "description": "OSC local port (port to listen for incoming OSC messages)."
+          "description": "OSC local port (port to listen for incoming OSC messages).",
+          "order": 11
+        },
+        "liveP5.varControlDebounceDelay": {
+          "type": "number",
+          "default": 500,
+          "minimum": 0,
+          "description": "Debounce delay (ms) for global variable drawer input changes before applying them to the sketch. Independent from reloadWhileTyping debounce.",
+          "order": 5
         }
       }
     }

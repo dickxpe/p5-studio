@@ -469,6 +469,7 @@ async function createHtml(
 
   // In createHtml, get debounceDelay from config and pass to webview
   const debounceDelay = vscode.workspace.getConfiguration('liveP5').get<number>('debounceDelay', 500);
+  const varControlDebounceDelay = vscode.workspace.getConfiguration('liveP5').get<number>('varControlDebounceDelay', 300);
   // Get varDrawerDefaultState from config
   const varDrawerDefaultState = vscode.workspace.getConfiguration('liveP5').get<string>('varDrawerDefaultState', 'open');
 
@@ -899,6 +900,7 @@ function debounceWebview(fn, delay) {
   };
 }
 window._p5DebounceDelay = ${debounceDelay};
+window._p5VarControlDebounceDelay = ${varControlDebounceDelay};
 window._p5VarDrawerDefaultState = "${varDrawerDefaultState}";
 
 // Notify extension that webview is loaded
@@ -1113,6 +1115,9 @@ window.addEventListener("message", e => {
         }
       }
       break;
+    case 'updateVarDebounceDelay':
+      if (typeof data.value === 'number') window._p5VarControlDebounceDelay = data.value;
+      break;
   }
 });
 
@@ -1238,10 +1243,13 @@ function renderGlobalVarControls(vars) {
     input.setAttribute('data-var', v.name);
     if (typeof v.value !== 'boolean') {
       // Use debounced input event for instant feedback
+      const delay = (typeof window._p5VarControlDebounceDelay === 'number')
+        ? window._p5VarControlDebounceDelay
+        : window._p5DebounceDelay;
       const debouncedUpdate = debounceWebview(() => {
         updateGlobalVarInSketch(v.name, input.value);
         vscode.postMessage({ type: 'updateGlobalVar', name: v.name, value: input.value });
-      }, window._p5DebounceDelay);
+      }, delay);
       input.addEventListener('input', debouncedUpdate);
 
       // --- PATCH: Lose focus on Enter/Return key ---
@@ -1609,6 +1617,7 @@ export function activate(context: vscode.ExtensionContext) {
         // --- Pass the sketch file path to the panel for include folder lookup ---
         (panel as any)._sketchFilePath = editor.document.fileName;
 
+
         // Focus the output channel for the new sketch immediately
         const docUri = editor.document.uri.toString();
         const fileName = path.basename(editor.document.fileName);
@@ -1921,7 +1930,13 @@ text("P5", 50, 52);`;
   // Listen for debounceDelay config changes and update debounce logic
   vscode.workspace.onDidChangeConfiguration(e => {
     if (e.affectsConfiguration('liveP5.debounceDelay')) {
-      debounceMap.clear(); // Clear so new debounceDelay is used on next change
+      debounceMap.clear();
+    }
+    if (e.affectsConfiguration('liveP5.varControlDebounceDelay')) {
+      const newDelay = vscode.workspace.getConfiguration('liveP5').get<number>('varControlDebounceDelay', 300);
+      for (const [, panel] of webviewPanelMap.entries()) {
+        panel.webview.postMessage({ type: 'updateVarDebounceDelay', value: newDelay });
+      }
     }
     // --- Sync reloadWhileTyping context key and button icon if setting changed via settings UI ---
     if (e.affectsConfiguration('liveP5.reloadWhileTyping')) {
