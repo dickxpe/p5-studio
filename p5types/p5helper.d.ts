@@ -5,6 +5,12 @@
 declare const MEDIA_FOLDER: string;
 
 /**
+ * The recommended global for loading files from the include folder (next to your sketch).
+ * Example: loadImage(INCLUDE_FOLDER + '/myimage.png')
+ */
+declare const INCLUDE_FOLDER: string;
+
+/**
  * Send an OSC message to the configured remote address/port.
  * @param address The OSC address (e.g. "/foo/bar")
  * @param args Arguments to send (numbers, strings, booleans)

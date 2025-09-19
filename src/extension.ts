@@ -492,6 +492,19 @@ async function createHtml(
     }
   } catch (e) { /* ignore */ }
 
+  // --- NEW: Get the webview URI for the include folder (if it exists) ---
+  let includeWebviewUriPrefix = '';
+  try {
+    if (panel && (panel as any)._sketchFilePath) {
+      const sketchDir = path.dirname((panel as any)._sketchFilePath);
+      const includeDir = path.join(sketchDir, 'include');
+      if (fs.existsSync(includeDir) && fs.statSync(includeDir).isDirectory()) {
+        const includeUri = vscode.Uri.file(includeDir);
+        includeWebviewUriPrefix = panel.webview.asWebviewUri(includeUri).toString();
+      }
+    }
+  } catch (e) { /* ignore */ }
+
   // Add record icons (inline SVGs)
   const recordRedSvg = `<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#ff3333" stroke="#b00" stroke-width="2"/></svg>`;
   const recordGraySvg = `<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#bbb" stroke="#888" stroke-width="2"/></svg>`;
@@ -507,6 +520,18 @@ ${escapedCode}
 <script>
 // --- output() alias for console.log ---
 window.output = function(...args) { console.log(...args); };
+// --- Provide MEDIA_FOLDER and INCLUDE_FOLDER globals for user sketches ---
+// Always ensure trailing slash so MEDIA_FOLDER + "file.png" works.
+(function() {
+  function ensureTrailingSlash(str) {
+    if (!str) return "";
+    return str.endsWith("/") ? str : str + "/";
+  }
+  window.MEDIA_FOLDER = ensureTrailingSlash(${JSON.stringify(mediaWebviewUriPrefix)});
+  window.INCLUDE_FOLDER = ensureTrailingSlash(${JSON.stringify(includeWebviewUriPrefix)});
+})();
+</script>
+<script>
 // --- OSC SEND/RECEIVE API for user sketches ---
 window.sendOSC = function(address, args) {
   if (typeof vscode !== "undefined" && address) {
@@ -570,7 +595,7 @@ window.addEventListener("message", function(e) {
     customMenu.style.left = e.clientX + 'px';
     customMenu.style.top = e.clientY + 'px';
 
-    // Helper: get a PNG dataURL of the canvas at its display size (not upscaled by CSS)
+    // Helper: get a PNG dataUrl of the canvas at its display size (not upscaled by CSS)
     function getCanvasDataUrlAtDisplaySize() {
       // If canvas width/height != clientWidth/clientHeight, draw to a temp canvas at display size
       const c = canvas;
@@ -1187,8 +1212,24 @@ function renderGlobalVarControls(vars) {
       input = document.createElement('input');
       input.type = 'number';
       input.value = v.value;
-      if (!Number.isInteger(v.value)) {
-        input.step = 'any'; // allow decimals
+      // --- BEGIN PATCH: set step and rounding based on initial value ---
+      if (Number.isInteger(v.value)) {
+        input.step = '1';
+        input.value = Math.floor(v.value);
+        input.addEventListener('blur', () => {
+          input.value = String(Math.floor(Number(input.value) || 0));
+        });
+      } else {
+        // Determine decimal precision from initial value
+        const match = String(v.value).match(/\.(\d+)?/);
+        let precision = match && match[1] ? match[1].length : 2;
+        input.step = (precision > 0) ? (1 / Math.pow(10, precision)).toString() : 'any';
+        // Always show the value with the same precision as initial value
+        input.value = v.value.toFixed(precision);
+        input.addEventListener('blur', () => {
+          let num = Number(input.value);
+          if (!isNaN(num)) input.value = num.toFixed(precision);
+        });
       }
     } else if (typeof v.value === 'boolean') {
       input = document.createElement('input');
@@ -1211,6 +1252,15 @@ function renderGlobalVarControls(vars) {
         vscode.postMessage({ type: 'updateGlobalVar', name: v.name, value: input.value });
       }, window._p5DebounceDelay);
       input.addEventListener('input', debouncedUpdate);
+
+      // --- PATCH: Lose focus on Enter/Return key ---
+      input.addEventListener('keydown', function(ev) {
+        if (ev.key === 'Enter' || ev.key === 'Return') {
+          ev.preventDefault();
+          input.blur();
+        }
+      });
+      // --- END PATCH ---
     }
     label.appendChild(input);
     controls.appendChild(label);
@@ -1218,10 +1268,55 @@ function renderGlobalVarControls(vars) {
   // Re-attach drawer logic if needed
   controls.querySelector('.drawer-toggle').addEventListener('click', hideDrawer);
   tab.addEventListener('click', showDrawer);
+
+  // Start syncing drawer with global variable values
+  if (window._p5DrawerSyncInterval) clearInterval(window._p5DrawerSyncInterval);
+  window._p5DrawerSyncInterval = setInterval(syncDrawerWithGlobals, 200);
+}
+
+// Function to sync drawer inputs with global variable values
+function syncDrawerWithGlobals() {
+  if (!window._p5GlobalVarTypes) return;
+  const controls = document.getElementById('p5-var-controls');
+  if (!controls) return;
+  Object.keys(window._p5GlobalVarTypes).forEach(name => {
+    const type = window._p5GlobalVarTypes[name];
+    const input = controls.querySelector('input[data-var="' + name + '"]');
+    if (!input) return;
+    let globalVal = window[name];
+    if (type === 'number') {
+      // --- PATCH: match input formatting to initial value ---
+      if (input !== document.activeElement) {
+        let step = input.step;
+        if (step === '1') {
+          // Integer: always show floored value
+          if (input.value !== String(Math.floor(globalVal))) input.value = Math.floor(globalVal);
+        } else if (step && step !== 'any') {
+          // Decimal: use precision from step
+          let precision = 0;
+          if (step.indexOf('.') !== -1) precision = step.split('.')[1].length;
+          if (typeof globalVal === 'number' && !isNaN(globalVal)) {
+            let valStr = Number(globalVal).toFixed(precision);
+            if (input.value !== valStr) input.value = valStr;
+          }
+        } else {
+          // Fallback
+          if (input.value !== String(globalVal)) input.value = globalVal;
+        }
+      }
+      // --- END PATCH ---
+    } else if (type === 'boolean') {
+      if (input.checked !== !!globalVal) input.checked = !!globalVal;
+    } else {
+      if (input !== document.activeElement) {
+        if (input.value !== String(globalVal)) input.value = globalVal;
+      }
+    }
+  });
 }
 </script>
-<!-- ...rest of HTML... -->
-`;
+</body>
+</html>`;
 }
 
 // --- OSC SETUP ---
