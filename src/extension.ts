@@ -14,6 +14,12 @@ const autoReloadListenersMap = new Map<
 >();
 
 const outputChannelMap = new Map<string, vscode.OutputChannel>();
+let lastActiveOutputChannel: vscode.OutputChannel | null = null; // <--- NEW
+
+function showAndTrackOutputChannel(ch: vscode.OutputChannel) {
+  ch.show(true);
+  lastActiveOutputChannel = ch;
+}
 
 // Get or create an output channel for a document, used for per-sketch logging and errors
 function getOrCreateOutputChannel(docUri: string, fileName: string) {
@@ -22,6 +28,7 @@ function getOrCreateOutputChannel(docUri: string, fileName: string) {
     channel = vscode.window.createOutputChannel('LIVE P5: ' + fileName);
     outputChannelMap.set(docUri, channel);
   }
+  lastActiveOutputChannel = channel; // <--- track whenever retrieved
   return channel;
 }
 
@@ -1424,7 +1431,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (editor) updateAutoReloadListeners(editor);
     // Focus the output channel for the active sketch
     const channel = outputChannelMap.get(docUri);
-    if (channel) channel.show(true);
+    if (channel) showAndTrackOutputChannel(channel); // <--- replaced direct show
   });
 
   vscode.workspace.onDidChangeTextDocument(e => {
@@ -1622,7 +1629,7 @@ export function activate(context: vscode.ExtensionContext) {
         const docUri = editor.document.uri.toString();
         const fileName = path.basename(editor.document.fileName);
         const outputChannel = getOrCreateOutputChannel(docUri, fileName);
-        outputChannel.show(true);
+        showAndTrackOutputChannel(outputChannel); // <--- replaced direct show
 
         webviewPanelMap.set(docUri, panel);
         activeP5Panel = panel;
@@ -1760,7 +1767,7 @@ export function activate(context: vscode.ExtensionContext) {
         panel.onDidChangeViewState(e => {
           if (e.webviewPanel.active) {
             const channel = outputChannelMap.get(docUri);
-            if (channel) channel.show(true);
+            if (channel) showAndTrackOutputChannel(channel); // <--- in panel.onDidChangeViewState
           }
         });
 
@@ -1999,6 +2006,18 @@ text("P5", 50, 52);`;
       }
     }
   })();
+
+  // --- NEW: Scroll LIVE P5 output to end command ---
+  context.subscriptions.push(
+    vscode.commands.registerCommand('liveP5.scrollOutputToEnd', async () => {
+      if (!lastActiveOutputChannel) {
+        vscode.window.showInformationMessage('No LIVE P5 output channel active.');
+        return;
+      }
+      showAndTrackOutputChannel(lastActiveOutputChannel);
+      setTimeout(() => vscode.commands.executeCommand('cursorBottom'), 30);
+    })
+  );
 }
 
 // Helper: Wrap code in setup() if no setup/draw present
