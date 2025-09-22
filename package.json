@@ -2,7 +2,7 @@
   "name": "live-p5-launcher",
   "displayName": "LIVE P5 LAUNCHER",
   "description": "Launch and edit P5 in VS Code",
-  "version": "1.2.6",
+  "version": "1.2.7",
   "icon": "images/ICON.png",
   "author": {
     "name": "peterdickx"
@@ -204,7 +204,15 @@
           "order": 5
         }
       }
-    }
+    },
+    "keybindings": [
+      {
+        "command": "extension.live-p5",
+        "key": "ctrl+alt+p",
+        "mac": "cmd+alt+p",
+        "when": "editorTextFocus && isJsOrTs"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run build",
