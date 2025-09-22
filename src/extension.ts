@@ -231,6 +231,24 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string 
   const newBody = [];
   let setupFound = false;
 
+
+  // Insert window.<global> = undefined for all globals at the very top
+  for (const g of globals) {
+    newBody.push(
+      recast.types.builders.expressionStatement(
+        recast.types.builders.assignmentExpression(
+          '=',
+          recast.types.builders.memberExpression(
+            recast.types.builders.identifier('window'),
+            recast.types.builders.identifier(g.name),
+            false
+          ),
+          recast.types.builders.identifier('undefined')
+        )
+      )
+    );
+  }
+
   for (let i = 0; i < programBody.length; i++) {
     let stmt = programBody[i];
     // Detect setup function with createCanvas(windowWidth,windowHeight)
@@ -315,13 +333,13 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string 
       );
     }
 
-    if (stmt.type === 'VariableDeclaration' && (stmt.kind === 'let' || stmt.kind === 'const')) {
-      if (stmt.declarations.some(decl => decl.id && decl.id.name && globalNames.has(decl.id.name))) {
+    if (stmt.type === 'VariableDeclaration') {
+      // Always convert to var for globals
+      if ((stmt.kind === 'let' || stmt.kind === 'const') && stmt.declarations.some(decl => decl.id && decl.id.name && globalNames.has(decl.id.name))) {
         stmt = Object.assign({}, stmt, { kind: 'var' });
       }
-    }
-    newBody.push(stmt);
-    if (stmt.type === 'VariableDeclaration') {
+      newBody.push(stmt);
+      // For each declared global, assign to window
       for (const decl of stmt.declarations) {
         if (decl.id && decl.id.name && globalNames.has(decl.id.name)) {
           newBody.push(recast.types.builders.expressionStatement(
@@ -336,7 +354,9 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string 
           ));
         }
       }
+      continue;
     }
+    newBody.push(stmt);
   }
 
   // If no setup function, still ensure window._p5SetupDone is set to true after sketch runs
@@ -362,16 +382,26 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string 
       const name = path.value.name;
       if (
         globalNames.has(name) &&
+        // Not already window.foo
         !(path.parentPath && path.parentPath.value &&
           path.parentPath.value.type === 'MemberExpression' &&
           path.parentPath.value.property === path.value &&
           path.parentPath.value.object.type === 'Identifier' &&
           path.parentPath.value.object.name === 'window') &&
+        // Not a declaration/definition
         !(path.parentPath && path.parentPath.value &&
           ((path.parentPath.value.type === 'VariableDeclarator' && path.parentPath.value.id === path.value) ||
             (path.parentPath.value.type === 'FunctionDeclaration' && path.parentPath.value.id === path.value) ||
             (path.parentPath.value.type === 'FunctionExpression' && path.parentPath.value.id === path.value) ||
-            (path.parentPath.value.type === 'ClassDeclaration' && path.parentPath.value.id === path.value)))
+            (path.parentPath.value.type === 'ClassDeclaration' && path.parentPath.value.id === path.value))) &&
+        // Not this.foo or this.window.foo
+        !(path.parentPath && path.parentPath.value &&
+          path.parentPath.value.type === 'MemberExpression' &&
+          path.parentPath.value.property === path.value &&
+          ((path.parentPath.value.object.type === 'ThisExpression') ||
+            (path.parentPath.value.object.type === 'MemberExpression' &&
+              path.parentPath.value.object.object && path.parentPath.value.object.object.type === 'ThisExpression' &&
+              path.parentPath.value.object.property && path.parentPath.value.object.property.name === 'window')))
       ) {
         return recast.types.builders.memberExpression(
           recast.types.builders.identifier('window'),
@@ -708,13 +738,13 @@ canvas.p5Canvas{display:block;}
   left: 0; right: 0; bottom: 0;
   background: #1f1f1f;
   z-index: 10000;
-  padding: 4px 12px;
+  padding: 4px 12px 2px 12px;
   font-family: monospace;
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
-  gap: 12px;
-  max-height: calc(3 * 2.5em);
+  gap: 4px 10px;
+  max-height: calc(3 * 2.0em);
   overflow-y: auto;
   transition: transform 0.2s cubic-bezier(.4,0,.2,1), box-shadow 0.2s;
   box-shadow: 0 -2px 8px rgba(0,0,0,0.2);
@@ -773,7 +803,10 @@ canvas.p5Canvas{display:block;}
   vertical-align: middle;
   display: inline-flex;
   align-items: center;
-  height: 32px;
+  height: 22px;
+  margin-bottom: 0px;
+  padding: 0 2px 0 0;
+  line-height: 1.2;
 }
 #p5-var-controls input[type="checkbox"] {
   width: 16px;
