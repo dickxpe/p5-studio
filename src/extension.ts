@@ -1603,6 +1603,18 @@ export function activate(context: vscode.ExtensionContext) {
       const docUri = editor.document.uri.toString();
       let panel = webviewPanelMap.get(docUri);
       let code = editor.document.getText();
+
+      // --- NEW: SingleP5Panel logic ---
+      if (isSingleP5PanelEnabled()) {
+        // Close all other panels before opening a new one
+        for (const [uri, p] of webviewPanelMap.entries()) {
+          if (uri !== docUri) {
+            p.dispose();
+            // The panel.onDidDispose will remove from map
+          }
+        }
+      }
+
       if (!panel) {
         // Check for syntax errors before setting HTML
         let syntaxErrorMsg: string | null = null;
@@ -2079,5 +2091,10 @@ function formatSyntaxErrorMsg(msg: string): string {
     return msg.replace(regex, `${before} on line ${line}]${rest}`);
   }
   return msg;
+}
+
+// Helper to check SingleP5Panel setting
+function isSingleP5PanelEnabled() {
+  return vscode.workspace.getConfiguration('liveP5').get<boolean>('SingleP5Panel', false);
 }
 

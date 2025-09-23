@@ -2,7 +2,7 @@
   "name": "live-p5-launcher",
   "displayName": "LIVE P5 LAUNCHER",
   "description": "Launch and edit P5 in VS Code",
-  "version": "1.2.8",
+  "version": "1.2.9",
   "icon": "images/ICON.png",
   "author": {
     "name": "peterdickx"
@@ -202,6 +202,12 @@
           "minimum": 0,
           "description": "Debounce delay (ms) for global variable drawer input changes before applying them to the sketch. Independent from reloadWhileTyping debounce.",
           "order": 5
+        },
+        "liveP5.SingleP5Panel": {
+          "type": "boolean",
+          "default": true,
+          "description": "If enabled, only one P5 webpanel can be open at a time. Opening a new panel closes all others.",
+          "order": 12
         }
       }
     },
