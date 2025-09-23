@@ -1468,7 +1468,36 @@ export function activate(context: vscode.ExtensionContext) {
     if (editor) updateAutoReloadListeners(editor);
     // Focus the output channel for the active sketch
     const channel = outputChannelMap.get(docUri);
-    if (channel) showAndTrackOutputChannel(channel); // <--- replaced direct show
+    if (channel) showAndTrackOutputChannel(channel);
+
+    // --- Move editor to left column if not already there, but never for webview panels ---
+    // Only move if the document is a file, is the currently active editor, and NOT already open in the left column
+    if (
+      editor.viewColumn &&
+      editor.viewColumn !== vscode.ViewColumn.One &&
+      editor.document.uri.scheme === 'file' &&
+      vscode.window.activeTextEditor &&
+      vscode.window.activeTextEditor.document.uri.toString() === editor.document.uri.toString()
+    ) {
+      const alreadyOpenInLeft = vscode.window.visibleTextEditors.some(
+        e => e.document.uri.toString() === editor.document.uri.toString() && e.viewColumn === vscode.ViewColumn.One
+      );
+      if (!alreadyOpenInLeft) {
+        vscode.window.showTextDocument(editor.document, vscode.ViewColumn.One, false).then(() => {
+          // Close all other editors for this file except the one in the left column
+          vscode.window.visibleTextEditors.forEach(e => {
+            if (
+              e.document.uri.toString() === editor.document.uri.toString() &&
+              e.viewColumn !== vscode.ViewColumn.One
+            ) {
+              vscode.window.showTextDocument(e.document, e.viewColumn, false).then(() => {
+                vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+              });
+            }
+          });
+        });
+      }
+    }
   });
 
   vscode.workspace.onDidChangeTextDocument(e => {
@@ -1611,7 +1640,7 @@ export function activate(context: vscode.ExtensionContext) {
       // --- NEW: SingleP5Panel logic ---
       if (isSingleP5PanelEnabled()) {
         // Close all other panels before opening a new one
-        for (const [uri, p] of webviewPanelMap.entries()) {
+        for (const [ uri, p] of webviewPanelMap.entries()) {
           if (uri !== docUri) {
             p.dispose();
             // The panel.onDidDispose will remove from map
@@ -1621,6 +1650,7 @@ export function activate(context: vscode.ExtensionContext) {
 
       if (!panel) {
         // Check for syntax errors before setting HTML
+
         let syntaxErrorMsg: string | null = null;
         let codeToInject = code;
         try {
