@@ -701,7 +701,11 @@ window.addEventListener("message", function(e) {
 </script>
 <style>
 html,body{margin:0;padding:0;overflow:hidden;width:100%;height:100%;background:transparent;}
-canvas.p5Canvas{display:block;}
+canvas.p5Canvas{
+  display:block;
+  /* --- Add drop shadow below --- */
+  box-shadow: 0 4px 24px 0 rgba(0,0,0,0.35);
+}
 #error-overlay{
   position:fixed; top:0; left:0; right:0; bottom:0;
   background:rgba(255,0,0,0.95); color:#fff; font-family:monospace; padding:10px;
