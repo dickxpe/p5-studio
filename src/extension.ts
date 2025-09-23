@@ -1485,15 +1485,22 @@ export function activate(context: vscode.ExtensionContext) {
       if (!alreadyOpenInLeft) {
         vscode.window.showTextDocument(editor.document, vscode.ViewColumn.One, false).then(() => {
           // Close all other editors for this file except the one in the left column
+          const closePromises: Thenable<any>[] = [];
           vscode.window.visibleTextEditors.forEach(e => {
             if (
               e.document.uri.toString() === editor.document.uri.toString() &&
               e.viewColumn !== vscode.ViewColumn.One
             ) {
-              vscode.window.showTextDocument(e.document, e.viewColumn, false).then(() => {
-                vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-              });
+              closePromises.push(
+                vscode.window.showTextDocument(e.document, e.viewColumn, false).then(() => {
+                  return vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+                })
+              );
             }
+          });
+          Promise.all(closePromises).then(() => {
+            // After closing, focus the left column editor
+            vscode.window.showTextDocument(editor.document, vscode.ViewColumn.One, false);
           });
         });
       }
@@ -1615,7 +1622,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     if (reloadWhileTyping) {
       changeListener = vscode.workspace.onDidChangeTextDocument(e => {
-        if (e.document.uri.toString() === docUri) debounceDocumentUpdate(e.document, false);
+        if ( e.document.uri.toString() === docUri) debounceDocumentUpdate(e.document, false);
       });
     }
     if (reloadOnSave) {

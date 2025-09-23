@@ -176,25 +176,25 @@
           "type": "boolean",
           "default": true,
           "description": "Show a setup prompt when the workspace has no P5 configuration (jsconfig.json). Choose 'Don't show again' to turn this off.",
-          "order": 8
+          "order": 9
         },
         "liveP5.oscRemoteAddress": {
           "type": "string",
           "default": "127.0.0.1",
           "description": "OSC remote address (host to send OSC messages to).",
-          "order": 9
+          "order": 10
         },
         "liveP5.oscRemotePort": {
           "type": "number",
           "default": 57120,
           "description": "OSC remote port (port to send OSC messages to).",
-          "order": 10
+          "order": 11
         },
         "liveP5.oscLocalPort": {
           "type": "number",
           "default": 57121,
           "description": "OSC local port (port to listen for incoming OSC messages).",
-          "order": 11
+          "order": 12
         },
         "liveP5.varControlDebounceDelay": {
           "type": "number",
@@ -207,7 +207,7 @@
           "type": "boolean",
           "default": true,
           "description": "If enabled, only one P5 webpanel can be open at a time. Opening a new panel closes all others.",
-          "order": 12
+          "order": 8
         }
       }
     },
