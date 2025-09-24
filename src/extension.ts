@@ -1354,16 +1354,7 @@ function renderGlobalVarControls(vars) {
     if (v.type === 'number') {
       input = document.createElement('input');
       input.type = 'number';
-      let val = (typeof v.value === 'number' && !isNaN(v.value)) ? v.value : '';
-      // --- PATCH: round decimals to 4 digits for display ---
-      if (typeof val === 'number' && !Number.isInteger(val)) {
-        const strVal = String(val);
-        const match = strVal.match(/\.(\d+)/);
-        if (match && match[1].length > 4) {
-          val = Number(val).toFixed(4);
-        }
-      }
-      input.value = val;
+      input.value = (typeof v.value === 'number' && !isNaN(v.value)) ? v.value : '';
       input.step = 'any';
     } else if (v.type === 'boolean') {
       input = document.createElement('input');
