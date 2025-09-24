@@ -543,10 +543,11 @@ async function createHtml(
 <html>
 <head>
 ${scriptTags}
-<script data-user-code="true">
+<script id="user-code-script" data-user-code="true">
 ${escapedCode}
 </script>
 <script>
+window._p5UserCode = \`${escapedCode}\`;
 // --- output() alias for console.log ---
 window.output = function(...args) { console.log(...args); };
 // --- Provide MEDIA_FOLDER and INCLUDE_FOLDER globals for user sketches ---
@@ -1025,18 +1026,40 @@ window.onunhandledrejection = function(event) {
 function runUserSketch(code){
   clearError();
   window._p5ErrorLogged = false;
-  // --- Reset setup done flag before running user code ---
   window._p5SetupDone = false;
   if(window._p5Instance){window._p5Instance.remove();window._p5Instance=null;}
   document.querySelectorAll("canvas").forEach(c=>c.remove());
 
-  // Remove ALL previous <script> tags with data-user-code="true"
-  // (No longer needed, user code is inline in HTML)
-  // const scripts = Array.from(document.querySelectorAll('script[data-user-code="true"]'));
-  // scripts.forEach(s => s.parentNode && s.parentNode.removeChild(s));
+  // Remove previous user code script if present
+  const prevScript = document.getElementById('user-code-script');
+  if (prevScript) prevScript.remove();
 
-  // User code is already loaded as a <script> tag in HTML, so just instantiate p5
-  window._p5Instance=new p5();
+  // Inject user code as a new script tag and attach error handler
+  const script = document.createElement('script');
+  script.id = 'user-code-script';
+  script.type = 'text/javascript';
+  script.setAttribute('data-user-code', 'true');
+  script.textContent = code;
+  script.onerror = function(event) {
+    let msg = '[RUNTIME ERROR] ' + (event.message || 'Unknown error');
+    showError(msg);
+    if (typeof vscode !== "undefined") {
+      vscode.postMessage({ type: "showError", message: msg });
+    }
+    window._p5Instance = null;
+  };
+  document.head.appendChild(script);
+
+  try {
+    window._p5Instance = new p5();
+  } catch (err) {
+    let msg = '[RUNTIME ERROR] ' + (err && err.message ? err.message : String(err));
+    showError(msg);
+    if (typeof vscode !== "undefined") {
+      vscode.postMessage({ type: "showError", message: msg });
+    }
+    window._p5Instance = null;
+  }
 }
 
 function waitForP5AndRunSketch() {
@@ -1620,6 +1643,7 @@ export function activate(context: vscode.ExtensionContext) {
     let changeListener: vscode.Disposable | undefined;
     let saveListener: vscode.Disposable | undefined;
 
+
     if (reloadWhileTyping) {
       changeListener = vscode.workspace.onDidChangeTextDocument(e => {
         if ( e.document.uri.toString() === docUri) debounceDocumentUpdate(e.document, false);
@@ -2133,6 +2157,7 @@ function formatSyntaxErrorMsg(msg: string): string {
   }
   return msg;
 }
+
 
 // Helper to check SingleP5Panel setting
 function isSingleP5PanelEnabled() {
