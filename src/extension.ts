@@ -152,6 +152,23 @@ function extractGlobalVariablesWithConflicts(code: string): { globals: { name: s
         } else if (decl.init && decl.init.type === 'UnaryExpression' && decl.init.argument.type === 'Literal') {
           value = decl.init.operator === '-' ? -decl.init.argument.value : decl.init.argument.value;
         }
+        // --- PATCH: If initializer is an Identifier, use its name as value ---
+        else if (decl.init && decl.init.type === 'Identifier') {
+          value = decl.init.name;
+        }
+        // --- PATCH: Try to evaluate other initializers (e.g., Math.random() * 100) ---
+        else if (decl.init) {
+          try {
+            // Only allow Math, Number, String, Boolean, etc. in eval context
+            const safeGlobals = { Math, Number, String, Boolean, Array, Object };
+            value = Function(...Object.keys(safeGlobals), `return (${recast.print(decl.init).code});`)
+              (...Object.values(safeGlobals));
+            // Only keep value if it's number/string/boolean
+            if (!['number', 'string', 'boolean'].includes(typeof value)) value = undefined;
+          } catch {
+            value = undefined;
+          }
+        }
         if (RESERVED_GLOBALS.has(decl.id.name)) {
           conflicts.push(decl.id.name);
         } else {
@@ -191,6 +208,21 @@ function extractGlobalVariables(code: string): { name: string, value: any }[] {
           value = decl.init.value;
         } else if (decl.init && decl.init.type === 'UnaryExpression' && decl.init.argument.type === 'Literal') {
           value = decl.init.operator === '-' ? -decl.init.argument.value : decl.init.argument.value;
+        }
+        // --- PATCH: If initializer is an Identifier, use its name as value ---
+        else if (decl.init && decl.init.type === 'Identifier') {
+          value = decl.init.name;
+        }
+        // --- PATCH: Try to evaluate other initializers (e.g., Math.random() * 100) ---
+        else if (decl.init) {
+          try {
+            const safeGlobals = { Math, Number, String, Boolean, Array, Object };
+            value = Function(...Object.keys(safeGlobals), `return (${recast.print(decl.init).code});`)
+              (...Object.values(safeGlobals));
+            if (!['number', 'string', 'boolean'].includes(typeof value)) value = undefined;
+          } catch {
+            value = undefined;
+          }
         }
         globals.push({ name: decl.id.name, value });
       }
