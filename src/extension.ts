@@ -885,6 +885,7 @@ canvas.p5Canvas{
   opacity: 1;
   transform: translateY(0);
 }
+  
 
 #p5-var-drawer-tab:hover {
   color: #ff0;

@@ -1,5 +1,7 @@
 out
 node_modules
 prototype
+dist
 src/test.js
 src/test.ts
+*.vsix
