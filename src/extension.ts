@@ -885,37 +885,127 @@ canvas.p5Canvas{
   opacity: 1;
   transform: translateY(0);
 }
-  
 
-#p5-var-drawer-tab:hover {
+input[type=number]::-webkit-inner-spin-button, 
+input[type=number]::-webkit-outer-spin-button {
+  opacity: 1;
+}
+
+/* Hide spin buttons when input is readonly OR when the var-controls container is marked readonly.
+   This covers WebKit/Blink and provides a Firefox fallback by forcing textfield appearance. */
+input[readonly][type=number]::-webkit-inner-spin-button,
+input[readonly][type=number]::-webkit-outer-spin-button,
+#p5-var-controls.vars-readonly input[type=number]::-webkit-inner-spin-button,
+#p5-var-controls.vars-readonly input[type=number]::-webkit-outer-spin-button {
+  opacity: 0;
+  -webkit-appearance: none;
+  margin: 0;
+  width: 0;
+  height: 0;
+}
+
+/* Firefox: remove the number spinner arrows by using textfield appearance on readonly/readonly-container */
+input[readonly][type=number],
+#p5-var-controls.vars-readonly input[type=number] {
+  -moz-appearance: textfield;
+}
+
+#p5-var-controls {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  background: #1f1f1f;
+  z-index: 10000;
+  padding: 4px 12px 2px 12px;
+  font-family: monospace;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 4px 10px;
+  max-height: calc(3 * 2.0em);
+  overflow-y: auto;
+  transition: transform 0.2s cubic-bezier(.4,0,.2,1), box-shadow 0.2s;
+  box-shadow: 0 -2px 8px rgba(0,0,0,0.2);
+}
+#p5-var-controls.drawer-hidden {
+  transform: translateY(100%);
+  box-shadow: none;
+}
+#p5-var-controls .drawer-toggle {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+  z-index: 10001;
+  padding: 2px 4px;
+  transition: color 0.2s;
+}
+#p5-var-controls .drawer-toggle:hover {
   color: #ff0;
 }
-#p5-var-controls input {
-  width: 60px;
+
+.arrow:hover {
+  color: #ff0;
 }
-#p5-var-controls label {
-  margin-right: 8px;
-  vertical-align: middle;
-  display: inline-flex;
+#p5-var-drawer-tab {
+  display: none;
+  position: fixed;
+  right: 0px;
+  bottom: 0;
+  background: #1f1f1f;
+  color: #fff;
+  border-radius: 6px 0px 0px 0px;
+  padding: 0px 4px 2px 4px;
+  font-family: monospace;
+  font-size: 20px;
+  z-index: 10001;
+  box-shadow: 0 -2px 8px rgba(0,0,0,0.2);
+  cursor: pointer;
+  min-width: 24px;
+  min-height: 28px;
   align-items: center;
-  height: 22px;
-  margin-bottom: 0px;
-  padding: 0 2px 0 0;
-  line-height: 1.2;
+  justify-content: center;
+  opacity: 0;
+  transform: translateY(100%);
+  transition: opacity 0.2s cubic-bezier(.4,0,.2,1), transform 0.2s cubic-bezier(.4,0,.2,1);
 }
-#p5-var-controls input[type="checkbox"] {
-  width: 16px;
-  min-width: 16px;
-  max-width: 16px;
-  height: 16px;
-  min-height: 16px;
-  max-height: 16px;
-  accent-color: #fff;
-  color-scheme: light;
-  margin: 0 2px;
-  vertical-align: middle;
-  display: inline-block;
+#p5-var-drawer-tab.tab-visible {
+  opacity: 1;
+  transform: translateY(0);
 }
+input[type=number]::-webkit-inner-spin-button, 
+input[type=number]::-webkit-outer-spin-button {
+  opacity: 1;
+}
+  #p5-var-controls input {
+  width: 63px;
+}
+  #p5-var-controls input[type=checkbox] {
+    width: 16px;
+}
+
+/* Hide spin buttons when input is readonly OR when the var-controls container is marked readonly.
+   This covers WebKit/Blink and provides a Firefox fallback by forcing textfield appearance. */
+input[readonly][type=number]::-webkit-inner-spin-button,
+input[readonly][type=number]::-webkit-outer-spin-button,
+#p5-var-controls.vars-readonly input[type=number]::-webkit-inner-spin-button,
+#p5-var-controls.vars-readonly input[type=number]::-webkit-outer-spin-button {
+  opacity: 0;
+  -webkit-appearance: none;
+  margin: 0;
+  width: 0;
+  height: 0;
+}
+
+/* Firefox: remove the number spinner arrows by using textfield appearance on readonly/readonly-container */
+input[readonly][type=number],
+#p5-var-controls.vars-readonly input[type=number] {
+  -moz-appearance: textfield;
+}
+
 </style>
 </head>
 <body>
@@ -1229,11 +1319,12 @@ window.addEventListener("message", e => {
       if (typeof data.debounceDelay === 'number') {
         window._p5DebounceDelay = data.debounceDelay;
       }
-      renderGlobalVarControls(data.variables);
-      // Store types for later use
+      const readOnly = !!data.readOnly;
+      renderGlobalVarControls(data.variables, readOnly);
+      // Store types for later use (use v.type provided by extension)
       window._p5GlobalVarTypes = {};
       data.variables.forEach(v => {
-        window._p5GlobalVarTypes[v.name] = typeof v.value;
+        window._p5GlobalVarTypes[v.name] = v.type || typeof v.value;
       });
       break;
     case 'updateGlobalVar':
@@ -1322,7 +1413,7 @@ function showDrawer() {
 }
 
 // Dynamically creates/removes the variable drawer and tab, and sets up event listeners for variable changes
-function renderGlobalVarControls(vars) {
+function renderGlobalVarControls(vars, readOnly) {
   let controls = document.getElementById('p5-var-controls');
   let tab = document.getElementById('p5-var-drawer-tab');
   if (!vars || vars.length === 0) {
@@ -1338,6 +1429,8 @@ function renderGlobalVarControls(vars) {
     controls.innerHTML = '<button class="drawer-toggle" title="Hide controls">&#x25BC;</button>';
     document.body.appendChild(controls);
   }
+  // Mark controls as readonly when requested so CSS can hide number spin buttons
+  controls.classList.toggle('vars-readonly', !!readOnly);
   if (!tab) {
     tab = document.createElement('div');
     tab.id = 'p5-var-drawer-tab';
@@ -1367,43 +1460,59 @@ function renderGlobalVarControls(vars) {
       input.type = 'number';
       input.value = (typeof v.value === 'number' && !isNaN(v.value)) ? v.value : '';
       input.step = 'any';
+      if (readOnly) input.readOnly = true;
     } else if (v.type === 'boolean') {
       input = document.createElement('input');
       input.type = 'checkbox';
       input.checked = !!v.value;
-      input.addEventListener('change', () => {
-        updateGlobalVarInSketch(v.name, input.checked);
-        vscode.postMessage({ type: 'updateGlobalVar', name: v.name, value: input.checked });
-      });
+      if (readOnly) {
+        input.disabled = true;
+      } else {
+        input.addEventListener('change', () => {
+          updateGlobalVarInSketch(v.name, input.checked);
+          vscode.postMessage({ type: 'updateGlobalVar', name: v.name, value: input.checked });
+        });
+      }
+     // PATCH: fix vertical alignment for boolean labels
+     label.style.display = 'inline-flex';
+     label.style.alignItems = 'center';
+     label.style.height = '22px';
+     label.style.marginBottom = '0px';
+     label.style.verticalAlign = 'middle';
+     label.style.padding = '0 2px 0 0';
+     label.style.lineHeight = '1.2';
     } else {
       input = document.createElement('input');
       input.type = 'text';
       input.value = v.value !== undefined ? v.value : '';
+      if (readOnly) input.readOnly = true;
     }
     input.setAttribute('data-var', v.name);
     if (typeof v.value !== 'boolean') {
-      // PATCH: For number type, always convert input value to number before updating
-      const delay = (typeof window._p5VarControlDebounceDelay === 'number')
-        ? window._p5VarControlDebounceDelay
-        : window._p5DebounceDelay;
-      const debouncedUpdate = debounceWebview(() => {
-        let val = input.value;
-        if (v.type === 'number') val = Number(val);
-        updateGlobalVarInSketch(v.name, val);
-        vscode.postMessage({ type: 'updateGlobalVar', name: v.name, value: val });
-      }, delay);
-      input.addEventListener('input', debouncedUpdate);
-
-      input.addEventListener('keydown', function(ev) {
-        if (ev.key === 'Enter' || ev.key === 'Return') {
-          ev.preventDefault();
+      if (!readOnly) {
+        // existing debounced input logic
+        const delay = (typeof window._p5VarControlDebounceDelay === 'number')
+          ? window._p5VarControlDebounceDelay
+          : window._p5DebounceDelay;
+        const debouncedUpdate = debounceWebview(() => {
           let val = input.value;
           if (v.type === 'number') val = Number(val);
           updateGlobalVarInSketch(v.name, val);
           vscode.postMessage({ type: 'updateGlobalVar', name: v.name, value: val });
-          input.blur();
-        }
-      });
+        }, delay);
+        input.addEventListener('input', debouncedUpdate);
+        input.addEventListener('keydown', function(ev) {
+          if (ev.key === 'Enter' || ev.key === 'Return') {
+            ev.preventDefault();
+            let val = input.value;
+            if (v.type === 'number') val = Number(val);
+            updateGlobalVarInSketch(v.name, val);
+            vscode.postMessage({ type: 'updateGlobalVar', name: v.name, value: val });
+            input.blur();
+          }
+        });
+      }
+      // if readOnly: do not attach input/change handlers
     }
     label.appendChild(input);
     controls.appendChild(label);
@@ -1668,7 +1777,9 @@ export function activate(context: vscode.ExtensionContext) {
       // --- PATCH: Use .type instead of typeof .value ---
       const filtered = filteredGlobals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
       setTimeout(() => {
-        panel.webview.postMessage({ type: 'setGlobalVars', variables: filtered });
+        // compute readOnly based on the original document text (before we may wrap)
+        const readOnly = hasOnlySetup(document.getText());
+        panel.webview.postMessage({ type: 'setGlobalVars', variables: filtered, readOnly });
       }, 200);
     } catch (err: any) {
       if (!syntaxErrorMsg) {
@@ -1868,21 +1979,37 @@ export function activate(context: vscode.ExtensionContext) {
               panel.webview.postMessage({ type: 'showError', message: overlayMsg });
             }
           } else if (msg.type === 'reload-button-clicked') {
-            // Forward preserveGlobals flag to webview, but send rewritten code
             let code = editor.document.getText();
             code = wrapInSetupIfNeeded(code);
             const globals = extractGlobalVariables(code);
             let rewrittenCode = rewriteUserCodeWithWindowGlobals(code, globals);
             if (msg.preserveGlobals && globals.length > 0) {
-              // Remove global var declarations and window assignments
               globals.forEach(g => {
                 rewrittenCode = rewrittenCode.replace(new RegExp('^\\s*var\\s+' + g.name + '(\\s*=.*)?;?\\s*$', 'gm'), '');
                 rewrittenCode = rewrittenCode.replace(new RegExp('^\\s*window\\.' + g.name + '\\s*=\\s*' + g.name + ';?\\s*$', 'gm'), '');
               });
             }
-            panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: msg.preserveGlobals });
-          } else if (msg.type === 'requestLastRuntimeError') {
-            // No-op in extension, handled in webview below
+            const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
+            if (!hasDraw) {
+              panel.webview.html = await createHtml(code, panel, context.extensionPath);
+              setTimeout(() => {
+                const { globals } = extractGlobalVariablesWithConflicts(code);
+                const filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+                const readOnly = hasOnlySetup(editor.document.getText());
+                panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
+              }, 200);
+            } else {
+              // For sketches with draw(), we want the reload button to reset globals to their original initial values.
+              // Do NOT ask the webview to preserve the current runtime globals; perform a normal reload and then
+              // send the original initial values (from source) so the drawer is updated/reset.
+              panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: false });
+              setTimeout(() => {
+                const { globals } = extractGlobalVariablesWithConflicts(code);
+                const filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+                const readOnly = hasOnlySetup(editor.document.getText());
+                panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
+              }, 200);
+            }
           }
           // --- OSC SEND HANDLER ---
           else if (msg.type === 'oscSend') {
@@ -1971,7 +2098,8 @@ export function activate(context: vscode.ExtensionContext) {
         // --- PATCH: Use .type instead of typeof .value ---
         const filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
         setTimeout(() => {
-          panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals });
+          const readOnly = hasOnlySetup(code); // use original editor code to decide
+          panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
         }, 200);
         if (syntaxErrorMsg) {
           setTimeout(() => {
@@ -2270,5 +2398,25 @@ function formatSyntaxErrorMsg(msg: string): string {
 // Helper to check SingleP5Panel setting
 function isSingleP5PanelEnabled() {
   return vscode.workspace.getConfiguration('liveP5').get<boolean>('SingleP5Panel', false);
+}
+
+// NEW: helper to detect whether the user's code defines only a single top-level `setup` function
+function hasOnlySetup(code: string): boolean {
+	// parse AST and check top-level FunctionDeclaration nodes
+	try {
+		const acorn = require('acorn');
+		const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
+		if (!ast.program || !Array.isArray(ast.program.body)) return false;
+		let hasSetup = false;
+		for (const node of ast.program.body) {
+			if (node.type === 'FunctionDeclaration') {
+				if (node.id && node.id.name === 'setup') hasSetup = true;
+				else return false; // found another top-level function besides setup
+			}
+		}
+		return hasSetup;
+	} catch {
+		return false;
+	}
 }
 
