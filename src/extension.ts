@@ -760,7 +760,7 @@ canvas.p5Canvas{
 }
 #p5-var-controls .drawer-toggle {
   position: absolute;
-  top: 8px;
+  top: 4px;
   right: 4px;
   background: none;
   border: none;
@@ -782,14 +782,14 @@ canvas.p5Canvas{
   background: #1f1f1f;
   color: #fff;
   border-radius: 6px 0px 0px 0px;
-  padding: 2px 4px 2px 4px;
+  padding: 0px 4px 2px 4px;
   font-family: monospace;
   font-size: 20px;
   z-index: 10001;
   box-shadow: 0 -2px 8px rgba(0,0,0,0.2);
   cursor: pointer;
   min-width: 24px;
-  min-height: 33px;
+  min-height: 28px;
   align-items: center;
   justify-content: center;
   opacity: 0;
@@ -799,6 +799,10 @@ canvas.p5Canvas{
 #p5-var-drawer-tab.tab-visible {
   opacity: 1;
   transform: translateY(0);
+}
+
+#p5-var-drawer-tab:hover {
+  color: #ff0;
 }
 #p5-var-controls input {
   width: 60px;
@@ -1207,13 +1211,12 @@ function hideDrawer() {
   const controls = document.getElementById('p5-var-controls');
   const tab = document.getElementById('p5-var-drawer-tab');
   if (!controls || !tab) return;
-  if (controls) controls.classList.add('drawer-hidden');
+  controls.classList.add('drawer-hidden');
+  tab.style.display = 'flex';
+  tab.classList.add('tab-visible'); // Animate tab up at the same time as drawer animates down
   setTimeout(() => {
-    if (controls) controls.style.display = 'none';
-    if (tab) {
-      tab.style.display = 'flex';
-      tab.classList.add('tab-visible');
-    }
+    controls.style.display = 'none';
+    // Tab remains visible after animation
   }, 200);
 }
 
@@ -1222,11 +1225,13 @@ function showDrawer() {
   const controls = document.getElementById('p5-var-controls');
   const tab = document.getElementById('p5-var-drawer-tab');
   if (!controls || !tab) return;
-  if (controls) controls.style.display = 'flex';
+  controls.style.display = 'flex';
+  tab.classList.remove('tab-visible'); // Animate tab down at the same time as drawer animates up
   setTimeout(() => {
-    if (controls) controls.classList.remove('drawer-hidden');
-    if (tab) tab.classList.remove('tab-visible');
-    setTimeout(() => { if (tab) tab.style.display = 'none'; }, 200);
+    tab.style.display = 'none'; // Hide tab after animation
+  }, 200);
+  setTimeout(() => {
+    controls.classList.remove('drawer-hidden');
   }, 10);
 }
 
@@ -1570,19 +1575,20 @@ export function activate(context: vscode.ExtensionContext) {
       const { globals, conflicts } = extractGlobalVariablesWithConflicts(code);
       if (conflicts.length > 0) {
         syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${fileName}] Reserved variable name(s) used: ${conflicts.join(', ')}`;
-        // Format error message
         syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
         panel.webview.html = await createHtml('', panel, context.extensionPath);
         hadSyntaxError = true;
         throw new Error(syntaxErrorMsg);
       }
 
-      new Function(code); // syntax check
+      // --- Check for syntax/reference errors BEFORE wrapping in setup ---
+      new Function(code); // syntax/reference check
+
+      // Only wrap if no errors
       const hasSetup = /\bfunction\s+setup\s*\(/.test(code);
       const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
 
       if (!hasSetup && !hasDraw) {
-        // Wrap code in a setup function
         code = `function setup() {\n${code}\n}`;
       }
       // Always reload HTML for every code update to reset JS environment
@@ -1626,6 +1632,7 @@ export function activate(context: vscode.ExtensionContext) {
   let reloadOnSave = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadOnSave', true);
 
   // Update reloadWhileTyping/reloadOnSave variables and context key
+
   async function updateReloadWhileTypingVarsAndContext() {
     reloadWhileTyping = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadWhileTyping', true);
     reloadOnSave = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadOnSave', true);
@@ -1695,8 +1702,11 @@ export function activate(context: vscode.ExtensionContext) {
             codeToInject = '';
             throw new Error(syntaxErrorMsg);
           }
-          new Function(code);
-          codeToInject = wrapInSetupIfNeeded(code);
+          // --- Check for syntax/reference errors BEFORE wrapping in setup ---
+          new Function(codeToInject); // syntax/reference check
+
+          // Only wrap if no errors
+          codeToInject = wrapInSetupIfNeeded(codeToInject);
         } catch (err: any) {
           if (!syntaxErrorMsg) {
             syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(editor.document.fileName)}] ${err.message}`;
@@ -1901,8 +1911,20 @@ export function activate(context: vscode.ExtensionContext) {
       } else {
         panel.reveal(panel.viewColumn, true);
         setTimeout(() => {
-          let codeToSend = wrapInSetupIfNeeded(code);
-          panel.webview.postMessage({ type: 'reload', code: codeToSend });
+          let codeToSend = editor.document.getText();
+          // --- Check for syntax/reference errors BEFORE wrapping in setup ---
+          try {
+            new Function(codeToSend);
+            codeToSend = wrapInSetupIfNeeded(codeToSend);
+            panel.webview.postMessage({ type: 'reload', code: codeToSend });
+          } catch (err: any) {
+            // If error, send empty code and show error
+            panel.webview.postMessage({ type: 'reload', code: '' });
+            const syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(editor.document.fileName)}] ${err.message}`;
+            panel.webview.postMessage({ type: 'syntaxError', message: formatSyntaxErrorMsg(syntaxErrorMsg) });
+            const outputChannel = getOrCreateOutputChannel(docUri, path.basename(editor.document.fileName));
+            outputChannel.appendLine(formatSyntaxErrorMsg(syntaxErrorMsg));
+          }
         }, 100);
       }
 
