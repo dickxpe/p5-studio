@@ -1915,7 +1915,20 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.reload-p5-sketch', async () => {
       const editor = vscode.window.activeTextEditor;
-      if (!editor) return;
+      if (!editor) {
+        // Try to reload the currently active webview panel's sketch if no editor is focused
+        if (activeP5Panel) {
+          // Find the document URI for the active panel
+          const docUri = [...webviewPanelMap.entries()].find(([_, panel]) => panel === activeP5Panel)?.[0];
+          if (docUri) {
+            const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === docUri);
+            if (doc) {
+              debounceDocumentUpdate(doc, false);
+            }
+          }
+        }
+        return;
+      }
       debounceDocumentUpdate(editor.document, false); // use false to match typing
     })
   );

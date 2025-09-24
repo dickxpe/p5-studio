@@ -216,7 +216,13 @@
         "command": "extension.live-p5",
         "key": "ctrl+alt+p",
         "mac": "cmd+alt+p",
-        "when": "editorTextFocus && isJsOrTs"
+        "when": "editorTextFocus && isJsOrTs && !hasP5Webview"
+      },
+      {
+        "command": "extension.reload-p5-sketch",
+        "key": "ctrl+alt+p",
+        "mac": "cmd+alt+p",
+        "when": "editorTextFocus && isJsOrTs && hasP5Webview"
       }
     ]
   },
