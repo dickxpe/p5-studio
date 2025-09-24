@@ -1275,7 +1275,7 @@ function renderGlobalVarControls(vars) {
       input = document.createElement('input');
       input.type = 'number';
       input.value = v.value;
-      // --- BEGIN PATCH: set step and rounding based on initial value ---
+      // --- PATCH: set step and rounding based on initial value ---
       if (Number.isInteger(v.value)) {
         input.step = '1';
         input.value = Math.floor(v.value);
@@ -1319,10 +1319,12 @@ function renderGlobalVarControls(vars) {
       }, delay);
       input.addEventListener('input', debouncedUpdate);
 
-      // --- PATCH: Lose focus on Enter/Return key ---
+      // --- PATCH: On Enter/Return, apply value and blur, but do NOT reset ---
       input.addEventListener('keydown', function(ev) {
         if (ev.key === 'Enter' || ev.key === 'Return') {
           ev.preventDefault();
+          updateGlobalVarInSketch(v.name, input.value);
+          vscode.postMessage({ type: 'updateGlobalVar', name: v.name, value: input.value });
           input.blur();
         }
       });
