@@ -2,7 +2,7 @@
   "name": "live-p5-launcher",
   "displayName": "LIVE P5 LAUNCHER",
   "description": "Launch and edit P5 in VS Code",
-  "version": "1.2.11",
+  "version": "1.2.12",
   "icon": "images/ICON.png",
   "author": {
     "name": "peterdickx"
@@ -59,7 +59,7 @@
       },
       {
         "command": "extension.openSelectedText",
-        "title": "📕Search in P5 Reference"
+        "title": "📕Search in P5.js Reference"
       },
       {
         "command": "liveP5.toggleReloadWhileTypingOn",

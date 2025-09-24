@@ -137,6 +137,15 @@ const RESERVED_GLOBALS = new Set([
   "acquireVsCodeApi"
 ]);
 
+// Add a set of known p5 numeric properties
+const P5_NUMERIC_IDENTIFIERS = new Set([
+  "width", "height", "frameCount", "frameRate", "deltaTime", "mouseX", "mouseY", "pmouseX", "pmouseY",
+  "winMouseX", "winMouseY", "pwinMouseX", "pwinMouseY", "accelerationX", "accelerationY", "accelerationZ",
+  "pAccelerationX", "pAccelerationY", "pAccelerationZ", "rotationX", "rotationY", "rotationZ", "pRotationX",
+  "pRotationY", "pRotationZ", "movedX", "movedY", "movedZ", "displayWidth", "displayHeight", "windowWidth",
+  "windowHeight"
+]);
+
 // Extract top-level global variables and detect conflicts with reserved names
 function extractGlobalVariablesWithConflicts(code: string): { globals: { name: string, value: any, type: string }[], conflicts: string[] } {
   const acorn = require('acorn');
@@ -158,11 +167,12 @@ function extractGlobalVariablesWithConflicts(code: string): { globals: { name: s
         // If initializer is an Identifier, use its name as value
         else if (decl.init && decl.init.type === 'Identifier') {
           value = decl.init.name;
-          type = 'string';
+          // PATCH: If identifier is a known p5 numeric property, treat as number
+          type = P5_NUMERIC_IDENTIFIERS.has(decl.init.name) ? 'number' : 'string';
         }
         // If initializer is a CallExpression (e.g., random()), treat as number
         else if (decl.init && decl.init.type === 'CallExpression') {
-          value = undefined;
+          value = 0;
           type = 'number';
         }
         // Try to evaluate other initializers
@@ -226,7 +236,8 @@ function extractGlobalVariables(code: string): { name: string, value: any, type:
         }
         else if (decl.init && decl.init.type === 'Identifier') {
           value = decl.init.name;
-          type = 'string';
+          // PATCH: If identifier is a known p5 numeric property, treat as number
+          type = P5_NUMERIC_IDENTIFIERS.has(decl.init.name) ? 'number' : 'string';
         }
         else if (decl.init && decl.init.type === 'CallExpression') {
           value = undefined;
@@ -1350,7 +1361,6 @@ function renderGlobalVarControls(vars) {
     const label = document.createElement('label');
     label.textContent = v.name + ': ';
     let input;
-    // --- PATCH: Use v.type instead of typeof v.value ---
     if (v.type === 'number') {
       input = document.createElement('input');
       input.type = 'number';
@@ -1371,26 +1381,28 @@ function renderGlobalVarControls(vars) {
     }
     input.setAttribute('data-var', v.name);
     if (typeof v.value !== 'boolean') {
-      // Use debounced input event for instant feedback
+      // PATCH: For number type, always convert input value to number before updating
       const delay = (typeof window._p5VarControlDebounceDelay === 'number')
         ? window._p5VarControlDebounceDelay
         : window._p5DebounceDelay;
       const debouncedUpdate = debounceWebview(() => {
-        updateGlobalVarInSketch(v.name, input.value);
-        vscode.postMessage({ type: 'updateGlobalVar', name: v.name, value: input.value });
+        let val = input.value;
+        if (v.type === 'number') val = Number(val);
+        updateGlobalVarInSketch(v.name, val);
+        vscode.postMessage({ type: 'updateGlobalVar', name: v.name, value: val });
       }, delay);
       input.addEventListener('input', debouncedUpdate);
 
-      // --- PATCH: On Enter/Return, apply value and blur, but do NOT reset ---
       input.addEventListener('keydown', function(ev) {
         if (ev.key === 'Enter' || ev.key === 'Return') {
           ev.preventDefault();
-          updateGlobalVarInSketch(v.name, input.value);
-          vscode.postMessage({ type: 'updateGlobalVar', name: v.name, value: input.value });
+          let val = input.value;
+          if (v.type === 'number') val = Number(val);
+          updateGlobalVarInSketch(v.name, val);
+          vscode.postMessage({ type: 'updateGlobalVar', name: v.name, value: val });
           input.blur();
         }
       });
-      // --- END PATCH ---
     }
     label.appendChild(input);
     controls.appendChild(label);
@@ -1511,7 +1523,7 @@ export function activate(context: vscode.ExtensionContext) {
   // Status bar button for P5 Reference
   const p5RefStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   p5RefStatusBar.command = 'extension.openP5Ref';
-  p5RefStatusBar.text = '$(book) P5 Reference'; // Status bar text
+  p5RefStatusBar.text = '$(book) P5.js Reference'; // Status bar text
   p5RefStatusBar.tooltip = '$(book) Open P5.js Reference'; // Tooltip text
   p5RefStatusBar.color = '#ff0000';
   p5RefStatusBar.tooltip = '$(book) Open P5.js Reference';
@@ -2253,10 +2265,6 @@ function formatSyntaxErrorMsg(msg: string): string {
   }
   return msg;
 }
-
-
-
-
 
 // Helper to check SingleP5Panel setting
 function isSingleP5PanelEnabled() {
