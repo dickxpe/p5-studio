@@ -138,41 +138,53 @@ const RESERVED_GLOBALS = new Set([
 ]);
 
 // Extract top-level global variables and detect conflicts with reserved names
-function extractGlobalVariablesWithConflicts(code: string): { globals: { name: string, value: any }[], conflicts: string[] } {
+function extractGlobalVariablesWithConflicts(code: string): { globals: { name: string, value: any, type: string }[], conflicts: string[] } {
   const acorn = require('acorn');
   const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
-  const globals: { name: string, value: any }[] = [];
+  const globals: { name: string, value: any, type: string }[] = [];
   const conflicts: string[] = [];
   function extractFromDecls(decls: any[]) {
     for (const decl of decls) {
       if (decl.id && decl.id.name) {
         let value = undefined;
+        let type = 'string';
         if (decl.init && decl.init.type === 'Literal') {
           value = decl.init.value;
+          type = typeof value;
         } else if (decl.init && decl.init.type === 'UnaryExpression' && decl.init.argument.type === 'Literal') {
           value = decl.init.operator === '-' ? -decl.init.argument.value : decl.init.argument.value;
+          type = typeof value;
         }
-        // --- PATCH: If initializer is an Identifier, use its name as value ---
+        // If initializer is an Identifier, use its name as value
         else if (decl.init && decl.init.type === 'Identifier') {
           value = decl.init.name;
+          type = 'string';
         }
-        // --- PATCH: Try to evaluate other initializers (e.g., Math.random() * 100) ---
+        // If initializer is a CallExpression (e.g., random()), treat as number
+        else if (decl.init && decl.init.type === 'CallExpression') {
+          value = undefined;
+          type = 'number';
+        }
+        // Try to evaluate other initializers
         else if (decl.init) {
           try {
-            // Only allow Math, Number, String, Boolean, etc. in eval context
             const safeGlobals = { Math, Number, String, Boolean, Array, Object };
             value = Function(...Object.keys(safeGlobals), `return (${recast.print(decl.init).code});`)
               (...Object.values(safeGlobals));
-            // Only keep value if it's number/string/boolean
-            if (!['number', 'string', 'boolean'].includes(typeof value)) value = undefined;
+            type = typeof value;
+            if (!['number', 'string', 'boolean'].includes(type)) {
+              value = undefined;
+              type = 'string';
+            }
           } catch {
             value = undefined;
+            type = 'string';
           }
         }
         if (RESERVED_GLOBALS.has(decl.id.name)) {
           conflicts.push(decl.id.name);
         } else {
-          globals.push({ name: decl.id.name, value });
+          globals.push({ name: decl.id.name, value, type });
         }
       }
     }
@@ -196,35 +208,46 @@ function extractGlobalVariablesWithConflicts(code: string): { globals: { name: s
 }
 
 // Extract top-level global variables, excluding reserved names
-function extractGlobalVariables(code: string): { name: string, value: any }[] {
+function extractGlobalVariables(code: string): { name: string, value: any, type: string }[] {
   const acorn = require('acorn');
   const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
-  const globals: { name: string, value: any }[] = [];
+  const globals: { name: string, value: any, type: string }[] = [];
   function extractFromDecls(decls: any[]) {
     for (const decl of decls) {
       if (decl.id && decl.id.name) {
         let value = undefined;
+        let type = 'string';
         if (decl.init && decl.init.type === 'Literal') {
           value = decl.init.value;
+          type = typeof value;
         } else if (decl.init && decl.init.type === 'UnaryExpression' && decl.init.argument.type === 'Literal') {
           value = decl.init.operator === '-' ? -decl.init.argument.value : decl.init.argument.value;
+          type = typeof value;
         }
-        // --- PATCH: If initializer is an Identifier, use its name as value ---
         else if (decl.init && decl.init.type === 'Identifier') {
           value = decl.init.name;
+          type = 'string';
         }
-        // --- PATCH: Try to evaluate other initializers (e.g., Math.random() * 100) ---
+        else if (decl.init && decl.init.type === 'CallExpression') {
+          value = undefined;
+          type = 'number';
+        }
         else if (decl.init) {
           try {
             const safeGlobals = { Math, Number, String, Boolean, Array, Object };
             value = Function(...Object.keys(safeGlobals), `return (${recast.print(decl.init).code});`)
               (...Object.values(safeGlobals));
-            if (!['number', 'string', 'boolean'].includes(typeof value)) value = undefined;
+            type = typeof value;
+            if (!['number', 'string', 'boolean'].includes(type)) {
+              value = undefined;
+              type = 'string';
+            }
           } catch {
             value = undefined;
+            type = 'string';
           }
         }
-        globals.push({ name: decl.id.name, value });
+        globals.push({ name: decl.id.name, value, type });
       }
     }
   }
@@ -254,7 +277,7 @@ const P5_EVENT_HANDLERS = [
 ];
 
 // Rewrite user code so global variables are attached to window and event handlers are guarded
-function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string }[]): string {
+function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string, value?: any }[]): string {
   if (!globals.length) return code;
   const acorn = require('acorn');
   const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
@@ -262,7 +285,27 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string 
   const programBody = ast.program.body;
   const newBody = [];
   let setupFound = false;
+  const globalAssignments: any[] = [];
 
+  // Collect assignments for globals with initializers
+  for (const stmt of programBody) {
+    if (stmt.type === 'VariableDeclaration') {
+      for (const decl of stmt.declarations) {
+        if (decl.id && decl.id.name && globalNames.has(decl.id.name) && decl.init) {
+          // Assignment: x = <init>;
+          globalAssignments.push(
+            recast.types.builders.expressionStatement(
+              recast.types.builders.assignmentExpression(
+                '=',
+                recast.types.builders.identifier(decl.id.name),
+                decl.init
+              )
+            )
+          );
+        }
+      }
+    }
+  }
 
   // Insert window.<global> = undefined for all globals at the very top
   for (const g of globals) {
@@ -283,39 +326,50 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string 
 
   for (let i = 0; i < programBody.length; i++) {
     let stmt = programBody[i];
-    // Detect setup function with createCanvas(windowWidth,windowHeight)
+
+    // Remove initializers from global variable declarations
+    if (stmt.type === 'VariableDeclaration') {
+      stmt.declarations = stmt.declarations.map(decl => {
+        if (decl.id && decl.id.name && globalNames.has(decl.id.name)) {
+          // Remove initializer
+          return Object.assign({}, decl, { init: null });
+        }
+        return decl;
+      });
+      // Always convert to var for globals
+      if ((stmt.kind === 'let' || stmt.kind === 'const') && stmt.declarations.some(decl => decl.id && decl.id.name && globalNames.has(decl.id.name))) {
+        stmt = Object.assign({}, stmt, { kind: 'var' });
+      }
+      newBody.push(stmt);
+      // For each declared global, assign to window
+      for (const decl of stmt.declarations) {
+        if (decl.id && decl.id.name && globalNames.has(decl.id.name)) {
+          newBody.push(recast.types.builders.expressionStatement(
+            recast.types.builders.assignmentExpression('=',
+              recast.types.builders.memberExpression(
+                recast.types.builders.identifier('window'),
+                recast.types.builders.identifier(decl.id.name),
+                false
+              ),
+              recast.types.builders.identifier(decl.id.name)
+            )
+          ));
+        }
+      }
+      continue;
+    }
+
+    // Detect setup function and inject global assignments at its start
     if (
       stmt.type === 'FunctionDeclaration' &&
       stmt.id && stmt.id.name === 'setup' &&
       stmt.body && stmt.body.body
     ) {
       setupFound = true;
-      const newSetupBody = [];
-      for (let j = 0; j < stmt.body.body.length; j++) {
-        const b = stmt.body.body[j];
-        newSetupBody.push(b);
-        if (
-          b.type === 'ExpressionStatement' &&
-          b.expression.type === 'CallExpression' &&
-          b.expression.callee.name === 'createCanvas' &&
-          b.expression.arguments.length === 2 &&
-          b.expression.arguments[0].name === 'windowWidth' &&
-          b.expression.arguments[1].name === 'windowHeight'
-        ) {
-          // Inject resizeCanvas(window.innerWidth, window.innerHeight) immediately after createCanvas
-          newSetupBody.push(
-            recast.types.builders.expressionStatement(
-              recast.types.builders.callExpression(
-                recast.types.builders.identifier('resizeCanvas'),
-                [
-                  recast.types.builders.memberExpression(recast.types.builders.identifier('window'), recast.types.builders.identifier('innerWidth'), false),
-                  recast.types.builders.memberExpression(recast.types.builders.identifier('window'), recast.types.builders.identifier('innerHeight'), false)
-                ]
-              )
-            )
-          );
-        }
-      }
+      const newSetupBody = [
+        ...globalAssignments, // Inject assignments at the start
+        ...stmt.body.body
+      ];
       // At the end of setup, set window._p5SetupDone = true;
       newSetupBody.push(
         recast.types.builders.expressionStatement(
@@ -335,6 +389,8 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string 
         stmt.params,
         recast.types.builders.blockStatement(newSetupBody)
       );
+      newBody.push(stmt);
+      continue;
     }
 
     // Wrap event handler functions to guard with window._p5SetupDone
@@ -365,35 +421,13 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string 
       );
     }
 
-    if (stmt.type === 'VariableDeclaration') {
-      // Always convert to var for globals
-      if ((stmt.kind === 'let' || stmt.kind === 'const') && stmt.declarations.some(decl => decl.id && decl.id.name && globalNames.has(decl.id.name))) {
-        stmt = Object.assign({}, stmt, { kind: 'var' });
-      }
-      newBody.push(stmt);
-      // For each declared global, assign to window
-      for (const decl of stmt.declarations) {
-        if (decl.id && decl.id.name && globalNames.has(decl.id.name)) {
-          newBody.push(recast.types.builders.expressionStatement(
-            recast.types.builders.assignmentExpression('=',
-              recast.types.builders.memberExpression(
-                recast.types.builders.identifier('window'),
-                recast.types.builders.identifier(decl.id.name),
-                false
-              ),
-              recast.types.builders.identifier(decl.id.name)
-            )
-          ));
-        }
-      }
-      continue;
-    }
     newBody.push(stmt);
   }
 
-  // If no setup function, still ensure window._p5SetupDone is set to true after sketch runs
+  // If no setup function, create one and inject global assignments
   if (!setupFound) {
-    newBody.push(
+    const setupBody = [
+      ...globalAssignments,
       recast.types.builders.expressionStatement(
         recast.types.builders.assignmentExpression(
           '=',
@@ -405,10 +439,18 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string 
           recast.types.builders.literal(true)
         )
       )
+    ];
+    newBody.push(
+      recast.types.builders.functionDeclaration(
+        recast.types.builders.identifier('setup'),
+        [],
+        recast.types.builders.blockStatement(setupBody)
+      )
     );
   }
 
   ast.program.body = newBody;
+
   recast.types.visit(ast, {
     visitIdentifier(path) {
       const name = path.value.name;
@@ -1308,33 +1350,25 @@ function renderGlobalVarControls(vars) {
     const label = document.createElement('label');
     label.textContent = v.name + ': ';
     let input;
-    if (typeof v.value === 'number') {
+    // --- PATCH: Use v.type instead of typeof v.value ---
+    if (v.type === 'number') {
       input = document.createElement('input');
       input.type = 'number';
-      input.value = v.value;
-      // --- PATCH: set step and rounding based on initial value ---
-      if (Number.isInteger(v.value)) {
-        input.step = '1';
-        input.value = Math.floor(v.value);
-        input.addEventListener('blur', () => {
-          input.value = String(Math.floor(Number(input.value) || 0));
-        });
-      } else {
-        // Determine decimal precision from initial value
-        const match = String(v.value).match(/\.(\d+)?/);
-        let precision = match && match[1] ? match[1].length : 2;
-        input.step = (precision > 0) ? (1 / Math.pow(10, precision)).toString() : 'any';
-        // Always show the value with the same precision as initial value
-        input.value = v.value.toFixed(precision);
-        input.addEventListener('blur', () => {
-          let num = Number(input.value);
-          if (!isNaN(num)) input.value = num.toFixed(precision);
-        });
+      let val = (typeof v.value === 'number' && !isNaN(v.value)) ? v.value : '';
+      // --- PATCH: round decimals to 4 digits for display ---
+      if (typeof val === 'number' && !Number.isInteger(val)) {
+        const strVal = String(val);
+        const match = strVal.match(/\.(\d+)/);
+        if (match && match[1].length > 4) {
+          val = Number(val).toFixed(4);
+        }
       }
-    } else if (typeof v.value === 'boolean') {
+      input.value = val;
+      input.step = 'any';
+    } else if (v.type === 'boolean') {
       input = document.createElement('input');
       input.type = 'checkbox';
-      input.checked = v.value;
+      input.checked = !!v.value;
       input.addEventListener('change', () => {
         updateGlobalVarInSketch(v.name, input.checked);
         vscode.postMessage({ type: 'updateGlobalVar', name: v.name, value: input.checked });
@@ -1627,7 +1661,8 @@ export function activate(context: vscode.ExtensionContext) {
       panel.webview.html = await createHtml(code, panel, context.extensionPath);
       // After HTML is set, send global variables
       const { globals: filteredGlobals } = extractGlobalVariablesWithConflicts(code);
-      const filtered = filteredGlobals.filter(g => ['number', 'string', 'boolean'].includes(typeof g.value));
+      // --- PATCH: Use .type instead of typeof .value ---
+      const filtered = filteredGlobals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
       setTimeout(() => {
         panel.webview.postMessage({ type: 'setGlobalVars', variables: filtered });
       }, 200);
@@ -1929,7 +1964,8 @@ export function activate(context: vscode.ExtensionContext) {
         panel.webview.html = await createHtml(codeToInject, panel, context.extensionPath);
         // Send global variables immediately after setting HTML
         const { globals } = extractGlobalVariablesWithConflicts(codeToInject);
-        const filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(typeof g.value));
+        // --- PATCH: Use .type instead of typeof .value ---
+        const filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
         setTimeout(() => {
           panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals });
         }, 200);
@@ -2226,6 +2262,9 @@ function formatSyntaxErrorMsg(msg: string): string {
   }
   return msg;
 }
+
+
+
 
 
 // Helper to check SingleP5Panel setting
