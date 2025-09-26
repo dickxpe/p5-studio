@@ -83,6 +83,11 @@
         "command": "liveP5.scrollOutputToEnd",
         "title": "Scroll Output to End",
         "category": "LIVE P5"
+      },
+      {
+        "command": "extension.duplicateFile",
+        "title": "Duplicate",
+        "category": "File"
       }
     ],
     "menus": {
@@ -108,6 +113,11 @@
           "when": "isP5js && liveP5ReloadWhileTypingEnabled != true && (editorLangId == javascript || editorLangId == typescript)"
         }
       ],
+      "explorer/context": [
+        {
+          "command": "extension.duplicateFile",
+          "group": "5_cutcopypaste@99"
+        }],
       "editor/context": [
         {
           "command": "extension.openSelectedText",

@@ -2197,8 +2197,8 @@ export function activate(context: vscode.ExtensionContext) {
         if (!workspaceFolder) {
           // Prompt user to select a folder if none is open
           const folderUris = await vscode.window.showOpenDialog({
-            canSelectFolders: true,
-            canSelectFiles: false,
+            canSelectFiles: true,
+            canSelectFolders: false,
             canSelectMany: false,
             openLabel: 'Select folder for new P5 project'
           });
@@ -2363,6 +2363,73 @@ text("P5", 50, 52);`;
       }
       showAndTrackOutputChannel(lastActiveOutputChannel);
       setTimeout(() => vscode.commands.executeCommand('cursorBottom'), 30);
+    })
+  );
+
+  // --- Duplicate file command for explorer context menu ---
+  context.subscriptions.push(
+    vscode.commands.registerCommand('extension.duplicateFile', async (fileUri: vscode.Uri) => {
+      try {
+        // If not invoked from context menu, prompt for file
+        if (!fileUri) {
+          const picked = await vscode.window.showOpenDialog({
+            canSelectFiles: true,
+            canSelectFolders: false,
+            canSelectMany: false,
+            openLabel: 'Select file to duplicate'
+          });
+          if (!picked || picked.length === 0) return;
+          fileUri = picked[0];
+        }
+        const oldPath = fileUri.fsPath;
+        const dir = path.dirname(oldPath);
+        const base = path.basename(oldPath);
+        const ext = path.extname(base);
+        const nameNoExt = base.slice(0, base.length - ext.length);
+
+        // If filename ends with a number, increment it
+        let match = nameNoExt.match(/^(.*?)(\d+)$/);
+        let newBase: string;
+        if (match) {
+          const prefix = match[1];
+          const num = parseInt(match[2], 10);
+          let nextNum = num + 1;
+          let candidate = `${prefix}${nextNum}${ext}`;
+          // Find next available number
+          while (fs.existsSync(path.join(dir, candidate))) {
+            nextNum++;
+            candidate = `${prefix}${nextNum}${ext}`;
+          }
+          newBase = candidate;
+        } else {
+          // Fallback: filename, filename-2, filename-3, etc.
+          let candidate = `${nameNoExt}${ext}`;
+          let counter = 1;
+          while (fs.existsSync(path.join(dir, candidate))) {
+            candidate = `${nameNoExt}-${counter}${ext}`;
+            counter++;
+          }
+          newBase = candidate;
+        }
+
+        const newName = await vscode.window.showInputBox({
+          prompt: 'Duplicate file as...',
+          value: newBase,
+          validateInput: (val) => {
+            if (!val || val.trim() === '') return 'File name required';
+            if (fs.existsSync(path.join(dir, val))) return 'File already exists';
+            return null;
+          }
+        });
+        if (!newName) return;
+        const newPath = path.join(dir, newName);
+        await vscode.workspace.fs.copy(fileUri, vscode.Uri.file(newPath));
+        // Optionally open the new file
+        const doc = await vscode.workspace.openTextDocument(newPath);
+        await vscode.window.showTextDocument(doc, { preview: false });
+      } catch (e: any) {
+        vscode.window.showErrorMessage('Failed to duplicate file: ' + (e.message || e));
+      }
     })
   );
 }
