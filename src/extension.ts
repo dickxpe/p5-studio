@@ -511,6 +511,11 @@ async function createHtml(
   panel: vscode.WebviewPanel,
   extensionPath: string
 ) {
+  // Get the sketch filename (without extension)
+  let sketchFileName = '';
+  if (panel && (panel as any)._sketchFilePath) {
+    sketchFileName = path.basename((panel as any)._sketchFilePath);
+  }
   const p5Path = vscode.Uri.file(path.join(extensionPath, 'assets', 'p5.min.js'));
   const p5Uri = panel.webview.asWebviewUri(p5Path);
 
@@ -632,6 +637,8 @@ ${scriptTags}
 ${escapedCode}
 </script>
 <script>
+// Provide the sketch filename (without extension) to the webview
+window._p5SketchFileName = ${JSON.stringify(sketchFileName)};
 window._p5UserCode = \`${escapedCode}\`;
 // --- output() alias for console.log ---
 window.output = function(...args) { console.log(...args); };
@@ -738,7 +745,10 @@ window.addEventListener("message", function(e) {
     saveItem.addEventListener('click', function() {
       try {
         const dataUrl = getCanvasDataUrlAtDisplaySize();
-        vscode.postMessage({ type: 'saveCanvasImage', dataUrl });
+        // Use the sketch filename (without extension) if available
+        let fileName = (window._p5SketchFileName || '').replace(/\.[^.]+$/, '') || 'sketch';
+        fileName = fileName + '.png';
+        vscode.postMessage({ type: 'saveCanvasImage', dataUrl, fileName });
       } catch (err) {
         vscode.postMessage({ type: 'showError', message: 'Failed to export image: ' + err });
       }
@@ -2031,12 +2041,17 @@ export function activate(context: vscode.ExtensionContext) {
           }
           // --- SAVE CANVAS IMAGE HANDLER ---
           else if (msg.type === 'saveCanvasImage') {
-
             try {
+              // Use the provided fileName as default if available
+              let defaultFileName = msg.fileName || 'sketch.png';
               // Prompt user for file path
               const uri = await vscode.window.showSaveDialog({
                 filters: { 'PNG Image': ['png'] },
-                saveLabel: 'Save Canvas Image'
+                saveLabel: 'Save Canvas Image',
+                defaultUri: vscode.Uri.file(path.join(
+                  vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '',
+                  defaultFileName
+                ))
               });
               if (!uri) return;
               // Decode base64 data URL
@@ -2051,7 +2066,8 @@ export function activate(context: vscode.ExtensionContext) {
                 'Open Location'
               ).then(selection => {
                 if (selection === 'Open Location') {
-                  vscode.env.openExternal(uri);
+                  // Open the folder and highlight the file
+                  vscode.commands.executeCommand('revealFileInOS', uri);
                 }
               });
             } catch (e) {
