@@ -6,7 +6,7 @@ In the course [Multimedia & Creative Technologies](https://www.erasmushogeschool
 in which students learn the basic concepts of coding, in a fun and creative way!
 
 To make it easier for students to start coding, without having any prior technical knowledge, I created this extension as a teaching tool.
-However it can be also be used as prototyping tool for any creative coder!
+However it can be also be used as a prototyping tool for any creative coder!
 
 ## Introduction
 LIVE P5 LAUNCHER is a Visual Studio Code extension that brings live coding and rapid prototyping to p5.js sketches. It provides an interactive webview panel for instant feedback, variable control, and error reporting, making it ideal for creative coding, teaching, and experimentation with p5.js in JavaScript or TypeScript.
