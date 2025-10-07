@@ -128,7 +128,7 @@ This allows you to connect your p5.js sketches to other creative coding tools, D
 
 ✅ Free use (commercial and non-commercial)
 
-✅ Attribution required
+✅ Attribution required: Peter Dickx
 
 ✅ No restriction on modification, redistribution, etc.
 
