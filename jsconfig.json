@@ -4,10 +4,18 @@
     "module": "esnext",
     "checkJs": false
   },
+  "lastUpdated": "2025-10-10T08:33:50+02:00",
   "include": [
-    "*.js",
     "**/*.js",
+    "**/*.ts",
+    "*.js",
+    "*.ts",
     "c:\\Users\\Peter\\.vscode\\extensions\\peterdickx.live-p5-launcher-1.0.0\\p5types\\global.d.ts",
-   "c:\\Users\\Peter\\.vscode\\extensions\\peterdickx.live-p5-launcher-1.0.0\\p5types\\p5helper.d.ts"],
-  "exclude": ["node_modules"]
+    "c:\\Users\\Peter\\.vscode\\extensions\\peterdickx.live-p5-launcher-1.0.0\\p5types\\p5helper.d.ts",
+    "common/*.js",
+    "import/*.js"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }
