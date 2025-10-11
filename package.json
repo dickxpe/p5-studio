@@ -42,6 +42,14 @@
         }
       },
       {
+        "command": "extension.open-blockly",
+        "title": "Open Blockly Panel",
+        "icon": {
+          "light": "images/b5.svg",
+          "dark": "images/b5.svg"
+        }
+      },
+      {
         "command": "extension.reload-p5-sketch",
         "title": "Reload P5 Sketch",
         "icon": {
@@ -101,6 +109,11 @@
           "command": "extension.live-p5",
           "group": "navigation",
           "when": "isP5js && !hasP5Webview && (editorLangId == javascript || editorLangId == typescript)"
+        },
+        {
+          "command": "extension.open-blockly",
+          "group": "navigation@1",
+          "when": "isP5js && (editorLangId == javascript || editorLangId == typescript)"
         },
         {
           "command": "extension.reload-p5-sketch",
