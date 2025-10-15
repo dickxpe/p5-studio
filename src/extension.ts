@@ -1267,6 +1267,12 @@ function runUserSketch(code){
 }
 
 function waitForP5AndRunSketch() {
+  // If there's no user code (e.g., a syntax error path injected empty code),
+  // don't instantiate p5 to prevent runtime errors like _decrementPreload.
+  const hasCode = typeof window._p5UserCode === 'string' && window._p5UserCode.trim().length > 0;
+  if (!hasCode) {
+    return; // Extension will display the syntax error overlay separately.
+  }
   if (window.p5) {
     runUserSketch(window._p5UserCode);
   } else {
