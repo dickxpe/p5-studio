@@ -4,7 +4,7 @@
     "module": "esnext",
     "checkJs": false
   },
-  "lastUpdated": "2025-10-10T08:33:50+02:00",
+  "lastUpdated": "2025-10-15T17:42:48+02:00",
   "include": [
     "**/*.js",
     "**/*.ts",
