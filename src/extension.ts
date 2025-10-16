@@ -1995,8 +1995,26 @@ export function activate(context: vscode.ExtensionContext) {
               panel.webview.postMessage({ type: 'showError', message: overlayMsg });
             }
           } else if (msg.type === 'reload-button-clicked') {
-            let code = editor.document.getText();
-            code = wrapInSetupIfNeeded(code);
+            // Enforce reserved-name conflicts on reload as well (consistent with first open)
+            const docUri = editor.document.uri.toString();
+            const fileName = path.basename(editor.document.fileName);
+            const rawCode = editor.document.getText();
+            const { conflicts } = extractGlobalVariablesWithConflicts(rawCode);
+            if (conflicts.length > 0) {
+              const outputChannel = getOrCreateOutputChannel(docUri, fileName);
+              let syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${fileName}] Reserved variable name(s) used: ${conflicts.join(', ')}`;
+              syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
+              // Replace HTML with empty sketch so nothing runs, then show overlay
+              panel.webview.html = await createHtml('', panel, context.extensionPath);
+              setTimeout(() => {
+                panel.webview.postMessage({ type: 'syntaxError', message: syntaxErrorMsg });
+              }, 150);
+              outputChannel.appendLine(syntaxErrorMsg);
+              (panel as any)._lastSyntaxError = syntaxErrorMsg;
+              (panel as any)._lastRuntimeError = null;
+              return;
+            }
+            let code = wrapInSetupIfNeeded(rawCode);
             const globals = extractGlobalVariables(code);
             let rewrittenCode = rewriteUserCodeWithWindowGlobals(code, globals);
             if (msg.preserveGlobals && globals.length > 0) {
@@ -2390,7 +2408,7 @@ text("P5", 50, 52);`;
         if (fs.existsSync(jsconfigPath)) {
           try {
             fs.unlinkSync(jsconfigPath);
-            vscode.window.showInformationMessage('LIVE P5: Removed existing jsconfig.json');
+            //vscode.window.showInformationMessage('LIVE P5: Removed existing jsconfig.json');
           } catch {
             // ignore
           }
@@ -2411,7 +2429,7 @@ text("P5", 50, 52);`;
           ]         
         };
         writeFileSync(jsconfigPath, JSON.stringify(jsconfig, null, 2));
-        vscode.window.showInformationMessage('LIVE P5: Created fresh jsconfig.json');
+      //  vscode.window.showInformationMessage('LIVE P5: Created fresh jsconfig.json');
       }
     } catch (e) {
       console.warn('Failed to refresh jsconfig.json on activation:', e);
