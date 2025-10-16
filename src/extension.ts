@@ -2230,7 +2230,9 @@ export function activate(context: vscode.ExtensionContext) {
         }
         vscode.window.showInformationMessage('Setting up new P5 project...');
         // creates a jsconfig that tells vscode where to find the types file
+        const now = new Date();
         const jsconfig = {
+          createdAt: toLocalISOString(now),
           include: [
             "*.js",
             "**/*.js",
@@ -2290,10 +2292,10 @@ text("P5", 50, 52);`;
           } catch {
             // ignore read/parse errors and keep version as 'unknown'
           }
-
+          const now = new Date();
           const marker = {
             version,
-            createdAt: new Date().toISOString()
+             createdAt: toLocalISOString(now),
           };
           fs.writeFileSync(p5MarkerPath, JSON.stringify(marker, null, 2) + "\n");
         } catch (err) {
@@ -2375,6 +2377,46 @@ text("P5", 50, 52);`;
       panel.dispose();
     }
   });
+
+  // --- On activation: if .p5 exists, refresh jsconfig.json (delete and recreate) ---
+  (async function refreshJsconfigIfMarkerPresent() {
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) return;
+    try {
+      const markerPath = path.join(workspaceFolder.uri.fsPath, ".p5");
+      if (fs.existsSync(markerPath)) {
+        const jsconfigPath = path.join(workspaceFolder.uri.fsPath, "jsconfig.json");
+        // Delete existing jsconfig.json if present
+        if (fs.existsSync(jsconfigPath)) {
+          try {
+            fs.unlinkSync(jsconfigPath);
+            vscode.window.showInformationMessage('LIVE P5: Removed existing jsconfig.json');
+          } catch {
+            // ignore
+          }
+        }
+        // Recreate jsconfig.json with current settings
+        const now2 = new Date();
+        const jsconfig = {
+           createdAt: toLocalISOString(now2),
+          include: [
+            "*.js",
+            "**/*.js",
+            "*.ts",
+            "**/.ts",
+            "common/*.js",
+            "import/*.js",
+            path.join(context.extensionPath, "p5types", "global.d.ts"),
+            path.join(context.extensionPath, "p5types", "p5helper.d.ts"),
+          ]         
+        };
+        writeFileSync(jsconfigPath, JSON.stringify(jsconfig, null, 2));
+        vscode.window.showInformationMessage('LIVE P5: Created fresh jsconfig.json');
+      }
+    } catch (e) {
+      console.warn('Failed to refresh jsconfig.json on activation:', e);
+    }
+  })();
 
   // --- Show notification to setup P5 project if not already set up ---
   (async function showSetupNotificationIfNeeded() {
@@ -2532,5 +2574,18 @@ function hasOnlySetup(code: string): boolean {
 	} catch {
 		return false;
 	}
+}
+
+// Helper: Format a local ISO-like string without timezone offset, e.g. 2025-10-16T14:05:00.000
+function toLocalISOString(d: Date): string {
+  const pad = (n: number, w = 2) => String(n).padStart(w, '0');
+  const year = d.getFullYear();
+  const month = pad(d.getMonth() + 1);
+  const day = pad(d.getDate());
+  const hour = pad(d.getHours());
+  const minute = pad(d.getMinutes());
+  const second = pad(d.getSeconds());
+  const ms = pad(d.getMilliseconds(), 3);
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}.${ms}`;
 }
 
