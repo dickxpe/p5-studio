@@ -74,7 +74,7 @@ All settings are under the `liveP5` namespace. You can configure these in your V
 | `liveP5.showReloadButton` | boolean | `true` | Show the reload button in the webview toolbar. |
 | `liveP5.showRecordButton` | boolean | `false` | Show the record (capture) button in the webview toolbar. |
 | `liveP5.SingleP5Panel` | boolean | `true` | If enabled, only one P5 webpanel can be open at a time. Opening a new panel closes all others. |
-| `liveP5.showSetupNotification` | boolean | `true` | Show a setup prompt when the workspace has no P5 configuration (`jsconfig.json`). |
+| `liveP5.showSetupNotification` | boolean | `true` | Show a setup prompt when the workspace has no P5 marker (`.p5`). |
 | `liveP5.oscRemoteAddress` | string | `127.0.0.1` | OSC remote address (host to send OSC messages to). |
 | `liveP5.oscRemotePort` | number | `57120` | OSC remote port (port to send OSC messages to). |
 | `liveP5.oscLocalPort` | number | `57121` | OSC local port (port to listen for incoming OSC messages). |

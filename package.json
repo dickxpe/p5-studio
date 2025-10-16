@@ -185,7 +185,7 @@
         "liveP5.showSetupNotification": {
           "type": "boolean",
           "default": true,
-          "description": "Show a setup prompt when the workspace has no P5 configuration (jsconfig.json). Choose 'Don't show again' to turn this off.",
+          "description": "Show a setup prompt when the workspace has no P5 marker (.p5). Choose 'Don't show again' to turn this off.",
           "order": 9
         },
         "liveP5.oscRemoteAddress": {

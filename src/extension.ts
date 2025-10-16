@@ -2274,6 +2274,31 @@ text("P5", 50, 52);`;
 
         const jsconfigPath = path.join(workspaceFolder.uri.fsPath, "jsconfig.json");
         writeFileSync(jsconfigPath, JSON.stringify(jsconfig, null, 2));
+
+        // Also create/overwrite a .p5 marker file at the project root
+        const p5MarkerPath = path.join(workspaceFolder.uri.fsPath, ".p5");
+        try {
+          // Read extension version from the extension's package.json
+          const pkgPath = path.join(context.extensionPath, "package.json");
+          let version = "unknown";
+          try {
+            const pkgRaw = fs.readFileSync(pkgPath, "utf8");
+            const pkgJson = JSON.parse(pkgRaw);
+            if (pkgJson && typeof pkgJson.version === "string") {
+              version = pkgJson.version;
+            }
+          } catch {
+            // ignore read/parse errors and keep version as 'unknown'
+          }
+
+          const marker = {
+            version,
+            createdAt: new Date().toISOString()
+          };
+          fs.writeFileSync(p5MarkerPath, JSON.stringify(marker, null, 2) + "\n");
+        } catch (err) {
+          console.warn("Failed to write .p5 marker file:", err);
+        }
         vscode.window.showInformationMessage('P5 project setup complete!');
 
         // If a folder was selected via dialog, open it as the workspace
@@ -2361,8 +2386,8 @@ text("P5", 50, 52);`;
     const showSetupNotification = config.get<boolean>('showSetupNotification', true);
     if (!showSetupNotification) return;
 
-    const jsconfigPath = path.join(workspaceFolder.uri.fsPath, "jsconfig.json");
-    if (!fs.existsSync(jsconfigPath)) {
+    const p5MarkerPath = path.join(workspaceFolder.uri.fsPath, ".p5");
+    if (!fs.existsSync(p5MarkerPath)) {
       const action = await vscode.window.showInformationMessage(
         "This project isn't configured for P5 yet. Would you like to set it up now?",
         "Setup P5 Project",
