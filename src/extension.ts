@@ -41,20 +41,6 @@ function debounce<Func extends (...args: any[]) => void>(fn: Func, delay: number
   };
 }
 
-// Helper to get local ISO string with timezone offset (e.g. 2024-06-07T14:23:00+02:00)
-function getLocalIsoStringWithOffset(date = new Date()) {
-  const tzo = -date.getTimezoneOffset(),
-    dif = tzo >= 0 ? '+' : '-',
-    pad = (num: number) => (num < 10 ? '0' : '') + num;
-  return date.getFullYear() +
-    '-' + pad(date.getMonth() + 1) +
-    '-' + pad(date.getDate()) +
-    'T' + pad(date.getHours()) +
-    ':' + pad(date.getMinutes()) +
-    ':' + pad(date.getSeconds()) +
-    dif + pad(Math.floor(Math.abs(tzo) / 60)) + ':' + pad(Math.abs(tzo) % 60);
-}
-
 // Get current time as HH:MM:SS string for log timestamps
 function getTime(): string {
   const now = new Date();
@@ -1650,117 +1636,6 @@ setupOscPort();
 // Activate
 // ----------------------------
 export function activate(context: vscode.ExtensionContext) {
-
-  // On activation, auto-update jsconfig.json if present (no notification)
-  (async () => {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    if (!workspaceFolder) return;
-    const jsconfigPath = path.join(workspaceFolder.uri.fsPath, 'jsconfig.json');
-    if (!fs.existsSync(jsconfigPath)) return;
-    try {
-      let original: any = {};
-      try {
-        const raw = await fs.promises.readFile(jsconfigPath, 'utf8');
-        const stripped = raw
-          .replace(/\/\*[\s\S]*?\*\//g, '')
-          .replace(/(^|\n)\s*\/\/.*$/g, '');
-        original = JSON.parse(stripped);
-      } catch { /* ignore parse errors - we'll recreate */ }
-
-  original.lastUpdated = getLocalIsoStringWithOffset();
-      const canonicalIncludes = [
-        "*.js",
-        "**/*.js",
-        "*.ts",
-        "**/*.ts",
-        "common/*.js",
-        "import/*.js"
-      ];
-      const dtsIncludes = (original.include || [])
-        .concat(original.files || [])
-        .filter((s: string) => s.endsWith('.d.ts'));
-      const mergedIncludes = Array.from(new Set([
-        ...canonicalIncludes,
-        ...dtsIncludes
-      ])).filter(s =>
-        s === "*.js" || s === "**/*.js" || s === "*.ts" || s === "**/*.ts" || s === "common/*.js" || s === "import/*.js" || s.endsWith('.d.ts')
-      ).sort();
-      const ordered: any = {};
-      if (original.compilerOptions) ordered.compilerOptions = original.compilerOptions;
-      ordered.lastUpdated = original.lastUpdated;
-      ordered.include = mergedIncludes;
-      if (original.exclude) ordered.exclude = original.exclude;
-      for (const k of Object.keys(original)) {
-        if (!(k in ordered)) ordered[k] = (original as any)[k];
-      }
-      await fs.promises.writeFile(jsconfigPath, JSON.stringify(ordered, null, 2));
-    } catch {/* silent */}
-  })();
-
-  // Command: Live P5: Refresh IntelliSense (touch jsconfig.json)
-  context.subscriptions.push(
-    vscode.commands.registerCommand('liveP5.refreshIntelliSense', async () => {
-      const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-      if (!workspaceFolder) {
-        vscode.window.showWarningMessage('No workspace folder found.');
-        return;
-      }
-      const jsconfigPath = path.join(workspaceFolder.uri.fsPath, 'jsconfig.json');
-      try {
-        // Read existing jsconfig (if any) and update lastUpdated field
-        let original: any = {};
-        try {
-          const raw = await fs.promises.readFile(jsconfigPath, 'utf8');
-          // Basic JSONC stripping: remove // and /* */ comments
-            const stripped = raw
-              // Remove /* */ block comments
-              .replace(/\/\*[\s\S]*?\*\//g, '')
-              // Remove // line comments
-              .replace(/(^|\n)\s*\/\/.*$/g, '');
-            original = JSON.parse(stripped);
-        } catch { /* ignore parse errors - we'll recreate */ }
-
-  original.lastUpdated = getLocalIsoStringWithOffset();
-        // Canonical include patterns
-        const canonicalIncludes = [
-          "*.js",
-          "**/*.js",
-          "*.ts",
-          "**/*.ts",
-          "common/*.js",
-          "import/*.js"
-        ];
-        // Add any .d.ts includes from the original or desired
-        const dtsIncludes = (original.include || [])
-          .concat(original.files || [])
-          .filter((s: string) => s.endsWith('.d.ts'));
-        // Add any .d.ts includes from the current workspace (if present)
-        // (skip for now, as setup always adds them)
-        // Merge, dedupe, and sort
-        const mergedIncludes = Array.from(new Set([
-          ...canonicalIncludes,
-          ...dtsIncludes
-        ])).filter(s =>
-          // Remove any accidental typos like '***.ts'
-          s === "*.js" || s === "**/*.js" || s === "*.ts" || s === "**/*.ts" || s === "common/*.js" || s === "import/*.js" || s.endsWith('.d.ts')
-        ).sort();
-        // Preserve existing ordering roughly: if compilerOptions existed, keep it at top
-        const ordered: any = {};
-        if (original.compilerOptions) ordered.compilerOptions = original.compilerOptions;
-        ordered.lastUpdated = original.lastUpdated;
-        ordered.include = mergedIncludes;
-        if (original.exclude) ordered.exclude = original.exclude;
-        // Add any remaining props
-        for (const k of Object.keys(original)) {
-          if (!(k in ordered)) ordered[k] = (original as any)[k];
-        }
-        await fs.promises.writeFile(jsconfigPath, JSON.stringify(ordered, null, 2));
-        vscode.window.showInformationMessage('jsconfig.json updated with timestamp. IntelliSense should reload.');
-      } catch (e) {
-        vscode.window.showErrorMessage('Failed to update jsconfig.json: ' + (e as any)?.message);
-      }
-    })
-  );
   // Create output channel and register with context to ensure it appears in Output panel
 
   // Helper to update context key for p5.js file detection
@@ -2354,42 +2229,19 @@ export function activate(context: vscode.ExtensionContext) {
           workspaceFolder = { uri: selectedFolderUri, name: '', index: 0 };
         }
         vscode.window.showInformationMessage('Setting up new P5 project...');
-        // Desired include patterns
-        const canonicalIncludes = [
-          "*.js",
-          "**/*.js",
-          "*.ts",
-          "**/*.ts",
-          "common/*.js",
-          "import/*.js",
-          path.join(context.extensionPath, "p5types", "global.d.ts"),
-          path.join(context.extensionPath, "p5types", "p5helper.d.ts")
-        ];
-        const jsconfigPath = path.join(workspaceFolder.uri.fsPath, "jsconfig.json");
-        let existing: any = {};
-        if (fs.existsSync(jsconfigPath)) {
-          try {
-            const raw = fs.readFileSync(jsconfigPath, 'utf8');
-            const stripped = raw
-              .replace(/\/\*[\s\S]*?\*\//g, '')
-              .replace(/(^|\n)\s*\/\/.*$/g, '');
-            existing = JSON.parse(stripped);
-          } catch {/* ignore */}
-        }
-        // Merge, dedupe, and sort
-        const mergedIncludes = Array.from(new Set([
-          ...canonicalIncludes,
-          ...(existing.include || []),
-          ...(existing.files || [])
-        ])).filter(s =>
-          s === "*.js" || s === "**/*.js" || s === "*.ts" || s === "**/*.ts" || s === "common/*.js" || s === "import/*.js" || s.endsWith('.d.ts')
-        ).sort();
-        const jsconfig: any = {
-          ...existing,
-          lastUpdated: new Date().toISOString(),
-          include: mergedIncludes
+        // creates a jsconfig that tells vscode where to find the types file
+        const jsconfig = {
+          include: [
+            "*.js",
+            "**/*.js",
+            "*.ts",
+            "**/.ts",
+            "common/*.js",
+            "import/*.js",
+            path.join(context.extensionPath, "p5types", "global.d.ts"),
+            path.join(context.extensionPath, "p5types", "p5helper.d.ts"),
+          ]
         };
-        if (existing.exclude) jsconfig.exclude = existing.exclude;
         fs.mkdirSync(workspaceFolder.uri.fsPath + "/common", { recursive: true });
         fs.mkdirSync(workspaceFolder.uri.fsPath + "/import", { recursive: true });
         fs.mkdirSync(workspaceFolder.uri.fsPath + "/media", { recursive: true });
@@ -2420,6 +2272,7 @@ text("P5", 50, 52);`;
           fs.writeFileSync(sketch1Path, sketchString);
         }
 
+        const jsconfigPath = path.join(workspaceFolder.uri.fsPath, "jsconfig.json");
         writeFileSync(jsconfigPath, JSON.stringify(jsconfig, null, 2));
         vscode.window.showInformationMessage('P5 project setup complete!');
 

@@ -85,11 +85,6 @@
         "category": "LIVE P5"
       },
       {
-        "command": "liveP5.refreshIntelliSense",
-        "title": "Live P5: Refresh IntelliSense",
-        "category": "LIVE P5"
-      },
-      {
         "command": "extension.duplicateFile",
         "title": "Duplicate",
         "category": "File"
@@ -137,10 +132,6 @@
       "commandPalette": [
         {
           "command": "liveP5.scrollOutputToEnd",
-          "when": "true"
-        },
-        {
-          "command": "liveP5.refreshIntelliSense",
           "when": "true"
         }
       ]
