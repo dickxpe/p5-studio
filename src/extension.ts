@@ -1159,6 +1159,16 @@ function clearError(){
   const el=document.getElementById("error-overlay");
   if(el){el.textContent=""; el.style.display="none";}
 }
+// Suppress benign internal p5 error that can appear after another error
+function _p5ShouldSuppressError(raw){
+  try{
+    const msg = (raw==null?"":String(raw));
+    // Check both with and without our [RUNTIME ERROR] prefix
+    return /(^|\s)\[?RUNTIME ERROR\]?\s*this\._decrementPreload is not a function/i.test(msg)
+      || /this\._decrementPreload is not a function/i.test(msg)
+      || /_decrementPreload/.test(msg);
+  }catch{ return false; }
+}
 
 (function(){
   const origLog=console.log;
@@ -1172,6 +1182,8 @@ function clearError(){
       if (a instanceof Error) return a.message;
       return (a && a.toString ? a.toString() : String(a));
     }).join(" ");
+    // Suppress only the specific benign p5 internal error
+    if (_p5ShouldSuppressError(msg)) { origErr.apply(console,args); return; }
     if (!msg.startsWith("[RUNTIME ERROR]")) {
       msg = "[RUNTIME ERROR] " + msg;
     }
@@ -1183,6 +1195,10 @@ function clearError(){
 
 window.onerror = function(message, source, lineno, colno, error) {
   let msg = message && message.toString ? message.toString() : String(message);
+  if (_p5ShouldSuppressError(msg)) {
+    // Let it go to the browser console but do not show overlay or VS Code output
+    return false;
+  }
   if (!msg.startsWith('[RUNTIME ERROR]')) {
     msg = '[RUNTIME ERROR] ' + msg;
   }
@@ -1204,6 +1220,9 @@ window.onunhandledrejection = function(event) {
     }
   } else {
     msg = 'Unhandled promise rejection';
+  }
+  if (_p5ShouldSuppressError(msg)) {
+    return; // do not show overlay or postMessage for this specific error
   }
   if (!msg.startsWith('[RUNTIME ERROR]')) {
     msg = '[RUNTIME ERROR] ' + msg;
@@ -1232,7 +1251,9 @@ function runUserSketch(code){
   script.setAttribute('data-user-code', 'true');
   script.textContent = code;
   script.onerror = function(event) {
-    let msg = '[RUNTIME ERROR] ' + (event.message || 'Unknown error');
+    let raw = (event.message || 'Unknown error');
+    if (_p5ShouldSuppressError(raw)) { return; }
+    let msg = '[RUNTIME ERROR] ' + raw;
     showError(msg);
     if (typeof vscode !== "undefined") {
       vscode.postMessage({ type: "showError", message: msg });
@@ -1244,7 +1265,9 @@ function runUserSketch(code){
   try {
     window._p5Instance = new p5();
   } catch (err) {
-    let msg = '[RUNTIME ERROR] ' + (err && err.message ? err.message : String(err));
+    let raw = (err && err.message ? err.message : String(err));
+    if (_p5ShouldSuppressError(raw)) { return; }
+    let msg = '[RUNTIME ERROR] ' + raw;
     showError(msg);
     if (typeof vscode !== "undefined") {
       vscode.postMessage({ type: "showError", message: msg });
@@ -1962,7 +1985,23 @@ export function activate(context: vscode.ExtensionContext) {
           const outputChannel = getOrCreateOutputChannel(docUri, fileName);
           if (msg.type === 'log') {
             if (ignoreLogs) return;
-            outputChannel.appendLine(`${getTime()} [LOG]: ${msg.message.join(' ')}`);
+            // Sanitize p5 guidance line from logs
+            const toStr = (v: any) => typeof v === 'string' ? v : (v && v.toString ? v.toString() : String(v));
+            const raw = Array.isArray(msg.message) ? msg.message.map(toStr).join(' ') : toStr(msg.message);
+            // Remove any lines that start with the p5 "For more details" guidance
+            let sanitized = raw
+              .split(/\r?\n/)
+              .filter(line => !/^\s*For more details, see:\s*/i.test(line))
+              .join('\n')
+              .trim();
+            // Rewrite p5 guidance to include draw() for any function
+            if (sanitized.includes("Did you just try to use p5.js's") &&
+                sanitized.includes("into your sketch's setup() function")) {
+              sanitized = sanitized.replace(/into your sketch's setup\(\) function/gi,
+                "into your sketch's setup() or draw() function");
+            }
+            if (sanitized.length === 0) return; // If nothing left after filtering, skip logging
+            outputChannel.appendLine(`${getTime()} [LOG]: ${sanitized}`);
             // outputChannel.show(true); // Do not focus on every log
           } else if (msg.type === 'showError') {
             // Always prefix with timestamp and [RUNTIME ERROR] if not present
