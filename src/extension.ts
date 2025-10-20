@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import * as recast from 'recast';
 import * as osc from 'osc';
 import * as fs from 'fs';
+import { exec } from 'child_process';
 import { writeFileSync } from 'fs';
 
 const webviewPanelMap = new Map<string, vscode.WebviewPanel>();
@@ -2295,7 +2296,7 @@ text("P5", 50, 52);`;
         const jsconfigPath = path.join(workspaceFolder.uri.fsPath, "jsconfig.json");
         writeFileSync(jsconfigPath, JSON.stringify(jsconfig, null, 2));
 
-        // Also create/overwrite a .p5 marker file at the project root
+  // Also create/overwrite a .p5 marker file at the project root
         const p5MarkerPath = path.join(workspaceFolder.uri.fsPath, ".p5");
         try {
           // Read extension version from the extension's package.json
@@ -2316,6 +2317,8 @@ text("P5", 50, 52);`;
              createdAt: toLocalISOString(now),
           };
           fs.writeFileSync(p5MarkerPath, JSON.stringify(marker, null, 2) + "\n");
+          // Try to hide the .p5 file on Windows
+          hideFileIfSupported(p5MarkerPath);
         } catch (err) {
           console.warn("Failed to write .p5 marker file:", err);
         }
@@ -2403,6 +2406,8 @@ text("P5", 50, 52);`;
     try {
       const markerPath = path.join(workspaceFolder.uri.fsPath, ".p5");
       if (fs.existsSync(markerPath)) {
+        // Try to hide the marker file on Windows if it's visible
+        hideFileIfSupported(markerPath);
         const jsconfigPath = path.join(workspaceFolder.uri.fsPath, "jsconfig.json");
         // Delete existing jsconfig.json if present
         if (fs.existsSync(jsconfigPath)) {
@@ -2435,6 +2440,17 @@ text("P5", 50, 52);`;
       console.warn('Failed to refresh jsconfig.json on activation:', e);
     }
   })();
+
+  // Helper to hide a file on Windows (attrib +h). No-op on other platforms.
+  function hideFileIfSupported(filePath: string) {
+    try {
+      if (process.platform === 'win32') {
+        exec(`attrib +h "${filePath}"`);
+      }
+    } catch {
+      // ignore
+    }
+  }
 
   // --- Show notification to setup P5 project if not already set up ---
   (async function showSetupNotificationIfNeeded() {

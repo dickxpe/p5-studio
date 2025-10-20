@@ -17,7 +17,12 @@ module.exports = {
         vscode: 'commonjs vscode'
     },
     resolve: {
-        extensions: ['.ts', '.js']
+        extensions: ['.ts', '.js'],
+        // Treat optional native deps from 'ws' as absent to avoid warnings
+        alias: {
+            'utf-8-validate': false,
+            'bufferutil': false
+        }
     },
     module: {
         rules: [
