@@ -810,7 +810,7 @@ canvas.p5Canvas{
 }
 #error-overlay{
   position:fixed; top:0; left:0; right:0; bottom:0;
-  background: #1f1f1f; color:#ff3333; font-family:monospace; padding:10px; font-size: var(--overlay-font-size);
+  background: #1f1f1f; color:#f22268; font-family:monospace; padding:10px; font-size: var(--overlay-font-size);
   display:none; z-index: 9999; white-space:pre-wrap; overflow:auto;
 }
 /* Warning overlay (yellow text) */
