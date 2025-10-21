@@ -630,6 +630,9 @@ async function createHtml(
   const recordRedSvg = `<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#ff3333" stroke="#b00" stroke-width="2"/></svg>`;
   const recordGraySvg = `<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#bbb" stroke="#888" stroke-width="2"/></svg>`;
 
+  // Match overlay font size to the editor font size
+  const editorFontSize = vscode.workspace.getConfiguration('editor').get<number>('fontSize', 14);
+
   return `<!DOCTYPE html>
 <!-- cache-bust: ${uniqueId} -->
 <html>
@@ -798,6 +801,7 @@ window.addEventListener("message", function(e) {
 })();
 </script>
 <style>
+:root { --overlay-font-size: ${editorFontSize}px; }
 html,body{margin:0;padding:0;overflow:hidden;width:100%;height:100%;background:transparent;}
 canvas.p5Canvas{
   display:block;
@@ -806,8 +810,14 @@ canvas.p5Canvas{
 }
 #error-overlay{
   position:fixed; top:0; left:0; right:0; bottom:0;
-  background: #1f1f1f; color:#ff3333; font-family:monospace; padding:10px;
+  background: #1f1f1f; color:#ff3333; font-family:monospace; padding:10px; font-size: var(--overlay-font-size);
   display:none; z-index: 9999; white-space:pre-wrap; overflow:auto;
+}
+/* Warning overlay (yellow text) */
+#warning-overlay{
+  position:fixed; top:0; left:0; right:0; bottom:0;
+  background: #1f1f1f; color:#ffeb3b; font-family:monospace; padding:10px; font-size: var(--overlay-font-size);
+  display:none; z-index: 9998; white-space:pre-wrap; overflow:auto;
 }
 /* Warning overlay (yellow text) */
 #warning-overlay{
@@ -1421,6 +1431,11 @@ window.addEventListener("message", e => {
     case 'updateVarDebounceDelay':
       if (typeof data.value === 'number') window._p5VarControlDebounceDelay = data.value;
       break;
+    case 'updateOverlayFontSize':
+      if (typeof data.value === 'number') {
+        document.documentElement.style.setProperty('--overlay-font-size', data.value + 'px');
+      }
+      break;
   }
 });
 
@@ -1732,22 +1747,33 @@ export function activate(context: vscode.ExtensionContext) {
           diagnostics.push(diag);
         }
 
-        function visit(node: any) {
+        function visit(node: any, parent: any = null) {
           if (!node || typeof node.type !== 'string') return;
           if (wantsSemicolon.has(node.type) && typeof node.end === 'number') {
-            addDiagAt(node.end);
+            // Skip variable declarations that are part of a for-header (no trailing semicolon for the decl itself)
+            if (
+              node.type === 'VariableDeclaration' && parent && (
+                (parent.type === 'ForStatement' && parent.init === node) ||
+                (parent.type === 'ForInStatement' && parent.left === node) ||
+                (parent.type === 'ForOfStatement' && parent.left === node)
+              )
+            ) {
+              // no-op
+            } else {
+              addDiagAt(node.end);
+            }
           }
           for (const key of Object.keys(node)) {
             const child = (node as any)[key];
             if (!child) continue;
             if (Array.isArray(child)) {
-              for (const c of child) visit(c);
+              for (const c of child) visit(c, node);
             } else if (typeof child === 'object' && typeof child.type === 'string') {
-              visit(child);
+              visit(child, node);
             }
           }
         }
-        visit(ast);
+        visit(ast, null);
       } catch {
         // Fallback to heuristic line-based linter below
         usedAst = false;
@@ -2201,7 +2227,7 @@ export function activate(context: vscode.ExtensionContext) {
                 "into your sketch's setup() or draw() function");
             }
             if (sanitized.length === 0) return; // If nothing left after filtering, skip logging
-            outputChannel.appendLine(`${getTime()} [💬LOG]: ${sanitized}`);
+            outputChannel.appendLine(`${getTime()} [💭LOG]: ${sanitized}`);
             // outputChannel.show(true); // Do not focus on every log
           } else if (msg.type === 'showError') {
             // Always prefix with timestamp and [RUNTIME ERROR] if not present
@@ -2677,6 +2703,14 @@ text("P5", 50, 52);`;
         const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
         const showRecord = showRecordConfig && hasDraw;
         panel.webview.postMessage({ type: 'toggleRecordButton', show: showRecord });
+      }
+    }
+
+    // Update overlay font size if the editor font size changes
+    if (e.affectsConfiguration('editor.fontSize')) {
+      const newSize = vscode.workspace.getConfiguration('editor').get<number>('fontSize', 14);
+      for (const [, panel] of webviewPanelMap.entries()) {
+        panel.webview.postMessage({ type: 'updateOverlayFontSize', value: newSize });
       }
     }
   });
