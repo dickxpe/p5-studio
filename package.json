@@ -2,7 +2,7 @@
   "name": "live-p5-launcher",
   "displayName": "LIVE P5 LAUNCHER",
   "description": "Launch and edit P5 in VS Code",
-  "version": "1.3.9",
+  "version": "1.4.0",
   "icon": "images/ICON.png",
   "author": {
     "name": "peterdickx"
