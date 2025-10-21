@@ -806,8 +806,14 @@ canvas.p5Canvas{
 }
 #error-overlay{
   position:fixed; top:0; left:0; right:0; bottom:0;
-  background:rgba(255,0,0,0.95); color:#fff; font-family:monospace; padding:10px;
+  background: #1f1f1f; color:#ff3333; font-family:monospace; padding:10px;
   display:none; z-index: 9999; white-space:pre-wrap; overflow:auto;
+}
+/* Warning overlay (yellow text) */
+#warning-overlay{
+  position:fixed; top:0; left:0; right:0; bottom:0;
+  background: #1f1f1f; color:#ffeb3b; font-family:monospace; padding:10px;
+  display:none; z-index: 9998; white-space:pre-wrap; overflow:auto;
 }
 #p5-toolbar {
   position: fixed;
@@ -1022,6 +1028,7 @@ input[readonly][type=number],
 </head>
 <body>
 <div id="error-overlay"></div>
+<div id="warning-overlay"></div>
 <div id="p5-toolbar">
   <div id="reload-button" style="display:${showReloadButton ? 'flex' : 'none'}"><img src="${reloadIconUri}" title="Reload P5 Sketch"></div>
   <div id="capture-toggle-button" title="Toggle P5 Capture Panel"></div>
@@ -1159,13 +1166,19 @@ function clearError(){
   window._p5ErrorActive = false;
   const el=document.getElementById("error-overlay");
   if(el){el.textContent=""; el.style.display="none";}
+  const wl=document.getElementById("warning-overlay");
+  if(wl){wl.textContent=""; wl.style.display="none";}
+}
+function showWarning(msg){
+  const wl = document.getElementById('warning-overlay');
+  if (wl) { wl.textContent = msg; wl.style.display = 'block'; }
 }
 // Suppress benign internal p5 error that can appear after another error
 function _p5ShouldSuppressError(raw){
   try{
     const msg = (raw==null?"":String(raw));
     // Check both with and without our [RUNTIME ERROR] prefix
-    return /(^|\s)\[?RUNTIME ERROR\]?\s*this\._decrementPreload is not a function/i.test(msg)
+    return /(^|\s)\[?‼️RUNTIME ERROR\]?\s*this\._decrementPreload is not a function/i.test(msg)
       || /this\._decrementPreload is not a function/i.test(msg)
       || /_decrementPreload/.test(msg);
   }catch{ return false; }
@@ -1176,7 +1189,7 @@ function _p5ShouldSuppressError(raw){
   console.log=function(...args){vscode.postMessage({type:"log",message:args}); origLog.apply(console,args);}
   const origErr=console.error;
   console.error=function(...args){
-    // Always prefix with [RUNTIME ERROR] and stringify arguments, including Arguments objects and Error objects
+    // Always prefix with [‼️RUNTIME ERROR] and stringify arguments, including Arguments objects and Error objects
     let msg = Array.prototype.map.call(args, a => {
       if (typeof a === "string") return a;
       if (Object.prototype.toString.call(a) === "[object Arguments]") return Array.prototype.join.call(a, " ");
@@ -1186,7 +1199,7 @@ function _p5ShouldSuppressError(raw){
     // Suppress only the specific benign p5 internal error
     if (_p5ShouldSuppressError(msg)) { origErr.apply(console,args); return; }
     if (!msg.startsWith("[RUNTIME ERROR]")) {
-      msg = "[RUNTIME ERROR] " + msg;
+      msg = "[‼️RUNTIME ERROR] " + msg;
     }
     showError(msg); // Always show in overlay
     vscode.postMessage({type:"showError",message:msg}); // Always log in output
@@ -1201,7 +1214,7 @@ window.onerror = function(message, source, lineno, colno, error) {
     return false;
   }
   if (!msg.startsWith('[RUNTIME ERROR]')) {
-    msg = '[RUNTIME ERROR] ' + msg;
+    msg = '[‼️RUNTIME ERROR] ' + msg;
   }
   showError(msg);
   vscode.postMessage({ type: 'showError', message: msg });
@@ -1225,8 +1238,8 @@ window.onunhandledrejection = function(event) {
   if (_p5ShouldSuppressError(msg)) {
     return; // do not show overlay or postMessage for this specific error
   }
-  if (!msg.startsWith('[RUNTIME ERROR]')) {
-    msg = '[RUNTIME ERROR] ' + msg;
+  if (!msg.startsWith('[‼️RUNTIME ERROR]')) {
+    msg = '[‼️RUNTIME ERROR] ' + msg;
   }
   showError(msg);
   vscode.postMessage({ type: 'showError', message: msg });
@@ -1254,7 +1267,7 @@ function runUserSketch(code){
   script.onerror = function(event) {
     let raw = (event.message || 'Unknown error');
     if (_p5ShouldSuppressError(raw)) { return; }
-    let msg = '[RUNTIME ERROR] ' + raw;
+    let msg = '[‼️RUNTIME ERROR] ' + raw;
     showError(msg);
     if (typeof vscode !== "undefined") {
       vscode.postMessage({ type: "showError", message: msg });
@@ -1268,7 +1281,7 @@ function runUserSketch(code){
   } catch (err) {
     let raw = (err && err.message ? err.message : String(err));
     if (_p5ShouldSuppressError(raw)) { return; }
-    let msg = '[RUNTIME ERROR] ' + raw;
+    let msg = '[‼️RUNTIME ERROR] ' + raw;
     showError(msg);
     if (typeof vscode !== "undefined") {
       vscode.postMessage({ type: "showError", message: msg });
@@ -1338,7 +1351,8 @@ window.addEventListener("message", e => {
       }
       break;
     case "stop": if(window._p5Instance){window._p5Instance.remove(); window._p5Instance=null;} document.querySelectorAll("canvas").forEach(c=>c.remove()); break;
-    case "showError": showError(data.message); break;
+  case "showError": showError(data.message); break;
+  case "showWarning": showWarning(data.message); break;
     case "toggleReloadButton": document.getElementById("reload-button").style.display = data.show ? "flex" : "none"; break;
     case "resetErrorFlag": window._p5ErrorLogged = false; break;
     case "syntaxError": showError(data.message); break;
@@ -1349,8 +1363,8 @@ window.addEventListener("message", e => {
         if (el && el.textContent) {
           // --- FIX: Always prefix with [RUNTIME ERROR] if not present ---
           let msg = el.textContent;
-          if (!msg.startsWith("[RUNTIME ERROR]")) {
-            msg = "[RUNTIME ERROR] " + msg;
+          if (!msg.startsWith("[‼️RUNTIME ERROR]")) {
+            msg = "[‼️RUNTIME ERROR] " + msg;
           }
           vscode.postMessage({type:"showError",message:msg});
         }
@@ -1662,6 +1676,159 @@ setupOscPort();
 // ----------------------------
 export function activate(context: vscode.ExtensionContext) {
   // Create output channel and register with context to ensure it appears in Output panel
+  // --- Simple Semicolon Linter (Problems panel) ---
+  const semicolonDiagnostics = vscode.languages.createDiagnosticCollection('semicolon-linter');
+  context.subscriptions.push(semicolonDiagnostics);
+  // NOTE: We'll log semicolon warnings to the per-sketch output channel on run/reload only.
+
+  function lintSemicolons(document: vscode.TextDocument) {
+    // Only lint real files; skip output, git, etc.
+    if (document.uri.scheme !== 'file') return;
+    // Target common JS/TS-like files; keep it simple per request
+    const lang = document.languageId;
+    const isJsLike = lang === 'javascript' || lang === 'typescript' || lang === 'javascriptreact' || lang === 'typescriptreact';
+    if (!isJsLike) {
+      semicolonDiagnostics.delete(document.uri);
+      return;
+    }
+
+    const text = document.getText();
+    const diagnostics: vscode.Diagnostic[] = [];
+
+    // Try an AST-based pass for JavaScript (more accurate, still simple)
+    let usedAst = false;
+    if (lang === 'javascript' || lang === 'javascriptreact') {
+      try {
+        const acorn = require('acorn');
+        let ast: any;
+        try {
+          ast = acorn.parse(text, { ecmaVersion: 2020, sourceType: 'module', ranges: true });
+        } catch {
+          ast = acorn.parse(text, { ecmaVersion: 2020, sourceType: 'script', ranges: true });
+        }
+        usedAst = true;
+        const wantsSemicolon = new Set([
+          'ExpressionStatement',
+          'VariableDeclaration',
+          'ReturnStatement',
+          'ThrowStatement',
+          'BreakStatement',
+          'ContinueStatement'
+        ]);
+
+        function addDiagAt(endIndex: number) {
+          // If last char is already ';', nothing to report
+          if (endIndex > 0 && text[endIndex - 1] === ';') return;
+          // Position at the end of the statement
+          const endPos = document.positionAt(endIndex);
+          // Highlight a zero-width range at end of the statement line
+          const range = new vscode.Range(endPos, endPos);
+          const diag = new vscode.Diagnostic(
+            range,
+            'Missing semicolon.',
+            vscode.DiagnosticSeverity.Warning
+          );
+          diag.source = 'Semicolon Linter';
+          diagnostics.push(diag);
+        }
+
+        function visit(node: any) {
+          if (!node || typeof node.type !== 'string') return;
+          if (wantsSemicolon.has(node.type) && typeof node.end === 'number') {
+            addDiagAt(node.end);
+          }
+          for (const key of Object.keys(node)) {
+            const child = (node as any)[key];
+            if (!child) continue;
+            if (Array.isArray(child)) {
+              for (const c of child) visit(c);
+            } else if (typeof child === 'object' && typeof child.type === 'string') {
+              visit(child);
+            }
+          }
+        }
+        visit(ast);
+      } catch {
+        // Fallback to heuristic line-based linter below
+        usedAst = false;
+      }
+    }
+
+    // Heuristic fallback (works for TS/JS and when parse fails)
+    if (!usedAst) {
+      const lines = text.split(/\r?\n/);
+      for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
+        // Strip single-line comments
+        const slIdx = line.indexOf('//');
+        if (slIdx >= 0) line = line.slice(0, slIdx);
+        const trimmed = line.trimEnd();
+        if (trimmed.length === 0) continue;
+        // Quick skip: lines that clearly shouldn't end with semicolon
+        const lower = trimmed.toLowerCase();
+        const endsWith = (s: string) => trimmed.endsWith(s);
+        const skipEndChars = [';', '{', '}', ',', ':', '(', ')', '[', ']', '`'];
+        const skipEndings = ['=>', '++', '--', '.', '?', '??'];
+        const startsWithKeywords = ['if', 'for', 'while', 'switch', 'else', 'do', 'try', 'catch', 'finally', 'class', 'interface', 'enum'];
+        const startsWithTsTypes = ['type '];
+        if (
+          skipEndChars.some(c => endsWith(c)) ||
+          skipEndings.some(s => endsWith(s)) ||
+          startsWithKeywords.some(k => lower.startsWith(k + ' ')) ||
+          startsWithTsTypes.some(k => lower.startsWith(k))
+        ) {
+          continue;
+        }
+        // Allow function declarations without semicolon (end with ")" and not a call-chain)
+        if ((/\bfunction\b/.test(trimmed) || /^(async\s+)?\w+\s*\([^)]*\)\s*$/.test(trimmed)) && endsWith(')')) {
+          continue;
+        }
+        // If not ending with semicolon: warn
+        if (!endsWith(';')) {
+          const eolPos = new vscode.Position(i, lines[i].length);
+          const range = new vscode.Range(eolPos, eolPos);
+          const diag = new vscode.Diagnostic(range, 'Missing semicolon.', vscode.DiagnosticSeverity.Warning);
+          diag.source = 'Semicolon Linter';
+          diagnostics.push(diag);
+        }
+      }
+    }
+
+    semicolonDiagnostics.set(document.uri, diagnostics);
+
+  }
+
+  function lintActiveEditor() {
+    const ed = vscode.window.activeTextEditor;
+    if (ed) lintSemicolons(ed.document);
+  }
+
+  function logSemicolonWarningsForDocument(document: vscode.TextDocument) {
+    // Ensure diagnostics are up to date for this document
+    lintSemicolons(document);
+    const diags = semicolonDiagnostics.get(document.uri) || [];
+    if (diags.length === 0) return;
+    const uniqLines = Array.from(new Set(diags.map(d => d.range.start.line + 1))).sort((a, b) => a - b);
+    const docUri = document.uri.toString();
+    const fileName = path.basename(document.fileName);
+    const outputChannel = getOrCreateOutputChannel(docUri, fileName);
+    const warningText = `Missing semicolon on line(s): ${uniqLines.join(', ')}`;
+    const fullWarning = `[⚠️WARNING in ${fileName}] ${warningText}`;
+    outputChannel.appendLine(`${getTime()} ${fullWarning}`);
+    // Also show the warning overlay in the corresponding webview (no timestamp)
+    const panel = webviewPanelMap.get(docUri);
+    const blockOnWarning = vscode.workspace.getConfiguration('liveP5').get<boolean>('BlockSketchOnWarning', true);
+    if (panel && blockOnWarning) {
+      panel.webview.postMessage({ type: 'showWarning', message: fullWarning });
+    }
+  }
+
+  function hasSemicolonWarnings(document: vscode.TextDocument): { has: boolean; lines: number[] } {
+    lintSemicolons(document);
+    const diags = semicolonDiagnostics.get(document.uri) || [];
+    const lines = Array.from(new Set(diags.map(d => d.range.start.line + 1))).sort((a, b) => a - b);
+    return { has: diags.length > 0, lines };
+  }
 
   // Helper to update context key for p5.js file detection
   function updateP5Context(editor?: vscode.TextEditor) {
@@ -1701,6 +1868,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   updateP5Context();
   updateJsOrTsContext();
+  // Run initial semicolon lint on the active editor
+  lintActiveEditor();
 
   vscode.window.onDidChangeActiveTextEditor(editor => {
     updateP5Context(editor);
@@ -1755,18 +1924,29 @@ export function activate(context: vscode.ExtensionContext) {
         });
       }
     }
+    // Lint on editor switch
+    lintActiveEditor();
   });
 
   vscode.workspace.onDidChangeTextDocument(e => {
     if (e.document === vscode.window.activeTextEditor?.document) {
       updateP5Context(vscode.window.activeTextEditor);
     }
+    // Lint on text change
+    lintSemicolons(e.document);
   });
   vscode.workspace.onDidSaveTextDocument(doc => {
     if (doc === vscode.window.activeTextEditor?.document) {
       updateP5Context(vscode.window.activeTextEditor);
     }
   });
+  // Lint when a document is opened/closed
+  context.subscriptions.push(
+    vscode.workspace.onDidOpenTextDocument(doc => lintSemicolons(doc))
+  );
+  context.subscriptions.push(
+    vscode.workspace.onDidCloseTextDocument(doc => semicolonDiagnostics.delete(doc.uri))
+  );
 
   const debounceMap = new Map<string, Function>();
   // Debounce document updates to avoid excessive reloads
@@ -1794,7 +1974,7 @@ export function activate(context: vscode.ExtensionContext) {
       // --- Check for reserved global conflicts before syntax check ---
       const { globals, conflicts } = extractGlobalVariablesWithConflicts(code);
       if (conflicts.length > 0) {
-        syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${fileName}] Reserved variable name(s) used: ${conflicts.join(', ')}`;
+        syntaxErrorMsg = `${getTime()} [‼️SYNTAX ERROR in ${fileName}] Reserved variable name(s) used: ${conflicts.join(', ')}`;
         syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
         panel.webview.html = await createHtml('', panel, context.extensionPath);
         hadSyntaxError = true;
@@ -1811,25 +1991,34 @@ export function activate(context: vscode.ExtensionContext) {
       if (!hasSetup && !hasDraw) {
         code = `function setup() {\n${code}\n}`;
       }
-      // Always reload HTML for every code update to reset JS environment
-      panel.webview.html = await createHtml(code, panel, context.extensionPath);
-      // After HTML is set, send global variables
-      const { globals: filteredGlobals } = extractGlobalVariablesWithConflicts(code);
-      // --- PATCH: Use .type instead of typeof .value ---
-      let filtered = filteredGlobals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
-      // Apply @hide directive filtering based on original document text
-      const hiddenSet = getHiddenGlobalsByDirective(document.getText());
-      if (hiddenSet.size > 0) {
-        filtered = filtered.filter(g => !hiddenSet.has(g.name));
+      // Block sketch when configured and warnings exist; otherwise run as usual
+      const blockOnWarning_UD = vscode.workspace.getConfiguration('liveP5').get<boolean>('BlockSketchOnWarning', true);
+      const warn_UD = hasSemicolonWarnings(document);
+      if (blockOnWarning_UD && warn_UD.has) {
+        panel.webview.html = await createHtml('', panel, context.extensionPath);
+        logSemicolonWarningsForDocument(document);
+        return;
+      } else {
+        // Always reload HTML for every code update to reset JS environment
+        panel.webview.html = await createHtml(code, panel, context.extensionPath);
+        // After HTML is set, send global variables
+        const { globals: filteredGlobals } = extractGlobalVariablesWithConflicts(code);
+        // --- PATCH: Use .type instead of typeof .value ---
+        let filtered = filteredGlobals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+        // Apply @hide directive filtering based on original document text
+        const hiddenSet = getHiddenGlobalsByDirective(document.getText());
+        if (hiddenSet.size > 0) {
+          filtered = filtered.filter(g => !hiddenSet.has(g.name));
+        }
+        setTimeout(() => {
+          // compute readOnly based on the original document text (before we may wrap)
+          const readOnly = hasOnlySetup(document.getText());
+          panel.webview.postMessage({ type: 'setGlobalVars', variables: filtered, readOnly });
+        }, 200);
       }
-      setTimeout(() => {
-        // compute readOnly based on the original document text (before we may wrap)
-        const readOnly = hasOnlySetup(document.getText());
-        panel.webview.postMessage({ type: 'setGlobalVars', variables: filtered, readOnly });
-      }, 200);
     } catch (err: any) {
       if (!syntaxErrorMsg) {
-        syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(document.fileName)}] ${err.message}`;
+        syntaxErrorMsg = `${getTime()} [‼️SYNTAX ERROR in ${path.basename(document.fileName)}] ${err.message}`;
         syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
       }
       panel.webview.html = await createHtml('', panel, context.extensionPath);
@@ -1840,7 +2029,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (syntaxErrorMsg) {
       ignoreLogs = true;
       // Fix [object Arguments] for overlay as well
-      const overlayMsg = syntaxErrorMsg.replace(/\[object Arguments\]/gi, "no argument(s) ");
+      const overlayMsg = stripLeadingTimestamp(syntaxErrorMsg).replace(/\[object Arguments\]/gi, "no argument(s) ");
       setTimeout(() => {
         panel.webview.postMessage({ type: 'syntaxError', message: overlayMsg });
       }, 150);
@@ -1852,6 +2041,11 @@ export function activate(context: vscode.ExtensionContext) {
       ignoreLogs = false;
       (panel as any)._lastSyntaxError = null;
       (panel as any)._lastRuntimeError = null;
+    }
+
+    // If requested, log semicolon warnings when the panel reloads (typing/save debounce path)
+    if (forceLog) {
+      try { logSemicolonWarningsForDocument(document); } catch {}
     }
   }
 
@@ -1883,12 +2077,12 @@ export function activate(context: vscode.ExtensionContext) {
 
     if (reloadWhileTyping) {
       changeListener = vscode.workspace.onDidChangeTextDocument(e => {
-        if ( e.document.uri.toString() === docUri) debounceDocumentUpdate(e.document, false);
+        if ( e.document.uri.toString() === docUri) debounceDocumentUpdate(e.document, true);
       });
     }
     if (reloadOnSave) {
       saveListener = vscode.workspace.onDidSaveTextDocument(doc => {
-        if (doc.uri.toString() === docUri) debounceDocumentUpdate(doc, false); // use false to match typing
+        if (doc.uri.toString() === docUri) debounceDocumentUpdate(doc, true);
       });
     }
     autoReloadListenersMap.set(docUri, { changeListener, saveListener });
@@ -1925,7 +2119,7 @@ export function activate(context: vscode.ExtensionContext) {
           // --- Check for reserved global conflicts before syntax check ---
           const { globals, conflicts } = extractGlobalVariablesWithConflicts(codeToInject);
           if (conflicts.length > 0) {
-            syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(editor.document.fileName)}] Reserved variable name(s) used: ${conflicts.join(', ')}`;
+            syntaxErrorMsg = `${getTime()} [‼️SYNTAX ERROR in ${path.basename(editor.document.fileName)}] Reserved variable name(s) used: ${conflicts.join(', ')}`;
             syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
             codeToInject = '';
             throw new Error(syntaxErrorMsg);
@@ -1937,7 +2131,7 @@ export function activate(context: vscode.ExtensionContext) {
           codeToInject = wrapInSetupIfNeeded(codeToInject);
         } catch (err: any) {
           if (!syntaxErrorMsg) {
-            syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(editor.document.fileName)}] ${err.message}`;
+            syntaxErrorMsg = `${getTime()} [‼️SYNTAX ERROR in ${path.basename(editor.document.fileName)}] ${err.message}`;
             syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
           }
           codeToInject = '';
@@ -2007,14 +2201,14 @@ export function activate(context: vscode.ExtensionContext) {
                 "into your sketch's setup() or draw() function");
             }
             if (sanitized.length === 0) return; // If nothing left after filtering, skip logging
-            outputChannel.appendLine(`${getTime()} [LOG]: ${sanitized}`);
+            outputChannel.appendLine(`${getTime()} [💬LOG]: ${sanitized}`);
             // outputChannel.show(true); // Do not focus on every log
           } else if (msg.type === 'showError') {
             // Always prefix with timestamp and [RUNTIME ERROR] if not present
             let message = msg.message;
             if (typeof message === "string") {
-              if (!message.startsWith("[RUNTIME ERROR]")) {
-                message = `[RUNTIME ERROR] ${message}`;
+              if (!message.startsWith("[‼️RUNTIME ERROR]")) {
+                message = `[‼️RUNTIME ERROR] ${message}`;
               }
               // Add timestamp if not present
               const time = getTime();
@@ -2022,7 +2216,7 @@ export function activate(context: vscode.ExtensionContext) {
                 message = `${time} ${message}`;
               }
               // Format syntax error messages if present
-              if (message.includes("[SYNTAX ERROR")) {
+              if (message.includes("[‼️SYNTAX ERROR")) {
                 message = formatSyntaxErrorMsg(message);
               }
               // Replace [object Arguments] with no argument(s)
@@ -2045,15 +2239,26 @@ export function activate(context: vscode.ExtensionContext) {
             const docUri = editor.document.uri.toString();
             const fileName = path.basename(editor.document.fileName);
             const rawCode = editor.document.getText();
+            // Log semicolon warnings on explicit reload action
+            logSemicolonWarningsForDocument(editor.document);
+            // Optionally block sketch on warning
+            {
+              const blockOnWarning = vscode.workspace.getConfiguration('liveP5').get<boolean>('BlockSketchOnWarning', true);
+              const warn = hasSemicolonWarnings(editor.document);
+              if (blockOnWarning && warn.has) {
+                panel.webview.html = await createHtml('', panel, context.extensionPath);
+                return;
+              }
+            }
             const { conflicts } = extractGlobalVariablesWithConflicts(rawCode);
             if (conflicts.length > 0) {
               const outputChannel = getOrCreateOutputChannel(docUri, fileName);
-              let syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${fileName}] Reserved variable name(s) used: ${conflicts.join(', ')}`;
+              let syntaxErrorMsg = `${getTime()} [‼️SYNTAX ERROR in ${fileName}] Reserved variable name(s) used: ${conflicts.join(', ')}`;
               syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
               // Replace HTML with empty sketch so nothing runs, then show overlay
               panel.webview.html = await createHtml('', panel, context.extensionPath);
               setTimeout(() => {
-                panel.webview.postMessage({ type: 'syntaxError', message: syntaxErrorMsg });
+                panel.webview.postMessage({ type: 'syntaxError', message: stripLeadingTimestamp(syntaxErrorMsg) });
               }, 150);
               outputChannel.appendLine(syntaxErrorMsg);
               (panel as any)._lastSyntaxError = syntaxErrorMsg;
@@ -2185,8 +2390,17 @@ export function activate(context: vscode.ExtensionContext) {
           }
         });
 
-        // Only set HTML on first open
-        panel.webview.html = await createHtml(codeToInject, panel, context.extensionPath);
+        // Only set HTML on first open, but optionally block on warnings
+        const blockOnWarning_IO = vscode.workspace.getConfiguration('liveP5').get<boolean>('BlockSketchOnWarning', true);
+        const warn_IO = hasSemicolonWarnings(editor.document);
+        if (blockOnWarning_IO && warn_IO.has) {
+          panel.webview.html = await createHtml('', panel, context.extensionPath);
+          logSemicolonWarningsForDocument(editor.document);
+        } else {
+          panel.webview.html = await createHtml(codeToInject, panel, context.extensionPath);
+          // Log semicolon warnings when running the sketch (initial open)
+          logSemicolonWarningsForDocument(editor.document);
+        }
         // Send global variables immediately after setting HTML
         const { globals } = extractGlobalVariablesWithConflicts(codeToInject);
         // --- PATCH: Use .type instead of typeof .value ---
@@ -2204,7 +2418,7 @@ export function activate(context: vscode.ExtensionContext) {
         }, 200);
         if (syntaxErrorMsg) {
           setTimeout(() => {
-            panel.webview.postMessage({ type: 'syntaxError', message: syntaxErrorMsg });
+            panel.webview.postMessage({ type: 'syntaxError', message: stripLeadingTimestamp(syntaxErrorMsg) });
           }, 150);
           const outputChannel = getOrCreateOutputChannel(docUri, path.basename(editor.document.fileName));
           outputChannel.appendLine(syntaxErrorMsg);
@@ -2217,12 +2431,24 @@ export function activate(context: vscode.ExtensionContext) {
           try {
             new Function(codeToSend);
             codeToSend = wrapInSetupIfNeeded(codeToSend);
-            panel.webview.postMessage({ type: 'reload', code: codeToSend });
+            // Optionally block on semicolon warnings
+            const blockOnWarning_RO = vscode.workspace.getConfiguration('liveP5').get<boolean>('BlockSketchOnWarning', true);
+            const warn_RO = hasSemicolonWarnings(editor.document);
+            if (blockOnWarning_RO && warn_RO.has) {
+              (async () => {
+                panel.webview.html = await createHtml('', panel, context.extensionPath);
+                logSemicolonWarningsForDocument(editor.document);
+              })();
+            } else {
+              panel.webview.postMessage({ type: 'reload', code: codeToSend });
+              // Log semicolon warnings on explicit open -> reload path
+              logSemicolonWarningsForDocument(editor.document);
+            }
           } catch (err: any) {
             // If error, send empty code and show error
             panel.webview.postMessage({ type: 'reload', code: '' });
-            const syntaxErrorMsg = `${getTime()} [SYNTAX ERROR in ${path.basename(editor.document.fileName)}] ${err.message}`;
-            panel.webview.postMessage({ type: 'syntaxError', message: formatSyntaxErrorMsg(syntaxErrorMsg) });
+            const syntaxErrorMsg = `${getTime()} [‼️SYNTAX ERROR in ${path.basename(editor.document.fileName)}] ${err.message}`;
+            panel.webview.postMessage({ type: 'syntaxError', message: stripLeadingTimestamp(formatSyntaxErrorMsg(syntaxErrorMsg)) });
             const outputChannel = getOrCreateOutputChannel(docUri, path.basename(editor.document.fileName));
             outputChannel.appendLine(formatSyntaxErrorMsg(syntaxErrorMsg));
           }
@@ -2246,12 +2472,16 @@ export function activate(context: vscode.ExtensionContext) {
           if (docUri) {
             const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === docUri);
             if (doc) {
+              // Log semicolon warnings on explicit reload command
+              logSemicolonWarningsForDocument(doc);
               debounceDocumentUpdate(doc, false);
             }
           }
         }
         return;
       }
+      // Log semicolon warnings on explicit reload command
+      logSemicolonWarningsForDocument(editor.document);
       debounceDocumentUpdate(editor.document, false); // use false to match typing
     })
   );
@@ -2633,7 +2863,7 @@ function formatSyntaxErrorMsg(msg: string): string {
   // or: [SYNTAX ERROR in filename] ... (N)
   // or: [SYNTAX ERROR in filename] ... (N:M)
   // We want: [SYNTAX ERROR in filename on line N] ...
-  const regex = /(\[SYNTAX ERROR in [^\]\s]+)\]([^\n]*?)\s*\((\d+)(?::\d+)?\)\s*$/;
+  const regex = /(\[‼️SYNTAX ERROR in [^\]\s]+)\]([^\n]*?)\s*\((\d+)(?::\d+)?\)\s*$/;
   const match = msg.match(regex);
   if (match) {
     const before = match[1]; // [SYNTAX ERROR in filename
@@ -2643,6 +2873,11 @@ function formatSyntaxErrorMsg(msg: string): string {
     return msg.replace(regex, `${before} on line ${line}]${rest}`);
   }
   return msg;
+}
+
+// Helper: Remove a leading timestamp like "HH:MM:SS " from a message (for clean overlay text)
+function stripLeadingTimestamp(msg: string): string {
+  return typeof msg === 'string' ? msg.replace(/^\s*\d{2}:\d{2}:\d{2}\s+/, '') : msg;
 }
 
 // Helper to check SingleP5Panel setting

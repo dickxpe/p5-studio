@@ -2,7 +2,7 @@
   "name": "live-p5-launcher",
   "displayName": "LIVE P5 LAUNCHER",
   "description": "Launch and edit P5 in VS Code",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "icon": "images/ICON.png",
   "author": {
     "name": "peterdickx"
@@ -65,7 +65,7 @@
         "command": "liveP5.toggleReloadWhileTypingOn",
         "title": "Disable Reload on Typing",
         "icon": {
-          "light": "images/keyboard.svg",
+          "light": "images/keyboard_off.svg",
           "dark": "images/keyboard.svg"
         },
         "category": "LIVE P5"
@@ -74,7 +74,7 @@
         "command": "liveP5.toggleReloadWhileTypingOff",
         "title": "Enable Reload on Typing",
         "icon": {
-          "light": "images/keyboard_off.svg",
+          "light": "images/keyboard.svg",
           "dark": "images/keyboard_off.svg"
         },
         "category": "LIVE P5"
@@ -212,6 +212,12 @@
           "minimum": 0,
           "description": "Debounce delay (ms) for global variable drawer input changes before applying them to the sketch. Independent from reloadWhileTyping debounce.",
           "order": 5
+        },
+        "liveP5.BlockSketchOnWarning": {
+          "type": "boolean",
+          "default": true,
+          "description": "Block running the sketch and show a yellow overlay when semicolon warnings exist. When false, do not show the overlay and run the sketch, but still log the warning to the Output channel.",
+          "order": 13
         },
         "liveP5.SingleP5Panel": {
           "type": "boolean",
