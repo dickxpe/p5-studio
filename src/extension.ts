@@ -156,8 +156,8 @@ function extractGlobalVariablesWithConflicts(code: string): { globals: { name: s
   function extractFromDecls(decls: any[]) {
     for (const decl of decls) {
       if (decl.id && decl.id.name) {
-        let value = undefined;
-        let type = 'string';
+  let value = undefined;
+  let type = 'other';
         if (decl.init && decl.init.type === 'Literal') {
           value = decl.init.value;
           type = typeof value;
@@ -168,8 +168,8 @@ function extractGlobalVariablesWithConflicts(code: string): { globals: { name: s
         // If initializer is an Identifier, use its name as value
         else if (decl.init && decl.init.type === 'Identifier') {
           value = decl.init.name;
-          // PATCH: If identifier is a known p5 numeric property, treat as number
-          type = P5_NUMERIC_IDENTIFIERS.has(decl.init.name) ? 'number' : 'string';
+          // If identifier is a known p5 numeric property, treat as number; otherwise mark as other
+          type = P5_NUMERIC_IDENTIFIERS.has(decl.init.name) ? 'number' : 'other';
         }
         // If initializer is a CallExpression (e.g., random()), treat as number
         else if (decl.init && decl.init.type === 'CallExpression') {
@@ -183,13 +183,14 @@ function extractGlobalVariablesWithConflicts(code: string): { globals: { name: s
             value = Function(...Object.keys(safeGlobals), `return (${recast.print(decl.init).code});`)
               (...Object.values(safeGlobals));
             type = typeof value;
+            // Only expose number/string/boolean; everything else is 'other'
             if (!['number', 'string', 'boolean'].includes(type)) {
               value = undefined;
-              type = 'string';
+              type = 'other';
             }
           } catch {
             value = undefined;
-            type = 'string';
+            type = 'other';
           }
         }
         if (RESERVED_GLOBALS.has(decl.id.name)) {
@@ -226,8 +227,8 @@ function extractGlobalVariables(code: string): { name: string, value: any, type:
   function extractFromDecls(decls: any[]) {
     for (const decl of decls) {
       if (decl.id && decl.id.name) {
-        let value = undefined;
-        let type = 'string';
+  let value = undefined;
+  let type = 'other';
         if (decl.init && decl.init.type === 'Literal') {
           value = decl.init.value;
           type = typeof value;
@@ -238,7 +239,7 @@ function extractGlobalVariables(code: string): { name: string, value: any, type:
         else if (decl.init && decl.init.type === 'Identifier') {
           value = decl.init.name;
           // PATCH: If identifier is a known p5 numeric property, treat as number
-          type = P5_NUMERIC_IDENTIFIERS.has(decl.init.name) ? 'number' : 'string';
+          type = P5_NUMERIC_IDENTIFIERS.has(decl.init.name) ? 'number' : 'other';
         }
         else if (decl.init && decl.init.type === 'CallExpression') {
           value = undefined;
@@ -252,11 +253,11 @@ function extractGlobalVariables(code: string): { name: string, value: any, type:
             type = typeof value;
             if (!['number', 'string', 'boolean'].includes(type)) {
               value = undefined;
-              type = 'string';
+              type = 'other';
             }
           } catch {
             value = undefined;
-            type = 'string';
+            type = 'other';
           }
         }
         globals.push({ name: decl.id.name, value, type });
@@ -1815,7 +1816,12 @@ export function activate(context: vscode.ExtensionContext) {
       // After HTML is set, send global variables
       const { globals: filteredGlobals } = extractGlobalVariablesWithConflicts(code);
       // --- PATCH: Use .type instead of typeof .value ---
-      const filtered = filteredGlobals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+      let filtered = filteredGlobals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+      // Apply @hide directive filtering based on original document text
+      const hiddenSet = getHiddenGlobalsByDirective(document.getText());
+      if (hiddenSet.size > 0) {
+        filtered = filtered.filter(g => !hiddenSet.has(g.name));
+      }
       setTimeout(() => {
         // compute readOnly based on the original document text (before we may wrap)
         const readOnly = hasOnlySetup(document.getText());
@@ -2068,7 +2074,11 @@ export function activate(context: vscode.ExtensionContext) {
               panel.webview.html = await createHtml(code, panel, context.extensionPath);
               setTimeout(() => {
                 const { globals } = extractGlobalVariablesWithConflicts(code);
-                const filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+                let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+                const hiddenSet = getHiddenGlobalsByDirective(editor.document.getText());
+                if (hiddenSet.size > 0) {
+                  filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name));
+                }
                 const readOnly = hasOnlySetup(editor.document.getText());
                 panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
               }, 200);
@@ -2079,7 +2089,11 @@ export function activate(context: vscode.ExtensionContext) {
               panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: false });
               setTimeout(() => {
                 const { globals } = extractGlobalVariablesWithConflicts(code);
-                const filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+                let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+                const hiddenSet = getHiddenGlobalsByDirective(editor.document.getText());
+                if (hiddenSet.size > 0) {
+                  filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name));
+                }
                 const readOnly = hasOnlySetup(editor.document.getText());
                 panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
               }, 200);
@@ -2176,7 +2190,14 @@ export function activate(context: vscode.ExtensionContext) {
         // Send global variables immediately after setting HTML
         const { globals } = extractGlobalVariablesWithConflicts(codeToInject);
         // --- PATCH: Use .type instead of typeof .value ---
-        const filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+        let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+        // Apply @hide directive filtering based on original editor code
+        {
+          const hiddenSet = getHiddenGlobalsByDirective(code);
+          if (hiddenSet.size > 0) {
+            filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name));
+          }
+        }
         setTimeout(() => {
           const readOnly = hasOnlySetup(code); // use original editor code to decide
           panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
@@ -2660,5 +2681,54 @@ function toLocalISOString(d: Date): string {
   const second = pad(d.getSeconds());
   const ms = pad(d.getMilliseconds(), 3);
   return `${year}-${month}-${day}T${hour}:${minute}:${second}.${ms}`;
+}
+
+// Detect hidden globals via //@hide or // @hide directives immediately above top-level declarations
+function getHiddenGlobalsByDirective(code: string): Set<string> {
+  const hidden = new Set<string>();
+  try {
+    const acorn = require('acorn');
+    const ast = acorn.parse(code, { ecmaVersion: 2020, sourceType: 'script', locations: true });
+    const lines = code.split(/\r?\n/);
+    const isHideComment = (line: string) => /^(\s*\/\/\s*@hide\b|\s*\/\/@hide\b)/i.test(line);
+
+    function collectNamesFromPattern(pattern: any, acc: Set<string>) {
+      if (!pattern) return;
+      if (pattern.type === 'Identifier') {
+        acc.add(pattern.name);
+      } else if (pattern.type === 'ObjectPattern') {
+        for (const prop of pattern.properties || []) {
+          if (prop.type === 'Property') collectNamesFromPattern(prop.value, acc);
+          else if (prop.type === 'RestElement') collectNamesFromPattern(prop.argument, acc);
+        }
+      } else if (pattern.type === 'ArrayPattern') {
+        for (const el of pattern.elements || []) {
+          if (!el) continue;
+          if (el.type === 'RestElement') collectNamesFromPattern(el.argument, acc);
+          else collectNamesFromPattern(el, acc);
+        }
+      } else if (pattern.type === 'RestElement') {
+        collectNamesFromPattern(pattern.argument, acc);
+      }
+    }
+
+    for (const node of (ast as any).body || []) {
+      if (node && node.type === 'VariableDeclaration' && node.loc && node.loc.start && typeof node.loc.start.line === 'number') {
+        const startLine: number = node.loc.start.line; // 1-based
+        const prevIdx = startLine - 2;
+        if (prevIdx >= 0) {
+          const prevLine = lines[prevIdx];
+          if (isHideComment(prevLine)) {
+            for (const decl of node.declarations || []) {
+              if (decl.id) collectNamesFromPattern(decl.id, hidden);
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore parse errors; no hidden vars
+  }
+  return hidden;
 }
 
