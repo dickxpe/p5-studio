@@ -1879,6 +1879,86 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Blockly Webview: command and panel
+  let blocklyPanel: vscode.WebviewPanel | null = null;
+
+  function getNonce() {
+    let text = '';
+    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    for (let i = 0; i < 32; i++) {
+      text += possible.charAt(Math.floor(Math.random() * possible.length));
+    }
+    return text;
+  }
+
+  function getBlocklyHtml(panel: vscode.WebviewPanel): string {
+    const webview = panel.webview;
+    const nonce = getNonce();
+    const exampleRoot = vscode.Uri.file(path.join(context.extensionPath, 'blockly_example'));
+    const exampleRootUri = webview.asWebviewUri(exampleRoot);
+    const indexCss = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'index.css')));
+    const toolboxJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'toolbox.js')));
+    const blocksJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'blocks.js')));
+    const generatorsJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'generators.js')));
+    const appJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'app.js')));
+
+    // Allow scripts from unpkg for the example; allow our own scripts via nonce
+    const csp = `default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}' https:; font-src ${webview.cspSource} https:; connect-src https:`;
+
+    return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="${csp}">
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Blockly</title>
+    <link rel="stylesheet" href="${indexCss}" />
+    <script nonce="${nonce}" src="https://unpkg.com/blockly/blockly_compressed.js"></script>
+    <script nonce="${nonce}" src="https://unpkg.com/blockly/blocks_compressed.js"></script>
+    <script nonce="${nonce}" src="https://unpkg.com/blockly/javascript_compressed.js"></script>
+    <script nonce="${nonce}" src="https://unpkg.com/blockly/msg/en.js"></script>
+  </head>
+  <body>
+    <div id="pageContainer">
+      <div id="outputPane">
+        <pre id="generatedCode"><code></code></pre>
+        <div id="output"></div>
+      </div>
+      <div id="blocklyDiv"></div>
+    </div>
+
+    <script nonce="${nonce}" src="${toolboxJs}"></script>
+    <script nonce="${nonce}" src="${blocksJs}"></script>
+    <script nonce="${nonce}" src="${generatorsJs}"></script>
+    <script nonce="${nonce}" src="${appJs}"></script>
+  </body>
+  </html>`;
+  }
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('extension.open-blockly', () => {
+      if (blocklyPanel) {
+        blocklyPanel.reveal(vscode.ViewColumn.Two);
+        return;
+      }
+      blocklyPanel = vscode.window.createWebviewPanel(
+        'blocklyPanel',
+        'B5 Blockly',
+        { viewColumn: vscode.ViewColumn.Two, preserveFocus: true },
+        {
+          enableScripts: true,
+          retainContextWhenHidden: true,
+          localResourceRoots: [
+            vscode.Uri.file(path.join(context.extensionPath, 'blockly_example')),
+            vscode.Uri.file(path.join(context.extensionPath, 'vendor'))
+          ]
+        }
+      );
+      blocklyPanel.onDidDispose(() => { blocklyPanel = null; });
+      blocklyPanel.webview.html = getBlocklyHtml(blocklyPanel);
+    })
+  );
+
 
   // Helper to update context key for JS/TS file detection and show/hide status bar
   function updateJsOrTsContext(editor?: vscode.TextEditor) {

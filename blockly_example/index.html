@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Blockly Sample App (Static)</title>
+    <link rel="stylesheet" href="./index.css" />
+    <!-- Blockly from CDN -->
+    <script src="https://unpkg.com/blockly/blockly_compressed.js"></script>
+    <script src="https://unpkg.com/blockly/blocks_compressed.js"></script>
+    <script src="https://unpkg.com/blockly/javascript_compressed.js"></script>
+    <script src="https://unpkg.com/blockly/msg/en.js"></script>
+  </head>
+  <body>
+    <div id="pageContainer">
+      <div id="outputPane">
+        <pre id="generatedCode"><code></code></pre>
+        <div id="output"></div>
+      </div>
+      <div id="blocklyDiv"></div>
+    </div>
+
+    <!-- App scripts -->
+    <script src="./toolbox.js"></script>
+    <script src="./blocks.js"></script>
+    <script src="./generators.js"></script>
+    <script src="./app.js"></script>
+  </body>
+  </html>

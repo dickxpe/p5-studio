@@ -42,6 +42,10 @@
         }
       },
       {
+        "command": "extension.open-blockly",
+        "title": "B5"
+      },
+      {
         "command": "extension.reload-p5-sketch",
         "title": "Reload P5 Sketch",
         "icon": {
@@ -96,6 +100,11 @@
           "command": "extension.live-p5",
           "group": "navigation",
           "when": "isP5js && !hasP5Webview && (editorLangId == javascript || editorLangId == typescript)"
+        },
+        {
+          "command": "extension.open-blockly",
+          "group": "navigation",
+          "when": "isP5js && (editorLangId == javascript || editorLangId == typescript)"
         },
         {
           "command": "extension.reload-p5-sketch",
