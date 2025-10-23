@@ -38,7 +38,12 @@
   // Helper to send code to VS Code extension
   function postCodeToExtension(code) {
     if (window.vscode && typeof window.vscode.postMessage === 'function') {
-      window.vscode.postMessage({ type: 'blocklyGeneratedCode', code });
+      // Always prefix //@Blockly at the top
+      let codeWithTag = code.trim();
+      if (!codeWithTag.startsWith('//@Blockly')) {
+        codeWithTag = '//@Blockly\n' + codeWithTag;
+      }
+      window.vscode.postMessage({ type: 'blocklyGeneratedCode', code: codeWithTag });
     }
   }
 

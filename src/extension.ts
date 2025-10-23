@@ -151,7 +151,7 @@ const P5_NUMERIC_IDENTIFIERS = new Set([
 function extractGlobalVariablesWithConflicts(code: string): { globals: { name: string, value: any, type: string }[], conflicts: string[] } {
   const acorn = require('acorn');
   const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
-  const globals: { name: string, value: any, type: string }[] = [];
+    const globals: { name: string, value: any, type: string }[] = []; 
   const conflicts: string[] = [];
   function extractFromDecls(decls: any[]) {
     for (const decl of decls) {
@@ -1881,6 +1881,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Blockly Webview: command and panel
   let blocklyPanel: vscode.WebviewPanel | null = null;
+  // Track which document opened which blockly panel (for multi-panel support)
+  const blocklyPanelForDocument = new WeakMap<vscode.TextDocument, vscode.WebviewPanel>();
 
   function getNonce() {
     let text = '';
@@ -2109,6 +2111,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
 
+
     vscode.commands.registerCommand('extension.open-blockly', async () => {
       if (blocklyPanel) {
         blocklyPanel.reveal(vscode.ViewColumn.Active);
@@ -2116,6 +2119,20 @@ export function activate(context: vscode.ExtensionContext) {
       }
       // Store the originating editor
       const originatingEditor = vscode.window.activeTextEditor;
+      if (!originatingEditor) {
+        vscode.window.showWarningMessage('No active editor to open Blockly for.');
+        return;
+      }
+      const doc = originatingEditor.document;
+      const text = doc.getText();
+      const isEmpty = text.trim().length === 0;
+      const hasBlocklyTag = text.trimStart().startsWith('//@Blockly');
+      if (!isEmpty && !hasBlocklyTag) {
+        vscode.window.showInformationMessage('Blockly was not opened: The file must be empty or had to be created with blockly \n\r otherwise the contents would be overwritten.');
+        return;
+      }
+
+
       blocklyPanel = vscode.window.createWebviewPanel(
         'blocklyPanel',
         'B5 Blockly',
@@ -2130,7 +2147,13 @@ export function activate(context: vscode.ExtensionContext) {
           ]
         }
       );
-      blocklyPanel.onDidDispose(() => { blocklyPanel = null; });
+      // Track the panel for the originating document
+      blocklyPanelForDocument.set(originatingEditor.document, blocklyPanel);
+      blocklyPanel.onDidDispose(() => {
+        // Remove from map if disposed
+        blocklyPanelForDocument.delete(originatingEditor.document);
+        blocklyPanel = null;
+      });
       blocklyPanel.webview.html = getBlocklyHtml(blocklyPanel);
 
       // Move the panel to a new group below (bottom tab group)
@@ -2182,6 +2205,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (panel) {
       panel.reveal(panel.viewColumn, true);
       activeP5Panel = panel;
+      
       vscode.commands.executeCommand('setContext', 'hasP5Webview', true);
     } else {
       vscode.commands.executeCommand('setContext', 'hasP5Webview', false);
@@ -2246,8 +2270,17 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.onDidOpenTextDocument(doc => lintSemicolons(doc))
   );
+
   context.subscriptions.push(
-    vscode.workspace.onDidCloseTextDocument(doc => semicolonDiagnostics.delete(doc.uri))
+    vscode.workspace.onDidCloseTextDocument(doc => {
+      semicolonDiagnostics.delete(doc.uri);
+      // If the closed document is the one that opened the blocklyPanel, close the panel
+      // If a blockly panel was opened for this document, close it
+      const panel = blocklyPanelForDocument.get(doc);
+      if (panel) {
+        panel.dispose();
+      }
+    })
   );
 
   const debounceMap = new Map<string, Function>();
