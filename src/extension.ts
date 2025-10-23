@@ -1900,10 +1900,174 @@ export function activate(context: vscode.ExtensionContext) {
     const toolboxJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'toolbox.js')));
     const blocksJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'blocks.js')));
     const generatorsJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'generators.js')));
-    const appJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'app.js')));
+  const appJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'app.js')));
+  const autoBlocksJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'p5_autoblocks.js')));
+    const p5Js = webview.asWebviewUri(vscode.Uri.file(path.join(context.extensionPath, 'assets', 'p5.min.js')));
+
+    // Build a name->category map for p5 functions based on p5types/src folder structure
+    function buildP5CategoryMap(): Record<string, string> {
+      const map: Record<string, string> = {};
+      try {
+        const srcRoot = path.join(context.extensionPath, 'p5types', 'src');
+        const topFolders = [
+          'color','core','data','dom','events','image','io','math','typography','utilities','webgl'
+        ];
+        const labelForFolder: Record<string, string> = {
+          color: 'Color',
+          core: 'Core',
+          data: 'Data',
+          dom: 'DOM',
+          events: 'Events',
+          image: 'Image',
+          io: 'IO',
+          math: 'Math',
+          typography: 'Typography',
+          utilities: 'Utilities',
+          webgl: 'WebGL',
+        };
+
+        function parseP5InstanceMethodsFromDts(text: string): string[] {
+          const out = new Set<string>();
+          // narrow to interface p5InstanceExtensions block if present
+          const ifaceIdx = text.indexOf('interface p5InstanceExtensions');
+          if (ifaceIdx >= 0) {
+            const tail = text.slice(ifaceIdx);
+            // crude block extraction: from first '{' after interface to next '\n}\n' or end
+            const braceStart = tail.indexOf('{');
+            if (braceStart >= 0) {
+              const body = tail.slice(braceStart + 1);
+              // match lines like: name( ... ): p5;
+              const rx = /\n\s*([a-zA-Z_][\w]*)\s*\(/g;
+              let m: RegExpExecArray | null;
+              while ((m = rx.exec(body))) {
+                const name = m[1];
+                if (!name) continue;
+                // ignore obvious non-methods
+                if (name === 'constructor') continue;
+                out.add(name);
+              }
+            }
+          }
+          return Array.from(out);
+        }
+
+        function addFile(filePath: string, label: string) {
+          try {
+            const text = fs.readFileSync(filePath, 'utf8');
+            const names = parseP5InstanceMethodsFromDts(text);
+            names.forEach(n => { if (!map[n]) map[n] = label; });
+          } catch {}
+        }
+
+        topFolders.forEach(folder => {
+          const abs = path.join(srcRoot, folder);
+          if (!fs.existsSync(abs)) return;
+          const label = labelForFolder[folder] || folder;
+          const entries = fs.readdirSync(abs);
+          entries.forEach(entry => {
+            const full = path.join(abs, entry);
+            const stat = fs.statSync(full);
+            if (stat.isDirectory()) {
+              // Specialize some core subfolders to p5 reference top-level categories
+              let subLabel = label;
+              if (folder === 'core') {
+                if (entry.toLowerCase().includes('shape')) subLabel = 'Shape';
+                else if (entry.toLowerCase().includes('structure')) subLabel = 'Structure';
+                else if (entry.toLowerCase().includes('transform')) subLabel = 'Transform';
+                else if (entry.toLowerCase().includes('environment')) subLabel = 'Environment';
+                else if (entry.toLowerCase().includes('render')) subLabel = 'Rendering';
+                else if (entry.toLowerCase().includes('constants')) subLabel = 'Constants';
+              } else if (folder === 'webgl') {
+                subLabel = 'WebGL';
+              }
+              const subFiles = fs.readdirSync(full);
+              subFiles.forEach(f => {
+                if (f.endsWith('.d.ts')) addFile(path.join(full, f), subLabel);
+              });
+            } else if (entry.endsWith('.d.ts')) {
+              // direct .d.ts under folder
+              addFile(full, label);
+            }
+          });
+        });
+      } catch {}
+      return map;
+    }
+    const p5CategoryMap = buildP5CategoryMap();
+
+    // Build a name->param names map for p5 functions from p5types .d.ts
+    function buildP5ParamMap(): Record<string, string[]> {
+      const paramMap: Record<string, string[]> = {};
+      try {
+        const srcRoot = path.join(context.extensionPath, 'p5types', 'src');
+        const folders = [
+          'color','core','data','dom','events','image','io','math','typography','utilities','webgl'
+        ];
+        const dtsFiles: string[] = [];
+        function collectDts(dir: string) {
+          if (!fs.existsSync(dir)) return;
+          const entries = fs.readdirSync(dir);
+          entries.forEach((e) => {
+            const full = path.join(dir, e);
+            const stat = fs.statSync(full);
+            if (stat.isDirectory()) collectDts(full);
+            else if (e.endsWith('.d.ts')) dtsFiles.push(full);
+          });
+        }
+        folders.forEach(f => collectDts(path.join(srcRoot, f)));
+
+        const ifaceStart = /interface\s+p5InstanceExtensions\b/;
+        const sigRx = /\n\s*([a-zA-Z_][\w]*)\s*\(([^)]*)\)\s*:/g; // name(paramList):
+        dtsFiles.forEach(file => {
+          try {
+            const text = fs.readFileSync(file, 'utf8');
+            const idx = text.search(ifaceStart);
+            if (idx < 0) return;
+            const part = text.slice(idx);
+            const braceStart = part.indexOf('{');
+            if (braceStart < 0) return;
+            // take a window of text to avoid scanning entire file
+            const windowText = part.slice(braceStart + 1, part.indexOf('\n}', braceStart + 1) > 0 ? part.indexOf('\n}', braceStart + 1) : part.length);
+            let m: RegExpExecArray | null;
+            while ((m = sigRx.exec(windowText))) {
+              const name = m[1];
+              const paramsStr = m[2].trim();
+              if (!name) continue;
+              // Extract param names, drop types and modifiers
+              const params: string[] = [];
+              if (paramsStr.length > 0) {
+                paramsStr.split(',').forEach(raw => {
+                  let p = raw.trim();
+                  if (!p) return;
+                  // remove default value
+                  const eqIdx = p.indexOf('=');
+                  if (eqIdx >= 0) p = p.slice(0, eqIdx).trim();
+                  // param may be like '...args: any[]' or 'x?: number' or 'x: number'
+                  // take identifier before ':'
+                  const colonIdx = p.indexOf(':');
+                  if (colonIdx >= 0) p = p.slice(0, colonIdx).trim();
+                  // strip decorators
+                  p = p.replace(/^\.{3}/, ''); // ...rest
+                  p = p.replace(/\?$/, ''); // optional marker
+                  // ensure a sane label (avoid empty)
+                  if (p && /^[a-zA-Z_][\w]*$/.test(p)) params.push(p);
+                });
+              }
+              // choose the signature with the most params
+              const prev = paramMap[name];
+              if (!prev || (params && params.length > prev.length)) {
+                if (params && params.length) paramMap[name] = params;
+              }
+            }
+          } catch {}
+        });
+      } catch {}
+      return paramMap;
+    }
+    const p5ParamMap = buildP5ParamMap();
 
     // Allow scripts from unpkg for the example; allow our own scripts via nonce
-    const csp = `default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}' https:; font-src ${webview.cspSource} https:; connect-src https:`;
+  const csp = `default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}' https: 'unsafe-eval'; font-src ${webview.cspSource} https:; connect-src https:; media-src https: ${webview.cspSource}`;
 
     return `<!doctype html>
 <html>
@@ -1917,6 +2081,7 @@ export function activate(context: vscode.ExtensionContext) {
     <script nonce="${nonce}" src="https://unpkg.com/blockly/blocks_compressed.js"></script>
     <script nonce="${nonce}" src="https://unpkg.com/blockly/javascript_compressed.js"></script>
     <script nonce="${nonce}" src="https://unpkg.com/blockly/msg/en.js"></script>
+    <script nonce="${nonce}" src="${p5Js}"></script>
   </head>
   <body>
     <div id="pageContainer">
@@ -1927,9 +2092,16 @@ export function activate(context: vscode.ExtensionContext) {
       <div id="blocklyDiv"></div>
     </div>
 
-    <script nonce="${nonce}" src="${toolboxJs}"></script>
-    <script nonce="${nonce}" src="${blocksJs}"></script>
-    <script nonce="${nonce}" src="${generatorsJs}"></script>
+  <script nonce="${nonce}" src="${toolboxJs}"></script>
+  <script nonce="${nonce}" src="${blocksJs}"></script>
+  <script nonce="${nonce}" src="${generatorsJs}"></script>
+  <script nonce="${nonce}">
+    // Provide p5 function -> category map derived from p5types
+    window.P5_CATEGORY_MAP = ${JSON.stringify(p5CategoryMap)};
+    // Provide p5 function -> parameter names map from p5types
+    window.P5_PARAM_MAP = ${JSON.stringify(p5ParamMap)};
+  </script>
+  <script nonce="${nonce}" src="${autoBlocksJs}"></script>
     <script nonce="${nonce}" src="${appJs}"></script>
   </body>
   </html>`;
@@ -1950,7 +2122,8 @@ export function activate(context: vscode.ExtensionContext) {
           retainContextWhenHidden: true,
           localResourceRoots: [
             vscode.Uri.file(path.join(context.extensionPath, 'blockly_example')),
-            vscode.Uri.file(path.join(context.extensionPath, 'vendor'))
+            vscode.Uri.file(path.join(context.extensionPath, 'vendor')),
+            vscode.Uri.file(path.join(context.extensionPath, 'assets'))
           ]
         }
       );
