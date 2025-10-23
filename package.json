@@ -97,6 +97,12 @@
         "title": "Duplicate",
         "category": "File"
       }
+      ,
+      {
+        "command": "extension.decouple-blockly",
+        "title": "Decouple Blockly",
+        "category": "File"
+      }
     ],
     "menus": {
       "editor/title": [
@@ -128,9 +134,15 @@
       ],
       "explorer/context": [
         {
+          "command": "extension.decouple-blockly",
+          "when": "resourceExtname == .js || resourceExtname == .ts",
+          "group": "4_decouple@99"
+        },
+        {
           "command": "extension.duplicateFile",
           "group": "5_cutcopypaste@99"
-        }],
+        }
+      ],
       "editor/context": [
         {
           "command": "extension.openSelectedText",

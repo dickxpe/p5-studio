@@ -3,6 +3,7 @@ import * as vscode from 'vscode';
 import * as recast from 'recast';
 import * as osc from 'osc';
 import * as fs from 'fs';
+import * as crypto from 'crypto';
 import { exec } from 'child_process';
 import { writeFileSync } from 'fs';
 
@@ -1880,9 +1881,48 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // Blockly Webview: command and panel
-  let blocklyPanel: vscode.WebviewPanel | null = null;
   // Track which document opened which blockly panel (for multi-panel support)
-  const blocklyPanelForDocument = new WeakMap<vscode.TextDocument, vscode.WebviewPanel>();
+  const blocklyPanelForDocument = new Map<string, vscode.WebviewPanel>();
+  // When a blockly panel is open for a document, we keep track of outstanding extension-updates
+  const ignoreDocumentChangeForBlockly = new Set<string>();
+  const workspaceDebounceTimers = new Map<string, NodeJS.Timeout>();
+
+  function extractEmbeddedWorkspaceFromCode(code: string): string | null {
+    if (!code) return null;
+    try {
+      const m = code.match(/\/\*@BlocklyWorkspace\s*([\s\S]*?)\*\//);
+      if (m && m[1]) return m[1].trim();
+    } catch (e) { }
+    return null;
+  }
+
+  // Compute sidecar path for a given document file path.
+  // Sidecar files live in a sibling folder named `.blockly` next to the sketch.
+  // Each sidecar file will be named <original-base>.blockly (no .json extension).
+  function sidecarPathForFile(filePath: string) {
+    try {
+      const dir = path.dirname(filePath);
+      const base = path.basename(filePath);
+      const sidecarDir = path.join(dir, '.blockly');
+      const sidecarName = base + '.blockly';
+      return path.join(sidecarDir, sidecarName);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Remove the parent .blockly folder if it becomes empty after removing a sidecar
+  function removeSidecarDirIfEmpty(sidePath: string | null) {
+    try {
+      if (!sidePath) return;
+      const dir = path.dirname(sidePath);
+      if (!fs.existsSync(dir)) return;
+      const files = fs.readdirSync(dir);
+      if (files.length === 0) {
+        try { fs.rmdirSync(dir); } catch { /* ignore */ }
+      }
+    } catch (e) { /* ignore */ }
+  }
 
   function getNonce() {
     let text = '';
@@ -2071,71 +2111,79 @@ export function activate(context: vscode.ExtensionContext) {
     // Allow scripts from unpkg for the example; allow our own scripts via nonce
   const csp = `default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}' https: 'unsafe-eval'; font-src ${webview.cspSource} https:; connect-src https:; media-src https: ${webview.cspSource}`;
 
+    // Add a unique storage key for this panel (based on the document URI)
+    const storageKey = panel.title.startsWith('BLOCKLY: ')
+      ? 'blockly_' + encodeURIComponent(panel.title.slice(9))
+      : 'blockly_default';
     return `<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy" content="${csp}">
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Blockly</title>
-    <link rel="stylesheet" href="${indexCss}" />
-    <script nonce="${nonce}" src="https://unpkg.com/blockly/blockly_compressed.js"></script>
-    <script nonce="${nonce}" src="https://unpkg.com/blockly/blocks_compressed.js"></script>
-    <script nonce="${nonce}" src="https://unpkg.com/blockly/javascript_compressed.js"></script>
-    <script nonce="${nonce}" src="https://unpkg.com/blockly/msg/en.js"></script>
-    <script nonce="${nonce}" src="${p5Js}"></script>
-  </head>
-  <body>
-    <div id="pageContainer">
-      <div id="outputPane">
-        <pre id="generatedCode"><code></code></pre>
-        <div id="output"></div>
+  <html>
+    <head>
+      <meta charset="utf-8" />
+      <meta http-equiv="Content-Security-Policy" content="${csp}">
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>Blockly</title>
+      <link rel="stylesheet" href="${indexCss}" />
+      <script nonce="${nonce}" src="https://unpkg.com/blockly/blockly_compressed.js"></script>
+      <script nonce="${nonce}" src="https://unpkg.com/blockly/blocks_compressed.js"></script>
+      <script nonce="${nonce}" src="https://unpkg.com/blockly/javascript_compressed.js"></script>
+      <script nonce="${nonce}" src="https://unpkg.com/blockly/msg/en.js"></script>
+      <script nonce="${nonce}" src="${p5Js}"></script>
+    </head>
+    <body>
+      <div id="pageContainer">
+        <div id="outputPane">
+          <pre id="generatedCode"><code></code></pre>
+          <div id="output"></div>
+        </div>
+        <div id="blocklyDiv"></div>
       </div>
-      <div id="blocklyDiv"></div>
-    </div>
 
-  <script nonce="${nonce}" src="${toolboxJs}"></script>
-  <script nonce="${nonce}" src="${blocksJs}"></script>
-  <script nonce="${nonce}" src="${generatorsJs}"></script>
-  <script nonce="${nonce}">
-    // Provide p5 function -> category map derived from p5types
-    window.P5_CATEGORY_MAP = ${JSON.stringify(p5CategoryMap)};
-    // Provide p5 function -> parameter names map from p5types
-    window.P5_PARAM_MAP = ${JSON.stringify(p5ParamMap)};
-  </script>
-  <script nonce="${nonce}" src="${autoBlocksJs}"></script>
-    <script nonce="${nonce}" src="${appJs}"></script>
-  </body>
-  </html>`;
+    <script nonce="${nonce}" src="${toolboxJs}"></script>
+    <script nonce="${nonce}" src="${blocksJs}"></script>
+    <script nonce="${nonce}" src="${generatorsJs}"></script>
+    <script nonce="${nonce}">
+      window.P5_CATEGORY_MAP = ${JSON.stringify(p5CategoryMap)};
+      window.P5_PARAM_MAP = ${JSON.stringify(p5ParamMap)};
+      window.BLOCKLY_STORAGE_KEY = ${JSON.stringify(storageKey)};
+    </script>
+    <script nonce="${nonce}" src="${autoBlocksJs}"></script>
+      <script nonce="${nonce}" src="${appJs}"></script>
+    </body>
+    </html>`;
   }
 
   context.subscriptions.push(
 
 
     vscode.commands.registerCommand('extension.open-blockly', async () => {
-      if (blocklyPanel) {
-        blocklyPanel.reveal(vscode.ViewColumn.Active);
-        return;
-      }
-      // Store the originating editor
       const originatingEditor = vscode.window.activeTextEditor;
       if (!originatingEditor) {
         vscode.window.showWarningMessage('No active editor to open Blockly for.');
         return;
       }
       const doc = originatingEditor.document;
+      const docUri = doc.uri.toString();
       const text = doc.getText();
       const isEmpty = text.trim().length === 0;
-      const hasBlocklyTag = text.trimStart().startsWith('//@Blockly');
-      if (!isEmpty && !hasBlocklyTag) {
-        vscode.window.showInformationMessage('Blockly was not opened: The file must be empty or had to be created with blockly \n\r otherwise the contents would be overwritten.');
+      // Require a sidecar file to open Blockly (or allow opening for empty files).
+      const sidecar = sidecarPathForFile(doc.fileName);
+      const hasSidecar = !!(sidecar && fs.existsSync(sidecar));
+      if (!isEmpty && !hasSidecar) {
+        vscode.window.showInformationMessage('Blockly was not opened: The file must be empty or have a .blockly sidecar file to open.');
         return;
       }
 
+      // If a panel already exists for this document, reveal it
+      const existingPanel = blocklyPanelForDocument.get(docUri);
+      if (existingPanel) {
+        existingPanel.reveal(vscode.ViewColumn.Active);
+        return;
+      }
 
-      blocklyPanel = vscode.window.createWebviewPanel(
+      const scriptName = path.basename(doc.fileName);
+      const blocklyPanel = vscode.window.createWebviewPanel(
         'blocklyPanel',
-        'B5 Blockly',
+        `BLOCKLY: ${scriptName}`,
         { viewColumn: vscode.ViewColumn.Active, preserveFocus: true },
         {
           enableScripts: true,
@@ -2147,34 +2195,111 @@ export function activate(context: vscode.ExtensionContext) {
           ]
         }
       );
-      // Track the panel for the originating document
-      blocklyPanelForDocument.set(originatingEditor.document, blocklyPanel);
+      blocklyPanelForDocument.set(docUri, blocklyPanel);
+        // No longer block edits. Instead, we'll listen for document changes and, if the file
+        // contains an embedded workspace, forward it to the Blockly webview so the workspace
+        // can be restored/updated. See listener registration below.
       blocklyPanel.onDidDispose(() => {
-        // Remove from map if disposed
-        blocklyPanelForDocument.delete(originatingEditor.document);
-        blocklyPanel = null;
+        blocklyPanelForDocument.delete(docUri);
+          // nothing else to cleanup here
       });
       blocklyPanel.webview.html = getBlocklyHtml(blocklyPanel);
+        setTimeout(() => {
+          vscode.commands.executeCommand('workbench.action.moveEditorToBelowGroup');
+        }, 200);
 
-      // Move the panel to a new group below (bottom tab group)
-      setTimeout(() => {
-        vscode.commands.executeCommand('workbench.action.moveEditorToBelowGroup');
-      }, 200);
+        // After the webview is ready, prefer loading workspace from a sibling .blockly sidecar.
+        // If no sidecar exists, fall back to embedded workspace and migrate it to sidecar.
+        (async () => {
+          try {
+            const filePath = doc.fileName;
+            const sidecar = sidecarPathForFile(filePath);
+            let workspaceContent: string | null = null;
+            if (sidecar && fs.existsSync(sidecar)) {
+              try { workspaceContent = fs.readFileSync(sidecar, 'utf8'); } catch (e) { workspaceContent = null; }
+            }
+            if (!workspaceContent) {
+              const embedded = extractEmbeddedWorkspaceFromCode(text);
+              if (embedded) {
+                workspaceContent = embedded;
+                // Migrate: write sidecar directory and file
+                try {
+                  const sidecarDir = path.dirname(sidecar!);
+                  fs.mkdirSync(sidecarDir, { recursive: true });
+                  fs.writeFileSync(sidecar!, workspaceContent, 'utf8');
+                } catch (e) { /* ignore migration errors */ }
+              }
+            }
+            if (workspaceContent) {
+              setTimeout(() => {
+                try { blocklyPanel.webview.postMessage({ type: 'loadWorkspace', workspace: workspaceContent }); } catch (e) {}
+              }, 300);
+            }
+          } catch (e) { }
+        })();
 
-      // Listen for generated code from the webview and insert it into the originating editor
-      blocklyPanel.webview.onDidReceiveMessage(async msg => {
-        if (msg && msg.type === 'blocklyGeneratedCode' && typeof msg.code === 'string') {
-          if (originatingEditor && !originatingEditor.document.isClosed) {
-            const edit = new vscode.WorkspaceEdit();
-            const fullRange = new vscode.Range(
-              originatingEditor.document.positionAt(0),
-              originatingEditor.document.positionAt(originatingEditor.document.getText().length)
-            );
-            edit.replace(originatingEditor.document.uri, fullRange, msg.code);
-            await vscode.workspace.applyEdit(edit);
+        blocklyPanel.webview.onDidReceiveMessage(async msg => {
+    if (msg && msg.type === 'blocklyGeneratedCode' && typeof msg.code === 'string') {
+      // When the webview notifies it's finished loading the workspace (initialLoad),
+      // we should accept this export and persist it to the sketch and the sidecar.
+      // We previously ignored initialLoad to avoid accidental empty writes; the
+      // safety checks below ensure we only persist meaningful workspaces/code.
+              // Parse and validate workspace: only proceed when the workspace contains
+              // actual blocks or the generated code is non-empty. This avoids overwriting
+              // the user's sketch with empty code when the webview posts an empty workspace
+              // during initialization.
+              let wsObj: any = null;
+              try {
+                if (msg.workspace && typeof msg.workspace === 'string') wsObj = JSON.parse(msg.workspace);
+              } catch (e) { wsObj = null; }
+              const workspaceHasBlocks = !!(wsObj && Array.isArray(wsObj.blocks) && wsObj.blocks.length > 0);
+              const codeNonEmpty = msg.code.trim().length > 0;
+              if (!workspaceHasBlocks && !codeNonEmpty) {
+                // Nothing meaningful to persist
+                return;
+              }
+              if (originatingEditor && !originatingEditor.document.isClosed) {
+              try {
+                const filePath = originatingEditor.document.fileName;
+                const sidecar = sidecarPathForFile(filePath);
+                // Write workspace to sidecar (create .blockly folder if necessary)
+                  if (sidecar && msg.workspace && typeof msg.workspace === 'string') {
+                  try {
+                    const sidecarDir = path.dirname(sidecar);
+                    fs.mkdirSync(sidecarDir, { recursive: true });
+                      // Prefer writing a pretty JSON representation if it's a valid object
+                      try {
+                        const pretty = wsObj ? JSON.stringify(wsObj, null, 2) : msg.workspace;
+                        fs.writeFileSync(sidecar, pretty, 'utf8');
+                      } catch (e) {
+                        fs.writeFileSync(sidecar, msg.workspace, 'utf8');
+                      }
+                  } catch (e) {
+                    // ignore
+                  }
+                }
+                // Write generated code to file WITHOUT embedded workspace comment
+                let finalCode = msg.code.replace(/\/\*@BlocklyWorkspace[\s\S]*?\*\//g, '');
+                if (!finalCode.endsWith('\n')) finalCode = finalCode + '\n';
+                // Apply edit but ignore the resulting change event to avoid loops
+                ignoreDocumentChangeForBlockly.add(docUri);
+                const edit = new vscode.WorkspaceEdit();
+                const fullRange = new vscode.Range(
+                  originatingEditor.document.positionAt(0),
+                  originatingEditor.document.positionAt(originatingEditor.document.getText().length)
+                );
+                edit.replace(originatingEditor.document.uri, fullRange, finalCode);
+                const ok = await vscode.workspace.applyEdit(edit);
+                if (ok) {
+                  try {
+                    await originatingEditor.document.save();
+                  } catch (e) { /* ignore save errors */ }
+                }
+                setTimeout(() => ignoreDocumentChangeForBlockly.delete(docUri), 300);
+              } catch (e) { }
+            }
           }
-        }
-      });
+        });
     })
   );
 
@@ -2201,11 +2326,16 @@ export function activate(context: vscode.ExtensionContext) {
     updateJsOrTsContext(editor);
     if (!editor) return;
     const docUri = editor.document.uri.toString();
+    // Focus the corresponding Blockly panel if it exists
+    const blocklyPanel = blocklyPanelForDocument.get(docUri);
+    if (blocklyPanel) {
+      blocklyPanel.reveal(blocklyPanel.viewColumn, true);
+    }
+    if (!editor) return;
     const panel = webviewPanelMap.get(docUri);
     if (panel) {
       panel.reveal(panel.viewColumn, true);
       activeP5Panel = panel;
-      
       vscode.commands.executeCommand('setContext', 'hasP5Webview', true);
     } else {
       vscode.commands.executeCommand('setContext', 'hasP5Webview', false);
@@ -2214,9 +2344,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Focus the output channel for the active sketch
     const channel = outputChannelMap.get(docUri);
     if (channel) showAndTrackOutputChannel(channel);
-
-    // --- Move editor to left column if not already there, but never for webview panels ---
-    // Only move if the document is a file, is the currently active editor, and NOT already open in the left column
+    // ...existing code for moving editor to left column and linting...
     if (
       editor.viewColumn &&
       editor.viewColumn !== vscode.ViewColumn.One &&
@@ -2229,7 +2357,6 @@ export function activate(context: vscode.ExtensionContext) {
       );
       if (!alreadyOpenInLeft) {
         vscode.window.showTextDocument(editor.document, vscode.ViewColumn.One, false).then(() => {
-          // Close all other editors for this file except the one in the left column
           const closePromises: Thenable<any>[] = [];
           vscode.window.visibleTextEditors.forEach(e => {
             if (
@@ -2243,14 +2370,13 @@ export function activate(context: vscode.ExtensionContext) {
               );
             }
           });
+          
           Promise.all(closePromises).then(() => {
-            // After closing, focus the left column editor
             vscode.window.showTextDocument(editor.document, vscode.ViewColumn.One, false);
           });
         });
       }
     }
-    // Lint on editor switch
     lintActiveEditor();
   });
 
@@ -2260,7 +2386,76 @@ export function activate(context: vscode.ExtensionContext) {
     }
     // Lint on text change
     lintSemicolons(e.document);
+    // If this document has a Blockly panel open, forward any embedded workspace to the webview
+    try {
+      const docUri = e.document.uri.toString();
+      const panel = blocklyPanelForDocument.get(docUri);
+      if (panel) {
+        if (ignoreDocumentChangeForBlockly.has(docUri)) return;
+        if (workspaceDebounceTimers.has(docUri)) clearTimeout(workspaceDebounceTimers.get(docUri)!);
+        workspaceDebounceTimers.set(docUri, setTimeout(() => {
+          (async () => {
+            try {
+              const txt = e.document.getText();
+              const filePath = e.document.fileName;
+              const sidecar = sidecarPathForFile(filePath);
+              let workspaceContent: string | null = null;
+              if (sidecar && fs.existsSync(sidecar)) {
+                try { workspaceContent = fs.readFileSync(sidecar, 'utf8'); } catch (e) { workspaceContent = null; }
+              }
+              if (!workspaceContent) {
+                const embedded = extractEmbeddedWorkspaceFromCode(txt);
+                if (embedded) {
+                  workspaceContent = embedded;
+                  // Migrate to sidecar for future stability
+                  try {
+                    const sidecarDir = path.dirname(sidecar!);
+                    fs.mkdirSync(sidecarDir, { recursive: true });
+                    fs.writeFileSync(sidecar!, workspaceContent, 'utf8');
+                  } catch (e) { /* ignore */ }
+                }
+              }
+              if (workspaceContent) {
+                panel.webview.postMessage({ type: 'loadWorkspace', workspace: workspaceContent });
+              }
+            } catch (err) {}
+          })();
+        }, 350));
+      }
+    } catch (err) { }
   });
+
+  // Keep sidecar files in sync when files are renamed or deleted
+  context.subscriptions.push(vscode.workspace.onDidRenameFiles(async ev => {
+    try {
+      for (const r of ev.files) {
+        const oldFs = r.oldUri.fsPath;
+        const newFs = r.newUri.fsPath;
+        const oldSide = sidecarPathForFile(oldFs);
+        const newSide = sidecarPathForFile(newFs);
+        if (oldSide && fs.existsSync(oldSide)) {
+          try {
+            const newDir = path.dirname(newSide!);
+            fs.mkdirSync(newDir, { recursive: true });
+            fs.copyFileSync(oldSide, newSide!);
+            try { fs.unlinkSync(oldSide); removeSidecarDirIfEmpty(oldSide); } catch {}
+          } catch (e) { /* ignore */ }
+        }
+      }
+    } catch (e) { }
+  }));
+
+  context.subscriptions.push(vscode.workspace.onDidDeleteFiles(async ev => {
+    try {
+      for (const u of ev.files) {
+        const fsPath = u.fsPath;
+        const sc = sidecarPathForFile(fsPath);
+        if (sc && fs.existsSync(sc)) {
+          try { fs.unlinkSync(sc); removeSidecarDirIfEmpty(sc); } catch {}
+        }
+      }
+    } catch (e) { }
+  }));
   vscode.workspace.onDidSaveTextDocument(doc => {
     if (doc === vscode.window.activeTextEditor?.document) {
       updateP5Context(vscode.window.activeTextEditor);
@@ -2276,7 +2471,7 @@ export function activate(context: vscode.ExtensionContext) {
       semicolonDiagnostics.delete(doc.uri);
       // If the closed document is the one that opened the blocklyPanel, close the panel
       // If a blockly panel was opened for this document, close it
-      const panel = blocklyPanelForDocument.get(doc);
+      const panel = blocklyPanelForDocument.get(doc.uri.toString());
       if (panel) {
         panel.dispose();
       }
@@ -2489,10 +2684,38 @@ export function activate(context: vscode.ExtensionContext) {
         if (fs.existsSync(includeDir) && fs.statSync(includeDir).isDirectory()) {
           localResourceRoots.push(vscode.Uri.file(includeDir));
         }
+        // Ensure the originating editor has focus so the new group we create is
+        // positioned relative to it.
+        const originalColumn = typeof editor.viewColumn === 'number' ? (editor.viewColumn as number) : undefined;
+        try {
+          await vscode.window.showTextDocument(editor.document, editor.viewColumn || vscode.ViewColumn.One, false);
+        } catch (e) { /* ignore */ }
+
+        // Explicitly create a new editor group to the right. Prefer the
+        // dedicated command, fall back to split editor if it's not available.
+        try {
+          await vscode.commands.executeCommand('workbench.action.newGroupRight');
+        } catch (e) {
+          try {
+            await vscode.commands.executeCommand('workbench.action.splitEditorRight');
+          } catch (e) { /* ignore */ }
+        }
+
+        // Compute target column: prefer a numeric column to ensure it opens to the right
+        // of the originating editor. If we have the original column, use original+1.
+        let targetColumn: vscode.ViewColumn = vscode.ViewColumn.Beside;
+        try {
+          if (typeof originalColumn === 'number') {
+            const numeric = originalColumn + 1;
+            const capped = Math.min(Math.max(1, numeric), 9);
+            targetColumn = capped as vscode.ViewColumn;
+          }
+        } catch (e) { /* ignore and use Beside */ }
+
         panel = vscode.window.createWebviewPanel(
           'extension.live-p5',
           'LIVE: ' + path.basename(editor.document.fileName),
-          vscode.ViewColumn.Two,
+          targetColumn,
           {
             enableScripts: true,
             localResourceRoots,
@@ -3180,6 +3403,17 @@ text("P5", 50, 52);`;
         if (!newName) return;
         const newPath = path.join(dir, newName);
         await vscode.workspace.fs.copy(fileUri, vscode.Uri.file(newPath));
+        // If a sidecar exists for the source file, copy it for the duplicate
+        try {
+          const srcSide = sidecarPathForFile(fileUri.fsPath);
+          if (srcSide && fs.existsSync(srcSide)) {
+            const destSide = sidecarPathForFile(newPath);
+            if (destSide) {
+              fs.mkdirSync(path.dirname(destSide), { recursive: true });
+              fs.copyFileSync(srcSide, destSide);
+            }
+          }
+        } catch (e) { /* ignore */ }
         // Optionally open the new file
         const doc = await vscode.workspace.openTextDocument(newPath);
         await vscode.window.showTextDocument(doc, { preview: false });
@@ -3188,6 +3422,92 @@ text("P5", 50, 52);`;
       }
     })
   );
+
+  // Decouple Blockly: remove the sidecar for a file after user confirmation
+  context.subscriptions.push(
+    vscode.commands.registerCommand('extension.decouple-blockly', async (fileUri: vscode.Uri) => {
+      try {
+        // If not invoked from context menu, prompt for file
+        if (!fileUri) {
+          const picked = await vscode.window.showOpenDialog({
+            canSelectFiles: true,
+            canSelectFolders: false,
+            canSelectMany: false,
+            openLabel: 'Select file to decouple from Blockly'
+          });
+          if (!picked || picked.length === 0) return;
+          fileUri = picked[0];
+        }
+        const side = sidecarPathForFile(fileUri.fsPath);
+        if (!side || !fs.existsSync(side)) {
+          vscode.window.showInformationMessage('No Blockly workspace sidecar found for this file.');
+          return;
+        }
+        const confirm = await vscode.window.showWarningMessage(
+          `Delete Blockly workspace sidecar for '${path.basename(fileUri.fsPath)}'?`,
+          { modal: true },
+          'Delete'
+        );
+        if (confirm === 'Delete') {
+          try {
+            fs.unlinkSync(side);
+            try { removeSidecarDirIfEmpty(side); } catch {}
+            vscode.window.showInformationMessage('Blockly workspace decoupled (sidecar deleted).');
+          } catch (e: any) {
+            vscode.window.showErrorMessage('Failed to delete sidecar: ' + (e.message || e));
+          }
+        }
+      } catch (e: any) {
+        vscode.window.showErrorMessage('Failed to decouple Blockly: ' + (e.message || e));
+      }
+    })
+  );
+
+  // Best-effort: when files are created via external copy/paste operations, try to
+  // detect if they are duplicates of an existing file and copy its sidecar.
+  // We do this by computing a content hash for the created file and comparing it
+  // with candidate workspace files (limited to common script extensions) to find
+  // an exact match. If found, copy the matching file's sidecar.
+  context.subscriptions.push(vscode.workspace.onDidCreateFiles(async ev => {
+    try {
+      for (const created of ev.files) {
+        const createdFs = created.fsPath;
+        let createdBuffer: Buffer | null = null;
+        try { createdBuffer = fs.readFileSync(createdFs); } catch { createdBuffer = null; }
+        if (!createdBuffer) continue;
+        const hash = crypto.createHash('sha1').update(createdBuffer).digest('hex');
+        // Search workspace for candidate script files (js/ts/jsx/tsx)
+        const patterns = ['**/*.js', '**/*.ts', '**/*.jsx', '**/*.tsx'];
+        let candidates: vscode.Uri[] = [];
+        for (const p of patterns) {
+          try {
+            const found = await vscode.workspace.findFiles(p, '**/.blockly/**', 200);
+            candidates = candidates.concat(found);
+          } catch { }
+        }
+        // Compare hashes with candidates
+        for (const cand of candidates) {
+          try {
+            const candFs = cand.fsPath;
+            if (candFs === createdFs) continue;
+            const candBuffer = fs.readFileSync(candFs);
+            const candHash = crypto.createHash('sha1').update(candBuffer).digest('hex');
+            if (candHash === hash) {
+              const srcSide = sidecarPathForFile(candFs);
+              const destSide = sidecarPathForFile(createdFs);
+              if (srcSide && fs.existsSync(srcSide) && destSide) {
+                try {
+                  fs.mkdirSync(path.dirname(destSide), { recursive: true });
+                  fs.copyFileSync(srcSide, destSide);
+                } catch { }
+              }
+              break; // done for this created file
+            }
+          } catch { }
+        }
+      }
+    } catch (e) { }
+  }));
 }
 
 // Helper: Wrap code in setup() if no setup/draw present
