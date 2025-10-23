@@ -2108,15 +2108,18 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('extension.open-blockly', () => {
+
+    vscode.commands.registerCommand('extension.open-blockly', async () => {
       if (blocklyPanel) {
-        blocklyPanel.reveal(vscode.ViewColumn.Two);
+        blocklyPanel.reveal(vscode.ViewColumn.Active);
         return;
       }
+      // Store the originating editor
+      const originatingEditor = vscode.window.activeTextEditor;
       blocklyPanel = vscode.window.createWebviewPanel(
         'blocklyPanel',
         'B5 Blockly',
-        { viewColumn: vscode.ViewColumn.Two, preserveFocus: true },
+        { viewColumn: vscode.ViewColumn.Active, preserveFocus: true },
         {
           enableScripts: true,
           retainContextWhenHidden: true,
@@ -2129,6 +2132,26 @@ export function activate(context: vscode.ExtensionContext) {
       );
       blocklyPanel.onDidDispose(() => { blocklyPanel = null; });
       blocklyPanel.webview.html = getBlocklyHtml(blocklyPanel);
+
+      // Move the panel to a new group below (bottom tab group)
+      setTimeout(() => {
+        vscode.commands.executeCommand('workbench.action.moveEditorToBelowGroup');
+      }, 200);
+
+      // Listen for generated code from the webview and insert it into the originating editor
+      blocklyPanel.webview.onDidReceiveMessage(async msg => {
+        if (msg && msg.type === 'blocklyGeneratedCode' && typeof msg.code === 'string') {
+          if (originatingEditor && !originatingEditor.document.isClosed) {
+            const edit = new vscode.WorkspaceEdit();
+            const fullRange = new vscode.Range(
+              originatingEditor.document.positionAt(0),
+              originatingEditor.document.positionAt(originatingEditor.document.getText().length)
+            );
+            edit.replace(originatingEditor.document.uri, fullRange, msg.code);
+            await vscode.workspace.applyEdit(edit);
+          }
+        }
+      });
     })
   );
 

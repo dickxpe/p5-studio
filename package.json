@@ -43,7 +43,11 @@
       },
       {
         "command": "extension.open-blockly",
-        "title": "B5"
+        "title": "B5",
+         "icon": {
+          "light": "images/blockly.png",
+          "dark": "images/blockly.png"
+        }
       },
       {
         "command": "extension.reload-p5-sketch",

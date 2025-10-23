@@ -3,10 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-(function(){
-  const codeEl = document.querySelector('#generatedCode code');
-  const outputEl = document.getElementById('output');
 
+(function(){
   const ws = Blockly.inject('blocklyDiv', {
     toolbox: window.toolbox,
     media: 'https://unpkg.com/blockly/media/',
@@ -35,22 +33,37 @@
     }
   }
 
-  function runCode(){
-    const code = javascript.javascriptGenerator.workspaceToCode(ws);
-    codeEl.textContent = code;
-    outputEl.innerHTML = '';
-    // Try to remove previous p5 sketch/canvas if any
-    try { if (typeof remove === 'function') remove(); } catch(_) {}
-    try { document.querySelectorAll('canvas').forEach(c => c.remove()); } catch(_) {}
-    try { eval(code); } catch(e) { console.error(e); }
+  load(ws);
+
+  // Helper to send code to VS Code extension
+  function postCodeToExtension(code) {
+    if (window.vscode && typeof window.vscode.postMessage === 'function') {
+      window.vscode.postMessage({ type: 'blocklyGeneratedCode', code });
+    }
   }
 
-  load(ws);
-  runCode();
+  // Try to acquire VS Code API
+  if (!window.vscode && typeof acquireVsCodeApi === 'function') {
+    window.vscode = acquireVsCodeApi();
+  }
 
-  ws.addChangeListener((e) => { if (!e.isUiEvent) save(ws); });
+  function getGeneratedCode() {
+    return javascript.javascriptGenerator.workspaceToCode(ws);
+  }
+
+  // Send code to extension on every change
   ws.addChangeListener((e) => {
-    if (e.isUiEvent || e.type === Blockly.Events.FINISHED_LOADING || ws.isDragging()) return;
-    runCode();
+    if (!e.isUiEvent && e.type !== Blockly.Events.FINISHED_LOADING && !ws.isDragging()) {
+      const code = getGeneratedCode();
+      postCodeToExtension(code);
+    }
+    if (!e.isUiEvent) save(ws);
   });
+
+  // Send initial code after load
+  setTimeout(() => {
+    const code = getGeneratedCode();
+    postCodeToExtension(code);
+  }, 100);
+
 })();
