@@ -3,7 +3,7 @@
 A standalone, CDN-only version of the Blockly "sample-app" that generates JavaScript and updates the page. No bundler or dev server is required.
 
 - Loads Blockly from a CDN
-- Custom block `add_text` and its JavaScript generator
+- Custom block `output` and its JavaScript generator
 - Workspace state persisted to `localStorage`
 - Pure static assets, easy to host anywhere
 

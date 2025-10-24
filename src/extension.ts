@@ -1936,7 +1936,7 @@ export function activate(context: vscode.ExtensionContext) {
   function getBlocklyHtml(panel: vscode.WebviewPanel): string {
     const webview = panel.webview;
     const nonce = getNonce();
-    const exampleRoot = vscode.Uri.file(path.join(context.extensionPath, 'blockly_example'));
+  const exampleRoot = vscode.Uri.file(path.join(context.extensionPath, 'blockly'));
     const exampleRootUri = webview.asWebviewUri(exampleRoot);
     const indexCss = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'index.css')));
     const toolboxJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'toolbox.js')));
@@ -2115,6 +2115,14 @@ export function activate(context: vscode.ExtensionContext) {
     const storageKey = panel.title.startsWith('BLOCKLY: ')
       ? 'blockly_' + encodeURIComponent(panel.title.slice(9))
       : 'blockly_default';
+
+    // Read the user's configured blockly theme and pass it into the webview
+    let configuredBlocklyTheme = 'dark';
+    try {
+      const cfg = vscode.workspace.getConfiguration('liveP5');
+      const t = cfg.get<string>('blocklyTheme');
+      if (t) configuredBlocklyTheme = t;
+    } catch (e) { /* ignore */ }
     return `<!doctype html>
   <html>
     <head>
@@ -2142,9 +2150,10 @@ export function activate(context: vscode.ExtensionContext) {
     <script nonce="${nonce}" src="${blocksJs}"></script>
     <script nonce="${nonce}" src="${generatorsJs}"></script>
     <script nonce="${nonce}">
-      window.P5_CATEGORY_MAP = ${JSON.stringify(p5CategoryMap)};
-      window.P5_PARAM_MAP = ${JSON.stringify(p5ParamMap)};
-      window.BLOCKLY_STORAGE_KEY = ${JSON.stringify(storageKey)};
+  window.P5_CATEGORY_MAP = ${JSON.stringify(p5CategoryMap)};
+  window.P5_PARAM_MAP = ${JSON.stringify(p5ParamMap)};
+  window.BLOCKLY_STORAGE_KEY = ${JSON.stringify(storageKey)};
+  window.BLOCKLY_THEME = ${JSON.stringify(configuredBlocklyTheme)};
     </script>
     <script nonce="${nonce}" src="${autoBlocksJs}"></script>
       <script nonce="${nonce}" src="${appJs}"></script>
@@ -2189,7 +2198,7 @@ export function activate(context: vscode.ExtensionContext) {
           enableScripts: true,
           retainContextWhenHidden: true,
           localResourceRoots: [
-            vscode.Uri.file(path.join(context.extensionPath, 'blockly_example')),
+            vscode.Uri.file(path.join(context.extensionPath, 'blockly')),
             vscode.Uri.file(path.join(context.extensionPath, 'vendor')),
             vscode.Uri.file(path.join(context.extensionPath, 'assets'))
           ]
@@ -2204,6 +2213,16 @@ export function activate(context: vscode.ExtensionContext) {
           // nothing else to cleanup here
       });
       blocklyPanel.webview.html = getBlocklyHtml(blocklyPanel);
+          // After setting HTML, send the resolved theme to the webview so it can apply
+          try {
+            const cfg = vscode.workspace.getConfiguration('liveP5');
+            const t = cfg.get<string>('blocklyTheme', 'dark');
+            let resolved = t;
+            if (t === 'auto') {
+              resolved = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark ? 'dark' : 'light';
+            }
+            try { blocklyPanel.webview.postMessage({ type: 'setBlocklyTheme', theme: resolved }); } catch (e) { }
+          } catch (e) { }
         setTimeout(() => {
           vscode.commands.executeCommand('workbench.action.moveEditorToBelowGroup');
         }, 200);
@@ -2272,6 +2291,7 @@ export function activate(context: vscode.ExtensionContext) {
                         const pretty = wsObj ? JSON.stringify(wsObj, null, 2) : msg.workspace;
                         fs.writeFileSync(sidecar, pretty, 'utf8');
                       } catch (e) {
+
                         fs.writeFileSync(sidecar, msg.workspace, 'utf8');
                       }
                   } catch (e) {
@@ -2700,6 +2720,15 @@ export function activate(context: vscode.ExtensionContext) {
             await vscode.commands.executeCommand('workbench.action.splitEditorRight');
           } catch (e) { /* ignore */ }
         }
+        // Give VS Code a moment to create and focus the new group, then ensure
+        // focus is in the right-hand group before creating the webview. This
+        // helps avoid the panel opening in the wrong group when other webviews
+        // are present in the workspace (observed behavior on some layouts).
+        try {
+          await vscode.commands.executeCommand('workbench.action.focusRightGroup');
+          // Small delay to allow the focus change to settle
+          await new Promise(resolve => setTimeout(resolve, 120));
+        } catch (e) { /* ignore */ }
 
         // Compute target column: prefer a numeric column to ensure it opens to the right
         // of the originating editor. If we have the original column, use original+1.
@@ -3245,7 +3274,37 @@ text("P5", 50, 52);`;
         panel.webview.postMessage({ type: 'updateOverlayFontSize', value: newSize });
       }
     }
+
+    // Update Blockly theme when setting changes
+    if (e.affectsConfiguration('liveP5.blocklyTheme')) {
+      try {
+        const cfg = vscode.workspace.getConfiguration('liveP5');
+        const t = cfg.get<string>('blocklyTheme', 'dark');
+        let resolved = t;
+        if (t === 'auto') {
+          resolved = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark ? 'dark' : 'light';
+        }
+        for (const [, panel] of blocklyPanelForDocument.entries()) {
+          try { panel.webview.postMessage({ type: 'setBlocklyTheme', theme: resolved }); } catch (e) { }
+        }
+      } catch (e) { }
+    }
   });
+
+  // If the user switches the VS Code color theme and the blocklyTheme config
+  // is 'auto', update Blockly panels to match.
+  context.subscriptions.push(vscode.window.onDidChangeActiveColorTheme(theme => {
+    try {
+      const cfg = vscode.workspace.getConfiguration('liveP5');
+      const t = cfg.get<string>('blocklyTheme', 'dark');
+      if (t === 'auto') {
+  const resolved = theme.kind === vscode.ColorThemeKind.Dark ? 'dark' : 'light';
+        for (const [, panel] of blocklyPanelForDocument.entries()) {
+          try { panel.webview.postMessage({ type: 'setBlocklyTheme', theme: resolved }); } catch (e) { }
+        }
+      }
+    } catch (e) { }
+  }));
 
   vscode.workspace.onDidCloseTextDocument(doc => {
     const docUri = doc.uri.toString();

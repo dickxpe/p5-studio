@@ -257,6 +257,14 @@
           "description": "Enable Blockly integration: shows the Blockly button (B5) and the Decouple Blockly context menu entry.",
           "order": 14
         }
+        ,
+        "liveP5.blocklyTheme": {
+          "type": "string",
+          "enum": ["dark", "light", "auto"],
+          "default": "dark",
+          "description": "Blockly theme to use in the Blockly panel. 'auto' currently resolves to 'dark'.",
+          "order": 15
+        }
       }
     },
     "keybindings": [
