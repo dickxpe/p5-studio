@@ -114,7 +114,7 @@
         {
           "command": "extension.open-blockly",
           "group": "navigation",
-          "when": "isP5js && (editorLangId == javascript || editorLangId == typescript)"
+          "when": "config.liveP5.enableBlockly == true && isP5js && (editorLangId == javascript || editorLangId == typescript)"
         },
         {
           "command": "extension.reload-p5-sketch",
@@ -135,8 +135,8 @@
       "explorer/context": [
         {
           "command": "extension.decouple-blockly",
-          "when": "resourceExtname == .js || resourceExtname == .ts",
-          "group": "4_decouple@99"
+          "when": "config.liveP5.enableBlockly == true && (resourceExtname == .js || resourceExtname == .ts)",
+          "group": "5_decouple@99"
         },
         {
           "command": "extension.duplicateFile",
@@ -249,6 +249,13 @@
           "default": true,
           "description": "If enabled, only one P5 webpanel can be open at a time. Opening a new panel closes all others.",
           "order": 8
+        }
+        ,
+        "liveP5.enableBlockly": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Blockly integration: shows the Blockly button (B5) and the Decouple Blockly context menu entry.",
+          "order": 14
         }
       }
     },
