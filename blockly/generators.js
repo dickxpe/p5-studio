@@ -7,19 +7,8 @@
   const gen = javascript.javascriptGenerator;
   const Order = gen.Order || javascript.Order;
 
-  gen.forBlock['add_text'] = function(block, generator) {
-    const text = generator.valueToCode(block, 'TEXT', Order ? Order.NONE : gen.ORDER_NONE) || "''";
-    const addText = generator.provideFunction_(
-      'addText',
-      `function ${generator.FUNCTION_NAME_PLACEHOLDER_}(text) {
-  const outputDiv = document.getElementById('output');
-  const textEl = document.createElement('p');
-  textEl.innerText = text;
-  outputDiv.appendChild(textEl);
-}`,
-    );
-    return `${addText}(${text});\n`;
-  };
+  gen.forBlock['output']         = (b,g)=> `output(${v(g,b,'TEXT')});\n`;
+
 
   // p5: structure
   gen.forBlock['p5_setup'] = function(block, generator){

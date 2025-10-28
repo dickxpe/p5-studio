@@ -75,6 +75,19 @@ body.light-theme .blocklyScrollbarHandle {
   fill: rgba(0,0,0,0.06) !important;
 }
 
+/* Make the flyout (blocks bar) block bodies use the Values category color to match the category
+   when the flyout is visible. This is a general rule for the flyout; if you need different colors
+   per-category we can make this dynamic via JS when the category is selected. */
+body.light-theme .blocklyFlyout .blocklyBlockBackground {
+  fill: #ffd180 !important; /* same as Values category colour */
+}
+body.light-theme .blocklyFlyout .blocklyPath {
+  stroke: rgba(0,0,0,0.12) !important;
+}
+body.light-theme .blocklyFlyout .blocklyText {
+  fill: #000 !important;
+}
+
 body.light-theme .blocklyToolboxDiv::-webkit-scrollbar,
 body.light-theme .blocklyTreeDiv::-webkit-scrollbar,
 body.light-theme .blocklyFlyout::-webkit-scrollbar {

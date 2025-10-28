@@ -7,6 +7,45 @@
   window.toolbox = {
     kind: 'categoryToolbox',
     contents: [
+      {
+        kind: 'category',
+        name: 'p5 Events',
+        colour: '#FF8A65',
+        contents: [
+          { kind: 'block', type: 'p5_setup' },
+          { kind: 'block', type: 'p5_draw' },
+          { kind: 'block', type: 'p5_mouseMoved' },
+          { kind: 'block', type: 'p5_mouseDragged' },
+          { kind: 'block', type: 'p5_mousePressed' },
+          { kind: 'block', type: 'p5_mouseReleased' },
+          { kind: 'block', type: 'p5_mouseClicked' },
+          { kind: 'block', type: 'p5_doubleClicked' },
+          { kind: 'block', type: 'p5_mouseWheel' },
+          { kind: 'block', type: 'p5_keyPressed' },
+          { kind: 'block', type: 'p5_keyReleased' },
+          { kind: 'block', type: 'p5_keyTyped' },
+          { kind: 'block', type: 'p5_windowResized' },
+          { kind: 'block', type: 'p5_preload' },
+          { kind: 'block', type: 'p5_touchStarted' },
+          { kind: 'block', type: 'p5_touchMoved' },
+          { kind: 'block', type: 'p5_touchEnded' },
+          { kind: 'block', type: 'p5_deviceMoved' },
+          { kind: 'block', type: 'p5_deviceTurned' },
+          { kind: 'block', type: 'p5_deviceShaken' },
+          { kind: 'block', type: 'p5_resized' },
+          { kind: 'block', type: 'p5_focused' },
+          { kind: 'block', type: 'p5_unfocused' },
+          { kind: 'block', type: 'p5_blurred' },
+          { kind: 'block', type: 'p5_entered' },
+          { kind: 'block', type: 'p5_exited' }
+        ]
+      },
+      {
+        kind: 'category',
+        name: 'p5 Quickstart',
+        categorystyle: 'value_category',
+        contents: [] // Will be filled dynamically in app.js
+      },
       // {
       //   kind: 'category',
       //   name: 'p5.js',
@@ -124,7 +163,6 @@
           {kind: 'block', type: 'text_count', inputs: {SUB: {shadow: {type: 'text'}}, TEXT: {shadow: {type: 'text'}}}},
           {kind: 'block', type: 'text_replace', inputs: {FROM: {shadow: {type: 'text'}}, TO: {shadow: {type: 'text'}}, TEXT: {shadow: {type: 'text'}}}},
           {kind: 'block', type: 'text_reverse', inputs: {TEXT: {shadow: {type: 'text'}}}},
-        
         ],
       },
       {
@@ -147,7 +185,7 @@
         ],
       },
       {kind: 'sep'},
-        {kind: 'category', name: 'Values', categorystyle: 'value__category',contents: [
+        {kind: 'category', name: 'Values', categorystyle: 'value_category', contents: [
           {kind: 'block', type: 'math_number', fields: {NUM: 123}},
             {kind: 'block', type: 'text'},
              {kind: 'block', type: 'logic_boolean'}
@@ -155,7 +193,10 @@
         },
       {kind: 'category', name: 'Variables', categorystyle: 'variable_category', custom: 'VARIABLE'},
       {kind: 'category', name: 'Functions', categorystyle: 'procedure_category', custom: 'PROCEDURE'},
-        {kind: 'category', name: 'Debug', categorystyle: 'debug_category'},
+        {kind: 'category', name: 'Debug', categorystyle: 'debug_category', contents: [
+                {kind: 'block', type: 'output', inputs: {TEXT: {shadow: {type: 'text', fields: {TEXT: 'abc'}}}}},
+        ]
+        },
     ],
   };
 })();

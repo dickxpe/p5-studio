@@ -3,6 +3,77 @@
  * Enumerates a temporary p5 instance and creates blocks: p5_auto_<name>
  */
 (function(){
+  // --- Always register setup and draw blocks ---
+  if (typeof Blockly !== 'undefined' && Blockly.Blocks) {
+    // List of common p5 event/lifecycle functions to add as blocks
+    const p5Events = [
+      'setup', 'draw',
+      'mouseMoved', 'mouseDragged', 'mousePressed', 'mouseReleased', 'mouseClicked',
+      'doubleClicked', 'mouseWheel',
+      'keyPressed', 'keyReleased', 'keyTyped',
+      'windowResized', 'preload', 'touchStarted', 'touchMoved', 'touchEnded',
+      'deviceMoved', 'deviceTurned', 'deviceShaken',
+      'resized', 'focused', 'unfocused', 'blurred', 'entered', 'exited',
+      // Add more as needed
+    ];
+    p5Events.forEach(fn => {
+      const blockType = `p5_${fn}`;
+      if (!Blockly.Blocks[blockType]) {
+        Blockly.Blocks[blockType] = {
+          init: function() {
+            this.appendDummyInput().appendField(fn + '()');
+            this.appendStatementInput('DO').setCheck(null);
+            this.setNextStatement(true, null);
+            this.setColour('#BA68C8');
+            this.setTooltip(`p5.js ${fn}() function`);
+            this.setHelpUrl(`https://p5js.org/reference/#/p5/${fn}`);
+          }
+        };
+      }
+    });
+    Blockly.Blocks['p5_draw'] = {
+      init: function() {
+        this.appendDummyInput().appendField('draw');
+        this.appendStatementInput('DO').setCheck(null).appendField('do');
+        this.setNextStatement(true, null);
+        this.setColour('#BA68C8');
+        this.setTooltip('p5.js draw() function');
+        this.setHelpUrl('https://p5js.org/reference/#/p5/draw');
+      }
+    };
+    Blockly.Blocks['p5_setup'] = {
+      init: function() {
+  this.appendDummyInput().appendField('setup');
+  this.appendStatementInput('DO').setCheck(null);
+        this.setNextStatement(true, null);
+        this.setColour('#BA68C8');
+        this.setTooltip('p5.js setup() function');
+        this.setHelpUrl('https://p5js.org/reference/#/p5/setup');
+      }
+    };
+    Blockly.Blocks['p5_auto_draw'] = {
+      init: function() {
+  this.appendDummyInput().appendField('draw');
+  this.appendStatementInput('DO').setCheck(null);
+        this.setNextStatement(true, null);
+        this.setColour('#BA68C8');
+        this.setTooltip('p5.js draw() function');
+        this.setHelpUrl('https://p5js.org/reference/#/p5/draw');
+      }
+    };
+    try {
+      console.log('[B5] Explicitly registered p5_setup and p5_draw blocks');
+    } catch(_) {}
+  }
+  // Debug: log registration status of key blocks
+  const keyBlocks = ['p5_draw', 'p5_setup', 'p5_createCanvas', 'p5_background'];
+  keyBlocks.forEach(type => {
+    if (Blockly.Blocks && Blockly.Blocks[type]) {
+      console.log(`[B5] Registered block: ${type}`);
+    } else {
+      console.warn(`[B5] Block NOT registered: ${type}`);
+    }
+  });
   if (typeof p5 === 'undefined') return;
 
   // Create a temporary instance to enumerate methods
@@ -277,13 +348,13 @@ if (window._p5AutoBlockGenQueue && window.javascript && javascript.javascriptGen
         });
       }
     });
-    // Keep a catch-all flat list at the end for power users
-    window.toolbox.contents.push({
-      kind: 'category',
-      name: 'All p5 functions (auto)',
-      colour: '#ff8a80',
-      contents: categoryContents
-    });
+    // // Keep a catch-all flat list at the end for power users
+    // window.toolbox.contents.push({
+    //   kind: 'category',
+    //   name: 'All p5 functions (auto)',
+    //   colour: '#ff8a80',
+    //   contents: categoryContents
+    // });
     // Globals/constants category
     const globalsCategory = { kind: 'category', name: 'p5 globals & constants', colour: '#ffd180', contents: [] };
     if (numOpts.length) globalsCategory.contents.push({ kind: 'block', type: 'p5_global_number' });
