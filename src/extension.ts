@@ -570,6 +570,70 @@ function hasCachedInputsForKey(key: string, items: TopInputItem[]): boolean {
   return true;
 }
 
+// Detect any usage of input() that is NOT at the very top of the file
+function hasNonTopInputUsage(code: string): boolean {
+  try {
+    const acorn = require('acorn');
+    const ast = recast.parse(code, {
+      parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) }
+    });
+    const body: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
+    // Find the boundary of the allowed top block (directives/empties + variable declarations)
+    let idx = 0;
+    while (idx < body.length) {
+      const node = body[idx];
+      if (!node) break;
+      if (node.type === 'EmptyStatement') { idx++; continue; }
+      if (node.type === 'ExpressionStatement' && node.expression && node.expression.type === 'Literal' && (node as any).directive) {
+        idx++; continue;
+      }
+      if (node.type === 'VariableDeclaration') { idx++; continue; }
+      break; // first non-allowed top node
+    }
+    const allowedTopEnd = idx; // statements [0, allowedTopEnd) are top block
+
+    // Helper to decide if a CallExpression is an allowed top-level input()
+    function isAllowedTopCall(node: any): boolean {
+      // Must be within a VariableDeclarator.init inside one of the first allowedTopEnd VariableDeclaration statements
+      // We'll walk up the parent chain using recast paths in a manual walk
+      return false; // We'll do a positional check instead of parent links
+    }
+
+    // Build a set of allowed input() nodes by scanning the top block
+    const allowedNodes = new Set<any>();
+    for (let i = 0; i < allowedTopEnd; i++) {
+      const node = body[i];
+      if (node && node.type === 'VariableDeclaration') {
+        const decls = (node as any).declarations || [];
+        for (const d of decls) {
+          if (d && d.init && d.init.type === 'CallExpression' && d.init.callee && d.init.callee.type === 'Identifier' && d.init.callee.name === 'input') {
+            allowedNodes.add(d.init);
+          }
+        }
+      }
+    }
+
+    let illegalFound = false;
+    recast.types.visit(ast, {
+      visitCallExpression(path) {
+        try {
+          const call = path.value;
+          if (call && call.callee && call.callee.type === 'Identifier' && call.callee.name === 'input') {
+            if (!allowedNodes.has(call)) {
+              illegalFound = true;
+              return false; // stop traversing further
+            }
+          }
+        } catch {}
+        this.traverse(path);
+      }
+    });
+    return illegalFound;
+  } catch {
+    return false;
+  }
+}
+
 async function preprocessTopLevelInputs(
   code: string,
   opts?: { key?: string; interactive?: boolean }
@@ -2795,6 +2859,18 @@ export function activate(context: vscode.ExtensionContext) {
     _pendingReloadReason = undefined;
 
     let code = document.getText();
+    // If input() is used outside top-of-sketch, block and show friendly error
+    try {
+      if (hasNonTopInputUsage(code)) {
+        panel.webview.html = await createHtml('', panel, context.extensionPath);
+        const friendly = 'input() can only be used at the top of the sketch';
+        setTimeout(() => { panel.webview.postMessage({ type: 'showError', message: friendly }); }, 150);
+        const time = getTime();
+        outputChannel.appendLine(`${time} [‼️RUNTIME ERROR in ${fileName}] ${friendly}`);
+        (panel as any)._lastRuntimeError = `${time} [‼️RUNTIME ERROR in ${fileName}] ${friendly}`;
+        return;
+      }
+    } catch {}
     // --- Preprocess top-level inputs before any wrapping or syntax checks on auto updates ---
     try {
       const key = document.fileName;
@@ -3015,6 +3091,12 @@ export function activate(context: vscode.ExtensionContext) {
           }
         } catch {}
         try {
+          // Friendly error for input() used outside top-of-sketch
+          if (hasNonTopInputUsage(codeToInject)) {
+            syntaxErrorMsg = `${getTime()} [‼️RUNTIME ERROR in ${path.basename(editor.document.fileName)}] input can only be used at the top`;
+            codeToInject = '';
+            throw new Error('input can only be used at the top');
+          }
           // --- Check for reserved global conflicts before syntax check ---
           const { globals, conflicts } = extractGlobalVariablesWithConflicts(codeToInject);
           if (conflicts.length > 0) {
@@ -3245,11 +3327,21 @@ export function activate(context: vscode.ExtensionContext) {
             } catch (e) {
               panel.webview.postMessage({ type: 'showError', message: 'Failed to apply input values: ' + e });
             }
-    } else if (msg.type === 'reload-button-clicked') {
+          } else if (msg.type === 'reload-button-clicked') {
             // Enforce reserved-name conflicts on reload as well (consistent with first open)
             const docUri = editor.document.uri.toString();
             const fileName = path.basename(editor.document.fileName);
             const rawCode = editor.document.getText();
+            // Friendly error for input misuse
+            if (hasNonTopInputUsage(rawCode)) {
+              panel.webview.html = await createHtml('', panel, context.extensionPath);
+              setTimeout(() => {
+                panel.webview.postMessage({ type: 'showError', message: 'input can only be used at the top' });
+              }, 150);
+              const outputChannel = getOrCreateOutputChannel(docUri, fileName);
+              outputChannel.appendLine(`${getTime()} [‼️RUNTIME ERROR in ${fileName}] input can only be used at the top`);
+              return;
+            }
             // Log semicolon warnings on explicit reload action
             logSemicolonWarningsForDocument(editor.document);
             // Optionally block sketch on warning
