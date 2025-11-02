@@ -509,9 +509,11 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string,
 // ----------------------------
 // Preprocess top-level input() placeholders with simple caching
 // ----------------------------
-type TopInputItem = { varName: string; label?: string };
+type TopInputItem = { varName: string; label?: string; defaultValue?: any };
 const _topInputCache = new Map<string, { items: TopInputItem[]; values: any[] }>();
 let _allowInteractiveTopInputs = true;
+// Track reason for last reload/update to alter input overlay behavior
+let _pendingReloadReason: 'typing' | 'save' | 'command' | undefined;
 
 function detectTopLevelInputs(code: string): TopInputItem[] {
   try {
@@ -539,9 +541,11 @@ function detectTopLevelInputs(code: string): TopInputItem[] {
           if (callee && callee.type === 'Identifier' && callee.name === 'input') {
             const varName = d.id && d.id.name ? d.id.name : `value${items.length + 1}`;
             let label: string | undefined;
+            let defaultValue: any = undefined;
             const args = d.init.arguments || [];
             if (args[0] && args[0].type === 'Literal' && typeof args[0].value === 'string') label = String(args[0].value);
-            items.push({ varName, label });
+            if (args[1] && args[1].type === 'Literal') defaultValue = args[1].value;
+            items.push({ varName, label, defaultValue });
           }
         }
       }
@@ -987,6 +991,29 @@ canvas.p5Canvas{
   background: #1f1f1f; color:#ffeb3b; font-family:monospace; padding:10px;
   display:none; z-index: 9998; white-space:pre-wrap; overflow:auto;
 }
+/* Inputs overlay */
+#inputs-overlay{
+  position:fixed; top:0; left:0; right:0; bottom:0;
+  background: rgba(0,0,0,0.7); color:#fff; font-family:monospace; padding:16px;
+  display:none; z-index: 10002; overflow:auto;
+}
+#inputs-overlay .panel{
+  max-width: 520px; margin: 40px auto; background:#1f1f1f; border:1px solid #444; border-radius:8px; padding:16px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+}
+#inputs-overlay h2{ margin:0 0 8px 0; font-size: 18px; }
+#inputs-overlay p{ margin:0 0 12px 0; color:#ddd; }
+#inputs-overlay .input-row{ display:flex; align-items:center; gap:8px; margin:6px 0; }
+#inputs-overlay .input-row label{ width: 180px; text-align:right; color:#ddd; }
+#inputs-overlay .input-row input[type="text"],
+#inputs-overlay .input-row input[type="number"]{
+  flex:1; padding:6px 8px; border-radius:4px; border:1px solid #555; background:#222; color:#fff;
+}
+#inputs-overlay .buttons{ display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
+#inputs-overlay button{ padding:6px 10px; border-radius:4px; border:1px solid #555; background:#2b2b2b; color:#fff; cursor:pointer; }
+#inputs-overlay button.primary{ background:#0078D4; border-color:#0078D4; }
+#inputs-overlay button:hover{ filter: brightness(1.1); }
+
 #p5-toolbar {
   position: fixed;
   top: 10px;
@@ -1201,6 +1228,16 @@ input[readonly][type=number],
 <body>
 <div id="error-overlay"></div>
 <div id="warning-overlay"></div>
+<div id="inputs-overlay" aria-hidden="true">
+  <div class="panel">
+    <h2>Sketch inputs</h2>
+    <p>Enter values for top-of-sketch inputs before running.</p>
+    <div id="inputs-container"></div>
+    <div class="buttons">
+      <button id="inputs-submit" class="primary" disabled>Run</button>
+    </div>
+  </div>
+  </div>
 <div id="p5-toolbar">
   <div id="reload-button" style="display:${showReloadButton ? 'flex' : 'none'}"><img src="${reloadIconUri}" title="Reload P5 Sketch"></div>
   <div id="capture-toggle-button" title="Toggle P5 Capture Panel"></div>
@@ -1598,6 +1635,90 @@ window.addEventListener("message", e => {
         document.documentElement.style.setProperty('--overlay-font-size', data.value + 'px');
       }
       break;
+    case 'showTopInputs':
+      try {
+        if (!data || !Array.isArray(data.items)) return;
+        const overlay = document.getElementById('inputs-overlay');
+        const container = document.getElementById('inputs-container');
+        const btnSubmit = document.getElementById('inputs-submit');
+        if (!overlay || !container) return;
+        container.innerHTML = '';
+        data.items.forEach((it) => {
+          const row = document.createElement('div');
+          row.className = 'input-row';
+          const lab = document.createElement('label');
+          lab.textContent = (it.label || it.varName) + ':';
+          lab.htmlFor = 'topin_' + it.varName;
+          let inputEl;
+          if (typeof it.defaultValue === 'boolean') {
+            inputEl = document.createElement('input');
+            inputEl.type = 'checkbox';
+            inputEl.id = 'topin_' + it.varName;
+            inputEl.checked = !!it.defaultValue;
+          } else {
+            inputEl = document.createElement('input');
+            inputEl.type = (typeof it.defaultValue === 'number') ? 'number' : 'text';
+            inputEl.id = 'topin_' + it.varName;
+            if (typeof it.defaultValue !== 'undefined' && it.defaultValue !== null) {
+              inputEl.value = String(it.defaultValue);
+            } else {
+              inputEl.value = '';
+            }
+          }
+          inputEl.setAttribute('data-name', it.varName);
+          row.appendChild(lab);
+          row.appendChild(inputEl);
+          container.appendChild(row);
+        });
+        // Validation: enable Run only when all non-checkbox fields are filled (non-empty and valid number for numeric fields)
+        function allValid() {
+          let ok = true;
+          container.querySelectorAll('[data-name]').forEach((el) => {
+            if (!ok) return;
+            if (el.type === 'checkbox') { ok = true; return; }
+            const v = (el.value || '').trim();
+            if (v.length === 0) { ok = false; return; }
+            if (el.type === 'number') {
+              const n = Number(v);
+              if (Number.isNaN(n)) { ok = false; return; }
+            }
+          });
+          return ok;
+        }
+        function wireValidation() {
+          if (!btnSubmit) return;
+          const update = () => { btnSubmit.disabled = !allValid(); };
+          container.querySelectorAll('[data-name]').forEach((el) => {
+            el.addEventListener('input', update);
+            el.addEventListener('change', update);
+          });
+          // initial state
+          update();
+        }
+        wireValidation();
+        if (btnSubmit) {
+          btnSubmit.onclick = () => {
+            if (btnSubmit.disabled) return;
+            const values = [];
+            container.querySelectorAll('[data-name]').forEach((el) => {
+              const name = el.getAttribute('data-name');
+              let value;
+              if (el.type === 'checkbox') value = !!el.checked;
+              else value = el.value;
+              values.push({ name, value });
+            });
+            vscode.postMessage({ type: 'submitTopInputs', values });
+          };
+        }
+        overlay.style.display = 'block';
+        overlay.setAttribute('aria-hidden', 'false');
+      } catch {}
+      break;
+    case 'hideTopInputs': {
+      const overlay = document.getElementById('inputs-overlay');
+      if (overlay) { overlay.style.display = 'none'; overlay.setAttribute('aria-hidden', 'true'); }
+      break;
+    }
   }
 });
 
@@ -2669,14 +2790,34 @@ export function activate(context: vscode.ExtensionContext) {
     const fileName = path.basename(document.fileName);
     const outputChannel = getOrCreateOutputChannel(docUri, fileName);
 
+    // Capture and clear the pending reason (typing/save/command)
+    const reason = _pendingReloadReason;
+    _pendingReloadReason = undefined;
+
     let code = document.getText();
     // --- Preprocess top-level inputs before any wrapping or syntax checks on auto updates ---
     try {
       const key = document.fileName;
       const inputs = detectTopLevelInputs(code);
       if (inputs.length > 0) {
-        if (hasCachedInputsForKey(key, inputs)) {
-          // use cache silently
+        if (reason === 'save' || reason === 'command') {
+          // Always show overlay on save/command; prefill with cache if available
+          let itemsToShow = inputs;
+          if (hasCachedInputsForKey(key, inputs)) {
+            const cached = _topInputCache.get(key);
+            if (cached) {
+              itemsToShow = inputs.map((it, i) => ({
+                varName: it.varName,
+                label: it.label,
+                defaultValue: typeof cached.values[i] !== 'undefined' ? cached.values[i] : it.defaultValue
+              }));
+            }
+          }
+          panel.webview.html = await createHtml('', panel, context.extensionPath);
+          setTimeout(() => { panel.webview.postMessage({ type: 'showTopInputs', items: itemsToShow }); }, 150);
+          return;
+        } else if (hasCachedInputsForKey(key, inputs)) {
+          // typing: use cache silently
           _allowInteractiveTopInputs = false;
           try {
             code = await preprocessTopLevelInputs(code, { key, interactive: false });
@@ -2684,7 +2825,7 @@ export function activate(context: vscode.ExtensionContext) {
             _allowInteractiveTopInputs = true;
           }
         } else {
-          // No cached answers on auto-update: block and show overlay in the calling code path below
+          // No cached answers on typing auto-update: block and show overlay below
         }
       }
     } catch {}
@@ -2724,19 +2865,17 @@ export function activate(context: vscode.ExtensionContext) {
         const unresolved = detectTopLevelInputs(document.getText());
         if (unresolved.length > 0 && !hasCachedInputsForKey(docKey, unresolved)) {
           panel.webview.html = await createHtml('', panel, context.extensionPath);
-          const msg = 'Inputs required at top of sketch. Click Reload to provide values.';
-          setTimeout(() => { panel.webview.postMessage({ type: 'showWarning', message: msg }); }, 150);
+          setTimeout(() => { panel.webview.postMessage({ type: 'showTopInputs', items: unresolved }); }, 150);
           return;
         }
         // Always reload HTML for every code update to reset JS environment
         const key = (panel && (panel as any)._sketchFilePath) ? String((panel as any)._sketchFilePath) : '';
         const inputs = detectTopLevelInputs(code);
         if (inputs.length > 0 && !hasCachedInputsForKey(key, inputs)) {
-          // Do not run sketch with unresolved inputs on auto updates. Show overlay and return.
+          // Do not run sketch with unresolved inputs on auto updates. Show input UI and return.
           panel.webview.html = await createHtml('', panel, context.extensionPath);
-          const msg = 'Inputs required at top of sketch. Click Reload to provide values.';
           setTimeout(() => {
-            panel.webview.postMessage({ type: 'showWarning', message: msg });
+            panel.webview.postMessage({ type: 'showTopInputs', items: inputs });
           }, 150);
           return;
         }
@@ -2822,12 +2961,18 @@ export function activate(context: vscode.ExtensionContext) {
 
     if (reloadWhileTyping) {
       changeListener = vscode.workspace.onDidChangeTextDocument(e => {
-        if ( e.document.uri.toString() === docUri) debounceDocumentUpdate(e.document, true);
+        if ( e.document.uri.toString() === docUri) {
+          _pendingReloadReason = 'typing';
+          debounceDocumentUpdate(e.document, true);
+        }
       });
     }
     if (reloadOnSave) {
       saveListener = vscode.workspace.onDidSaveTextDocument(doc => {
-        if (doc.uri.toString() === docUri) debounceDocumentUpdate(doc, true);
+        if (doc.uri.toString() === docUri) {
+          _pendingReloadReason = 'save';
+          debounceDocumentUpdate(doc, true);
+        }
       });
     }
     autoReloadListenersMap.set(docUri, { changeListener, saveListener });
@@ -2860,21 +3005,13 @@ export function activate(context: vscode.ExtensionContext) {
 
         let syntaxErrorMsg: string | null = null;
         let codeToInject = code;
-        let _inputsCancelled = false;
-        // --- Preprocess top-level inputs BEFORE syntax check/wrapping ---
+        let _inputsNeeded: TopInputItem[] = [];
+        // --- Determine top-level inputs BEFORE syntax check/wrapping ---
         try {
-          const key = editor.document.fileName;
-          const inputsBefore = detectTopLevelInputs(codeToInject);
-          if (inputsBefore.length > 0) {
-            const pre = await preprocessTopLevelInputs(codeToInject, { key, interactive: true });
-            const inputsAfter = detectTopLevelInputs(pre);
-            if (inputsAfter.length > 0) {
-              // User cancelled at least one prompt: do not run sketch
-              _inputsCancelled = true;
-              codeToInject = '';
-            } else {
-              codeToInject = pre;
-            }
+          const inputs = detectTopLevelInputs(codeToInject);
+          if (inputs.length > 0) {
+            _inputsNeeded = inputs;
+            codeToInject = '';
           }
         } catch {}
         try {
@@ -3033,7 +3170,82 @@ export function activate(context: vscode.ExtensionContext) {
             if (panel) {
               panel.webview.postMessage({ type: 'showError', message: overlayMsg });
             }
-          } else if (msg.type === 'reload-button-clicked') {
+    } else if (msg.type === 'submitTopInputs') {
+            // Receive values from webview, cache them, preprocess and run the sketch
+            try {
+              const rawCode = editor.document.getText();
+              const key = editor.document.fileName;
+              const items = detectTopLevelInputs(rawCode);
+              if (!Array.isArray(items) || items.length === 0) {
+                panel.webview.postMessage({ type: 'hideTopInputs' });
+                return;
+              }
+              const incoming: Record<string, any> = {};
+              if (Array.isArray(msg.values)) {
+                for (const e of msg.values) {
+                  if (e && typeof e.name === 'string') incoming[e.name] = e.value;
+                }
+              }
+              const values: any[] = items.map(it => {
+                const v = incoming[it.varName];
+                if (typeof v === 'boolean') return v;
+                if (typeof v === 'string') {
+                  const s = v.trim();
+                  const low = s.toLowerCase();
+                  if (low === 'true' || low === 'false') return low === 'true';
+                  const num = Number(s);
+                  if (!Number.isNaN(num) && s !== '') return num;
+                  return v;
+                }
+                if (typeof v === 'number') return v;
+                return v;
+              });
+              _topInputCache.set(key, { items: items.map(i => ({ varName: i.varName, label: i.label })), values });
+
+              // Preprocess non-interactively using the cache
+              _allowInteractiveTopInputs = false;
+              let pre = rawCode;
+              try {
+                pre = await preprocessTopLevelInputs(rawCode, { key, interactive: false });
+              } finally {
+                _allowInteractiveTopInputs = true;
+              }
+              // Syntax checks and run
+              let code = wrapInSetupIfNeeded(pre);
+              const globals = extractGlobalVariables(code);
+              let rewrittenCode = rewriteUserCodeWithWindowGlobals(code, globals);
+              // Reload and then send globals
+              panel.webview.postMessage({ type: 'hideTopInputs' });
+              const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
+              if (!hasDraw) {
+                panel.webview.html = await createHtml(code, panel, context.extensionPath);
+                setTimeout(() => {
+                  const { globals } = extractGlobalVariablesWithConflicts(code);
+                  let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+                  const hiddenSet = getHiddenGlobalsByDirective(editor.document.getText());
+                  if (hiddenSet.size > 0) {
+                    filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name));
+                  }
+                  const readOnly = hasOnlySetup(editor.document.getText());
+                  panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
+                }, 200);
+              } else {
+                panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: false });
+                setTimeout(() => {
+                  const { globals } = extractGlobalVariablesWithConflicts(code);
+                  let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+                  const hiddenSet = getHiddenGlobalsByDirective(editor.document.getText());
+                  if (hiddenSet.size > 0) {
+                    filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name));
+                  }
+                  const readOnly = hasOnlySetup(editor.document.getText());
+                  panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
+                }, 200);
+              }
+            } catch (e) {
+              panel.webview.postMessage({ type: 'showError', message: 'Failed to apply input values: ' + e });
+            }
+    } else if (msg.type === 'reload-button-clicked') {
             // Enforce reserved-name conflicts on reload as well (consistent with first open)
             const docUri = editor.document.uri.toString();
             const fileName = path.basename(editor.document.fileName);
@@ -3064,19 +3276,55 @@ export function activate(context: vscode.ExtensionContext) {
               (panel as any)._lastRuntimeError = null;
               return;
             }
-            // Preprocess top-of-file input() placeholders before wrapping
+            // Handle top-of-file input() placeholders: on webview Reload use cached values silently; if no cache, show overlay
             const inputsBefore = detectTopLevelInputs(rawCode);
-            const preprocessed = await preprocessTopLevelInputs(rawCode, { key: editor.document.fileName, interactive: true });
-            const inputsAfter = detectTopLevelInputs(preprocessed);
-            if (inputsBefore.length > 0 && inputsAfter.length > 0) {
-              // User cancelled: do not run; show overlay
-              panel.webview.html = await createHtml('', panel, context.extensionPath);
-              setTimeout(() => {
-                panel.webview.postMessage({ type: 'showWarning', message: 'Input was cancelled' });
-              }, 150);
-              return;
+            if (inputsBefore.length > 0) {
+              const key = editor.document.fileName;
+              if (hasCachedInputsForKey(key, inputsBefore)) {
+                _allowInteractiveTopInputs = false;
+                const preprocessed = await preprocessTopLevelInputs(rawCode, { key, interactive: false });
+                _allowInteractiveTopInputs = true;
+                let code = wrapInSetupIfNeeded(preprocessed);
+                const globals = extractGlobalVariables(code);
+                let rewrittenCode = rewriteUserCodeWithWindowGlobals(code, globals);
+                const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
+                if (!hasDraw) {
+                  panel.webview.html = await createHtml(code, panel, context.extensionPath);
+                  setTimeout(() => {
+                    const { globals } = extractGlobalVariablesWithConflicts(code);
+                    let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+                    const hiddenSet = getHiddenGlobalsByDirective(editor.document.getText());
+                    if (hiddenSet.size > 0) {
+                      filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name));
+                    }
+                    const readOnly = hasOnlySetup(editor.document.getText());
+                    panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
+                  }, 200);
+                } else {
+                  panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: false });
+                  setTimeout(() => {
+                    const { globals } = extractGlobalVariablesWithConflicts(code);
+                    let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+                    const hiddenSet = getHiddenGlobalsByDirective(editor.document.getText());
+                    if (hiddenSet.size > 0) {
+                      filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name));
+                    }
+                    const readOnly = hasOnlySetup(editor.document.getText());
+                    panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
+                  }, 200);
+                }
+                return;
+              } else {
+                // No cache: show overlay (prefill with defaults)
+                panel.webview.html = await createHtml('', panel, context.extensionPath);
+                setTimeout(() => {
+                  panel.webview.postMessage({ type: 'showTopInputs', items: inputsBefore });
+                }, 150);
+                return;
+              }
             }
-            let code = wrapInSetupIfNeeded(preprocessed);
+            // No inputs: just run normally
+            let code = wrapInSetupIfNeeded(rawCode);
             const globals = extractGlobalVariables(code);
             let rewrittenCode = rewriteUserCodeWithWindowGlobals(code, globals);
             if (msg.preserveGlobals && globals.length > 0) {
@@ -3201,11 +3449,23 @@ export function activate(context: vscode.ExtensionContext) {
           }
         });
 
-        // If inputs were cancelled, show empty sketch and overlay, then stop
-        if (_inputsCancelled) {
+        // If inputs are present, always show UI (prefill from cache if available) and stop
+        if (_inputsNeeded && _inputsNeeded.length > 0) {
+          const key = editor.document.fileName;
+          let itemsToShow = _inputsNeeded;
+          if (hasCachedInputsForKey(key, _inputsNeeded)) {
+            const cached = _topInputCache.get(key);
+            if (cached) {
+              itemsToShow = _inputsNeeded.map((it, i) => ({
+                varName: it.varName,
+                label: it.label,
+                defaultValue: typeof cached.values[i] !== 'undefined' ? cached.values[i] : it.defaultValue
+              }));
+            }
+          }
           panel.webview.html = await createHtml('', panel, context.extensionPath);
           setTimeout(() => {
-            panel.webview.postMessage({ type: 'showWarning', message: 'Input was cancelled' });
+            panel.webview.postMessage({ type: 'showTopInputs', items: itemsToShow });
           }, 150);
           return;
         }
@@ -3294,6 +3554,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (doc) {
               // Log semicolon warnings on explicit reload command
               logSemicolonWarningsForDocument(doc);
+              _pendingReloadReason = 'command';
               debounceDocumentUpdate(doc, false);
             }
           }
@@ -3302,6 +3563,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
       // Log semicolon warnings on explicit reload command
       logSemicolonWarningsForDocument(editor.document);
+      _pendingReloadReason = 'command';
       debounceDocumentUpdate(editor.document, false); // use false to match typing
     })
   );
