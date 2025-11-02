@@ -12,8 +12,17 @@
         "args0": [ { "type": "input_value", "name": "TEXT" } ],
         "previousStatement": null,
         "nextStatement": null,
-  "colour": "#ec43f5",
+        "colour": "#ec43f5",
         "tooltip": "Append text to the output pane",
+      },
+      {
+        "type": "input",
+        "message0": "input %1",
+        "args0": [ { "type": "input_value", "name": "TEXT" } ],
+        "previousStatement": null,
+        "nextStatement": null,
+        "colour": "#ec43f5",
+        "tooltip": "Read text from the input pane",
       }
     ];
     if (typeof Blockly !== 'undefined' && Blockly.defineBlocksWithJsonArray) {

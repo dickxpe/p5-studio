@@ -8,6 +8,7 @@
   const Order = gen.Order || javascript.Order;
 
   gen.forBlock['output']         = (b,g)=> `output(${v(g,b,'TEXT')});\n`;
+  gen.forBlock['input']          = (b,g)=> `input(${v(g,b,'TEXT')});\n`;
 
 
   // p5: structure

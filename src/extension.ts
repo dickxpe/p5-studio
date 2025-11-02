@@ -507,6 +507,164 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string,
 }
 
 // ----------------------------
+// Preprocess top-level input() placeholders with simple caching
+// ----------------------------
+type TopInputItem = { varName: string; label?: string };
+const _topInputCache = new Map<string, { items: TopInputItem[]; values: any[] }>();
+let _allowInteractiveTopInputs = true;
+
+function detectTopLevelInputs(code: string): TopInputItem[] {
+  try {
+    const acorn = require('acorn');
+    const ast = recast.parse(code, {
+      parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) }
+    });
+    const body: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
+    const items: TopInputItem[] = [];
+    for (let i = 0; i < body.length; i++) {
+      const node = body[i];
+      if (!node) break;
+      if (node.type === 'EmptyStatement') { continue; }
+      if (node.type === 'ExpressionStatement' && node.expression && node.expression.type === 'Literal' && (node as any).directive) {
+        // 'use strict' or similar directive — allow and continue
+        continue;
+      }
+      if (node.type !== 'VariableDeclaration') {
+        break; // Stop scanning at first non-declaration/non-directive
+      }
+      const decls = (node as any).declarations || [];
+      for (const d of decls) {
+        if (d && d.type === 'VariableDeclarator' && d.init && d.init.type === 'CallExpression') {
+          const callee = d.init.callee;
+          if (callee && callee.type === 'Identifier' && callee.name === 'input') {
+            const varName = d.id && d.id.name ? d.id.name : `value${items.length + 1}`;
+            let label: string | undefined;
+            const args = d.init.arguments || [];
+            if (args[0] && args[0].type === 'Literal' && typeof args[0].value === 'string') label = String(args[0].value);
+            items.push({ varName, label });
+          }
+        }
+      }
+    }
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+function hasCachedInputsForKey(key: string, items: TopInputItem[]): boolean {
+  if (!key) return false;
+  const cached = _topInputCache.get(key);
+  if (!cached) return false;
+  if (cached.items.length !== items.length) return false;
+  for (let i = 0; i < items.length; i++) {
+    const a = cached.items[i];
+    const b = items[i];
+    if (a.varName !== b.varName) return false;
+    if ((a.label || '') !== (b.label || '')) return false;
+  }
+  return true;
+}
+
+async function preprocessTopLevelInputs(
+  code: string,
+  opts?: { key?: string; interactive?: boolean }
+): Promise<string> {
+  try {
+    const acorn = require('acorn');
+    const ast = recast.parse(code, {
+      parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) }
+    });
+    const b = recast.types.builders;
+  const body: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
+    const placeholders: Array<{ decl: any; varName: string; label?: string; defaultValue?: any; }>=[];
+
+    // Scan from the top until a non-VariableDeclaration is found
+    for (let i = 0; i < body.length; i++) {
+      const node = body[i];
+      if (!node) break;
+      if (node.type === 'EmptyStatement') { continue; }
+      if (node.type === 'ExpressionStatement' && node.expression && node.expression.type === 'Literal' && (node as any).directive) {
+        // 'use strict' or similar directive — allow and continue
+        continue;
+      }
+      if (node.type !== 'VariableDeclaration') break;
+      const decls = (node as any).declarations || [];
+      for (const d of decls) {
+        if (d && d.type === 'VariableDeclarator' && d.init && d.init.type === 'CallExpression') {
+          const callee = d.init.callee;
+          if (callee && callee.type === 'Identifier' && callee.name === 'input') {
+            let label: string | undefined;
+            let defaultValue: any = undefined;
+            const args = d.init.arguments || [];
+            if (args[0] && args[0].type === 'Literal' && typeof args[0].value === 'string') {
+              label = String(args[0].value);
+            }
+            if (args[1] && args[1].type === 'Literal') {
+              defaultValue = args[1].value;
+            }
+            const varName = d.id && d.id.name ? d.id.name : `value${placeholders.length + 1}`;
+            placeholders.push({ decl: d, varName, label, defaultValue });
+          }
+        }
+      }
+    }
+
+    if (placeholders.length === 0) return code;
+
+    const key = opts?.key || '';
+    const interactive = typeof opts?.interactive === 'boolean' ? opts!.interactive : _allowInteractiveTopInputs;
+
+    const items: TopInputItem[] = placeholders.map(ph => ({ varName: ph.varName, label: ph.label }));
+    let values: any[] | null = null;
+
+    if (!interactive && key && _topInputCache.has(key)) {
+      const cached = _topInputCache.get(key)!;
+      const sameShape = cached.items.length === items.length && cached.items.every((it, i) => it.varName === items[i].varName && (it.label || '') === (items[i].label || ''));
+      if (sameShape) {
+        values = cached.values.slice();
+      }
+    }
+
+    if (!values) {
+      values = [];
+      for (const ph of placeholders) {
+        const prompt = ph.label || `Enter value for ${ph.varName}`;
+        const defaultStr = ph.defaultValue !== undefined ? String(ph.defaultValue) : '';
+        if (!interactive) {
+          // No cached values and interactive disabled: skip preprocessing
+          return code;
+        }
+        const input = await vscode.window.showInputBox({ prompt, value: defaultStr, ignoreFocusOut: true });
+        if (typeof input === 'undefined') {
+          // User cancelled: abort preprocessing (keep original code)
+          return code;
+        }
+        let typed: any = input;
+        const low = input.trim().toLowerCase();
+        if (low === 'true' || low === 'false') {
+          typed = (low === 'true');
+        } else {
+          const num = Number(input);
+          if (!Number.isNaN(num) && input.trim() !== '') typed = num;
+        }
+        values.push(typed);
+      }
+      if (key) _topInputCache.set(key, { items, values: values.slice() });
+    }
+
+    // Apply values
+    for (let i = 0; i < placeholders.length; i++) {
+      const ph = placeholders[i];
+      ph.decl.init = b.literal(values[i]);
+    }
+    return recast.print(ast).code;
+  } catch (e) {
+    return code;
+  }
+}
+
+// ----------------------------
 // Create Webview HTML
 // ----------------------------
 async function createHtml(
@@ -514,6 +672,9 @@ async function createHtml(
   panel: vscode.WebviewPanel,
   extensionPath: string
 ) {
+  // Preprocess top-of-file input() placeholders before anything else
+  const key = (panel && (panel as any)._sketchFilePath) ? String((panel as any)._sketchFilePath) : '';
+  userCode = await preprocessTopLevelInputs(userCode, { key, interactive: _allowInteractiveTopInputs });
   // Get the sketch filename (without extension)
   let sketchFileName = '';
   if (panel && (panel as any)._sketchFilePath) {
@@ -2259,67 +2420,58 @@ export function activate(context: vscode.ExtensionContext) {
 
         blocklyPanel.webview.onDidReceiveMessage(async msg => {
     if (msg && msg.type === 'blocklyGeneratedCode' && typeof msg.code === 'string') {
-      // When the webview notifies it's finished loading the workspace (initialLoad),
-      // we should accept this export and persist it to the sketch and the sidecar.
-      // We previously ignored initialLoad to avoid accidental empty writes; the
-      // safety checks below ensure we only persist meaningful workspaces/code.
-              // Parse and validate workspace: only proceed when the workspace contains
-              // actual blocks or the generated code is non-empty. This avoids overwriting
-              // the user's sketch with empty code when the webview posts an empty workspace
-              // during initialization.
-              let wsObj: any = null;
+      // Always persist the export, even if the workspace and code are empty.
+      let wsObj: any = null;
+      try {
+        if (msg.workspace && typeof msg.workspace === 'string') wsObj = JSON.parse(msg.workspace);
+      } catch (e) { wsObj = null; }
+      if (originatingEditor && !originatingEditor.document.isClosed) {
+        try {
+          const filePath = originatingEditor.document.fileName;
+          const sidecar = sidecarPathForFile(filePath);
+          // Write workspace to sidecar (create .blockly folder if necessary)
+          if (sidecar && msg.workspace && typeof msg.workspace === 'string') {
+            try {
+              const sidecarDir = path.dirname(sidecar);
+              fs.mkdirSync(sidecarDir, { recursive: true });
+              // Prefer writing a pretty JSON representation if it's a valid object
               try {
-                if (msg.workspace && typeof msg.workspace === 'string') wsObj = JSON.parse(msg.workspace);
-              } catch (e) { wsObj = null; }
-              const workspaceHasBlocks = !!(wsObj && Array.isArray(wsObj.blocks) && wsObj.blocks.length > 0);
-              const codeNonEmpty = msg.code.trim().length > 0;
-              if (!workspaceHasBlocks && !codeNonEmpty) {
-                // Nothing meaningful to persist
-                return;
+                const pretty = wsObj ? JSON.stringify(wsObj, null, 2) : msg.workspace;
+                fs.writeFileSync(sidecar, pretty, 'utf8');
+              } catch (e) {
+                fs.writeFileSync(sidecar, msg.workspace, 'utf8');
               }
-              if (originatingEditor && !originatingEditor.document.isClosed) {
-              try {
-                const filePath = originatingEditor.document.fileName;
-                const sidecar = sidecarPathForFile(filePath);
-                // Write workspace to sidecar (create .blockly folder if necessary)
-                  if (sidecar && msg.workspace && typeof msg.workspace === 'string') {
-                  try {
-                    const sidecarDir = path.dirname(sidecar);
-                    fs.mkdirSync(sidecarDir, { recursive: true });
-                      // Prefer writing a pretty JSON representation if it's a valid object
-                      try {
-                        const pretty = wsObj ? JSON.stringify(wsObj, null, 2) : msg.workspace;
-                        fs.writeFileSync(sidecar, pretty, 'utf8');
-                      } catch (e) {
-
-                        fs.writeFileSync(sidecar, msg.workspace, 'utf8');
-                      }
-                  } catch (e) {
-                    // ignore
-                  }
-                }
-                // Write generated code to file WITHOUT embedded workspace comment
-                let finalCode = msg.code.replace(/\/\*@BlocklyWorkspace[\s\S]*?\*\//g, '');
-                if (!finalCode.endsWith('\n')) finalCode = finalCode + '\n';
-                // Apply edit but ignore the resulting change event to avoid loops
-                ignoreDocumentChangeForBlockly.add(docUri);
-                const edit = new vscode.WorkspaceEdit();
-                const fullRange = new vscode.Range(
-                  originatingEditor.document.positionAt(0),
-                  originatingEditor.document.positionAt(originatingEditor.document.getText().length)
-                );
-                edit.replace(originatingEditor.document.uri, fullRange, finalCode);
-                const ok = await vscode.workspace.applyEdit(edit);
-                if (ok) {
-                  try {
-                    await originatingEditor.document.save();
-                  } catch (e) { /* ignore save errors */ }
-                }
-                setTimeout(() => ignoreDocumentChangeForBlockly.delete(docUri), 300);
-              } catch (e) { }
+            } catch (e) {
+              // ignore
             }
           }
-        });
+          // Write generated code to file WITHOUT embedded workspace comment
+          let finalCode = msg.code.replace(/\/\*@BlocklyWorkspace[\s\S]*?\*\//g, '');
+          // If code is empty, clear the file
+          if (finalCode.trim().length === 0) {
+            finalCode = '';
+          } else if (!finalCode.endsWith('\n')) {
+            finalCode = finalCode + '\n';
+          }
+          // Apply edit but ignore the resulting change event to avoid loops
+          ignoreDocumentChangeForBlockly.add(docUri);
+          const edit = new vscode.WorkspaceEdit();
+          const fullRange = new vscode.Range(
+            originatingEditor.document.positionAt(0),
+            originatingEditor.document.positionAt(originatingEditor.document.getText().length)
+          );
+          edit.replace(originatingEditor.document.uri, fullRange, finalCode);
+          const ok = await vscode.workspace.applyEdit(edit);
+          if (ok) {
+            try {
+              await originatingEditor.document.save();
+            } catch (e) { /* ignore save errors */ }
+          }
+          setTimeout(() => ignoreDocumentChangeForBlockly.delete(docUri), 300);
+        } catch (e) { }
+      }
+    }
+  });
     })
   );
 
@@ -2518,6 +2670,24 @@ export function activate(context: vscode.ExtensionContext) {
     const outputChannel = getOrCreateOutputChannel(docUri, fileName);
 
     let code = document.getText();
+    // --- Preprocess top-level inputs before any wrapping or syntax checks on auto updates ---
+    try {
+      const key = document.fileName;
+      const inputs = detectTopLevelInputs(code);
+      if (inputs.length > 0) {
+        if (hasCachedInputsForKey(key, inputs)) {
+          // use cache silently
+          _allowInteractiveTopInputs = false;
+          try {
+            code = await preprocessTopLevelInputs(code, { key, interactive: false });
+          } finally {
+            _allowInteractiveTopInputs = true;
+          }
+        } else {
+          // No cached answers on auto-update: block and show overlay in the calling code path below
+        }
+      }
+    } catch {}
     let syntaxErrorMsg: string | null = null;
     let hadSyntaxError = false;
     try {
@@ -2549,8 +2719,33 @@ export function activate(context: vscode.ExtensionContext) {
         logSemicolonWarningsForDocument(document);
         return;
       } else {
+        // Before reloading HTML, if inputs exist but are unresolved, block and ask user to Reload
+        const docKey = (panel && (panel as any)._sketchFilePath) ? String((panel as any)._sketchFilePath) : document.fileName;
+        const unresolved = detectTopLevelInputs(document.getText());
+        if (unresolved.length > 0 && !hasCachedInputsForKey(docKey, unresolved)) {
+          panel.webview.html = await createHtml('', panel, context.extensionPath);
+          const msg = 'Inputs required at top of sketch. Click Reload to provide values.';
+          setTimeout(() => { panel.webview.postMessage({ type: 'showWarning', message: msg }); }, 150);
+          return;
+        }
         // Always reload HTML for every code update to reset JS environment
-        panel.webview.html = await createHtml(code, panel, context.extensionPath);
+        const key = (panel && (panel as any)._sketchFilePath) ? String((panel as any)._sketchFilePath) : '';
+        const inputs = detectTopLevelInputs(code);
+        if (inputs.length > 0 && !hasCachedInputsForKey(key, inputs)) {
+          // Do not run sketch with unresolved inputs on auto updates. Show overlay and return.
+          panel.webview.html = await createHtml('', panel, context.extensionPath);
+          const msg = 'Inputs required at top of sketch. Click Reload to provide values.';
+          setTimeout(() => {
+            panel.webview.postMessage({ type: 'showWarning', message: msg });
+          }, 150);
+          return;
+        }
+        _allowInteractiveTopInputs = false; // suppress prompts, use cache
+        try {
+          panel.webview.html = await createHtml(code, panel, context.extensionPath);
+        } finally {
+          _allowInteractiveTopInputs = true;
+        }
         // After HTML is set, send global variables
         const { globals: filteredGlobals } = extractGlobalVariablesWithConflicts(code);
         // --- PATCH: Use .type instead of typeof .value ---
@@ -2665,6 +2860,23 @@ export function activate(context: vscode.ExtensionContext) {
 
         let syntaxErrorMsg: string | null = null;
         let codeToInject = code;
+        let _inputsCancelled = false;
+        // --- Preprocess top-level inputs BEFORE syntax check/wrapping ---
+        try {
+          const key = editor.document.fileName;
+          const inputsBefore = detectTopLevelInputs(codeToInject);
+          if (inputsBefore.length > 0) {
+            const pre = await preprocessTopLevelInputs(codeToInject, { key, interactive: true });
+            const inputsAfter = detectTopLevelInputs(pre);
+            if (inputsAfter.length > 0) {
+              // User cancelled at least one prompt: do not run sketch
+              _inputsCancelled = true;
+              codeToInject = '';
+            } else {
+              codeToInject = pre;
+            }
+          }
+        } catch {}
         try {
           // --- Check for reserved global conflicts before syntax check ---
           const { globals, conflicts } = extractGlobalVariablesWithConflicts(codeToInject);
@@ -2852,7 +3064,19 @@ export function activate(context: vscode.ExtensionContext) {
               (panel as any)._lastRuntimeError = null;
               return;
             }
-            let code = wrapInSetupIfNeeded(rawCode);
+            // Preprocess top-of-file input() placeholders before wrapping
+            const inputsBefore = detectTopLevelInputs(rawCode);
+            const preprocessed = await preprocessTopLevelInputs(rawCode, { key: editor.document.fileName, interactive: true });
+            const inputsAfter = detectTopLevelInputs(preprocessed);
+            if (inputsBefore.length > 0 && inputsAfter.length > 0) {
+              // User cancelled: do not run; show overlay
+              panel.webview.html = await createHtml('', panel, context.extensionPath);
+              setTimeout(() => {
+                panel.webview.postMessage({ type: 'showWarning', message: 'Input was cancelled' });
+              }, 150);
+              return;
+            }
+            let code = wrapInSetupIfNeeded(preprocessed);
             const globals = extractGlobalVariables(code);
             let rewrittenCode = rewriteUserCodeWithWindowGlobals(code, globals);
             if (msg.preserveGlobals && globals.length > 0) {
@@ -2976,6 +3200,15 @@ export function activate(context: vscode.ExtensionContext) {
             if (channel) showAndTrackOutputChannel(channel); // <--- in panel.onDidChangeViewState
           }
         });
+
+        // If inputs were cancelled, show empty sketch and overlay, then stop
+        if (_inputsCancelled) {
+          panel.webview.html = await createHtml('', panel, context.extensionPath);
+          setTimeout(() => {
+            panel.webview.postMessage({ type: 'showWarning', message: 'Input was cancelled' });
+          }, 150);
+          return;
+        }
 
         // Only set HTML on first open, but optionally block on warnings
         const blockOnWarning_IO = vscode.workspace.getConfiguration('liveP5').get<boolean>('BlockSketchOnWarning', true);

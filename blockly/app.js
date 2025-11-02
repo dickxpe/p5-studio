@@ -146,7 +146,12 @@
   // Send code to extension on every change
   ws.addChangeListener((e) => {
     if (!e.isUiEvent && e.type !== Blockly.Events.FINISHED_LOADING && !ws.isDragging()) {
-      const code = getGeneratedCode();
+      // Always export code, even if workspace is empty
+      let code = getGeneratedCode();
+      // If workspace is empty or code is only whitespace, send empty string
+      if (ws.getAllBlocks(false).length === 0 || !code.trim()) {
+        code = '';
+      }
       postCodeToExtension(code);
     }
     if (!e.isUiEvent) save(ws);
