@@ -3675,6 +3675,24 @@ export function activate(context: vscode.ExtensionContext) {
               panel.webview.postMessage({ type: 'showError', message: 'Failed to apply input values: ' + e });
             }
           } else if (msg.type === 'reload-button-clicked') {
+            // Log reload action to output channel
+            try {
+              const docUri = editor.document.uri.toString();
+              const fileName = path.basename(editor.document.fileName);
+              const ch = getOrCreateOutputChannel(docUri, fileName);
+              ch.appendLine(`${getTime()} [🔄INFO] Reload button clicked.`);
+            } catch {}
+            // Always clear highlight and stop stepping/auto-step on reload
+            const ed = editor;
+            if (ed && ed.document && ed.document.uri.toString() === editor.document.uri.toString()) {
+              clearStepHighlight(ed);
+            }
+            (panel as any)._steppingActive = false;
+            if ((panel as any)._autoStepTimer) {
+              try { clearInterval((panel as any)._autoStepTimer); } catch {}
+              (panel as any)._autoStepTimer = null;
+            }
+            (panel as any)._autoStepMode = false;
             // Enforce reserved-name conflicts on reload as well (consistent with first open)
             const docUri = editor.document.uri.toString();
             const fileName = path.basename(editor.document.fileName);
@@ -3810,10 +3828,13 @@ export function activate(context: vscode.ExtensionContext) {
             const delayMs = vscode.workspace.getConfiguration('liveP5').get<number>('stepRunDelayMs', 500);
             // If already stepping, just enable auto-advance from current position
             if ((panel as any)._steppingActive) {
-              try {
-                const ch = getOrCreateOutputChannel(docUri, fileName);
-                ch.appendLine(`${getTime()} [INFO] Step-run: continuing from current statement with ${delayMs}ms delay.`);
-              } catch {}
+              // If switching from single-step to step-run, log the transition
+              if (!(panel as any)._autoStepMode) {
+                try {
+                  const ch = getOrCreateOutputChannel(docUri, fileName);
+                  ch.appendLine(`${getTime()} [▶️INFO] Switched to STEP-RUN: continuing from current statement with ${delayMs}ms delay.`);
+                } catch {}
+              }
               // Stop any previous timer before starting a new one
               if ((panel as any)._autoStepTimer) {
                 try { clearInterval((panel as any)._autoStepTimer); } catch {}
@@ -3887,7 +3908,7 @@ export function activate(context: vscode.ExtensionContext) {
             const hasDraw = /\bfunction\s+draw\s*\(/.test(wrapped);
             try {
               const ch = getOrCreateOutputChannel(docUri, fileName);
-              ch.appendLine(`${getTime()} [INFO] Step-run: auto-advancing with ${delayMs}ms delay.`);
+              ch.appendLine(`${getTime()} [▶️INFO] STEP-RUN started: auto-advancing with ${delayMs}ms delay.`);
             } catch {}
             const afterLoad = () => {
               const { globals } = extractGlobalVariablesWithConflicts(wrapped);
@@ -3923,16 +3944,42 @@ export function activate(context: vscode.ExtensionContext) {
             const fileName = path.basename(editor.document.fileName);
             const rawCode = editor.document.getText();
             const isStepping = !!(panel as any)._steppingActive;
+            let logSingleStepStart = false;
+            let switchedFromAutoStep = false;
             // If auto-step is currently running, stop it to switch to manual stepping
+            let wasAutoStepMode = (panel as any)._autoStepMode;
             if ((panel as any)._autoStepTimer) {
               try { clearInterval((panel as any)._autoStepTimer); } catch {}
               (panel as any)._autoStepTimer = null;
               (panel as any)._autoStepMode = false;
+              // Only log if switching from step-run to single-step
+              if (wasAutoStepMode) {
+                switchedFromAutoStep = true;
+              }
             }
             if (isStepping) {
+              // If we just switched from auto-step to manual single-step, log the transition
+              if (switchedFromAutoStep) {
+                try {
+                  const ch = getOrCreateOutputChannel(docUri, fileName);
+                  ch.appendLine(`${getTime()} [⏯️INFO] Switched to SINGLE-STEP, click again to step trough statements.`);
+                } catch {}
+              }
               // Advance to next statement in the webview
               panel.webview.postMessage({ type: 'step-advance' });
               return;
+            }
+            // Log single-step mode start (merged)
+            logSingleStepStart = true;
+            if (logSingleStepStart) {
+              try {
+                const ch = getOrCreateOutputChannel(docUri, fileName);
+                if (switchedFromAutoStep) {
+                  ch.appendLine(`${getTime()} [⏯️INFO] Switched to SINGLE-STEP, click again to step trough statements.`);
+                } else {
+                  ch.appendLine(`${getTime()} [⏯️INFO] SINGLE-STEP started, click again to step trough statements.`);
+                }
+              } catch {}
             }
             // First click: enter stepping mode by instrumenting setup()
             // Friendly error for input misuse
@@ -3992,11 +4039,6 @@ export function activate(context: vscode.ExtensionContext) {
             const globals = extractGlobalVariables(instrumented);
             let rewrittenCode = rewriteUserCodeWithWindowGlobals(instrumented, globals);
             const hasDraw = /\bfunction\s+draw\s*\(/.test(wrapped);
-            // Log info
-            try {
-              const ch = getOrCreateOutputChannel(docUri, fileName);
-              ch.appendLine(`${getTime()} [INFO] Single-step mode: click the step button to advance.`);
-            } catch {}
             if (!hasDraw) {
               panel.webview.html = await createHtml(instrumented, panel, context.extensionPath);
               setTimeout(() => {
@@ -4046,7 +4088,7 @@ export function activate(context: vscode.ExtensionContext) {
               const docUri = editor.document.uri.toString();
               const fileName = path.basename(editor.document.fileName);
               const ch = getOrCreateOutputChannel(docUri, fileName);
-              ch.appendLine(`${getTime()} [INFO] Single-step finished.`);
+              ch.appendLine(`${getTime()} [▶️INFO] Code stepping finished.`);
             } catch {}
             (panel as any)._steppingActive = false;
           }
