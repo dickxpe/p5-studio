@@ -3,6 +3,17 @@
  * Enumerates a temporary p5 instance and creates blocks: p5_auto_<name>
  */
 (function(){
+  // Build an allowlist Set from window.ALLOWED_BLOCKS if present
+  var _ALLOWED_SET = null;
+  try {
+    if (window && Array.isArray(window.ALLOWED_BLOCKS)) {
+      _ALLOWED_SET = new Set(window.ALLOWED_BLOCKS);
+    }
+  } catch(_) {}
+  function isAllowedBlock(type){
+    if (!_ALLOWED_SET) return true; // no filter
+    try { return _ALLOWED_SET.has(type); } catch(_) { return true; }
+  }
   // --- Always register setup and draw blocks ---
   if (typeof Blockly !== 'undefined' && Blockly.Blocks) {
     // List of common p5 event/lifecycle functions to add as blocks
@@ -213,19 +224,21 @@ if (window._p5AutoBlockGenQueue && window.javascript && javascript.javascriptGen
   window._p5AutoBlockGenQueue = [];
 }
 
-      // Toolbox entry
+      // Toolbox entry (respect allowlist)
       const inputs = {};
       inputNames.forEach(n => {
         inputs[n] = { shadow: { type: 'math_number', fields: { NUM: 0 } } };
       });
-  const entry = { kind: 'block', type };
-      categoryContents.push(entry);
+      const entry = { kind: 'block', type };
+      if (isAllowedBlock(type)) {
+        categoryContents.push(entry);
+      }
       // Group by official p5 category if mapping provided
       try {
         const catMap = (window && window.P5_CATEGORY_MAP) || {};
         const category = catMap[name] || 'Uncategorized';
         if (!groupedContents[category]) groupedContents[category] = [];
-        groupedContents[category].push(entry);
+        if (isAllowedBlock(type)) groupedContents[category].push(entry);
       } catch(_) {}
     } catch(_) {}
   });
@@ -339,12 +352,13 @@ if (window._p5AutoBlockGenQueue && window.javascript && javascript.javascriptGen
     // Create categories in a stable order, skipping empties
     orderedCategoryNames.forEach(cat => {
       const contents = groupedContents[cat];
-      if (contents && contents.length) {
+      const filtered = contents ? contents.filter(Boolean) : [];
+      if (filtered && filtered.length) {
         window.toolbox.contents.push({
           kind: 'category',
           name: `p5 · ${cat}`,
           colour: CATEGORY_COLORS[cat] || '#9E9E9E',
-          contents
+          contents: filtered
         });
       }
     });
@@ -357,11 +371,20 @@ if (window._p5AutoBlockGenQueue && window.javascript && javascript.javascriptGen
     // });
     // Globals/constants category
     const globalsCategory = { kind: 'category', name: 'p5 globals & constants', colour: '#ffd180', contents: [] };
-    if (numOpts.length) globalsCategory.contents.push({ kind: 'block', type: 'p5_global_number' });
-    if (boolOpts.length) globalsCategory.contents.push({ kind: 'block', type: 'p5_global_boolean' });
-    if (strOpts.length) globalsCategory.contents.push({ kind: 'block', type: 'p5_global_string' });
-    if (constOpts.length) globalsCategory.contents.push({ kind: 'block', type: 'p5_constant' });
+    if (numOpts.length && isAllowedBlock('p5_global_number')) globalsCategory.contents.push({ kind: 'block', type: 'p5_global_number' });
+    if (boolOpts.length && isAllowedBlock('p5_global_boolean')) globalsCategory.contents.push({ kind: 'block', type: 'p5_global_boolean' });
+    if (strOpts.length && isAllowedBlock('p5_global_string')) globalsCategory.contents.push({ kind: 'block', type: 'p5_global_string' });
+    if (constOpts.length && isAllowedBlock('p5_constant')) globalsCategory.contents.push({ kind: 'block', type: 'p5_constant' });
     window.toolbox.contents.push(globalsCategory);
+    // Filter any pre-existing static toolbox blocks by allowlist
+    try {
+      if (_ALLOWED_SET && window.toolbox && Array.isArray(window.toolbox.contents)) {
+        window.toolbox.contents.forEach(cat => {
+          if (!cat || !Array.isArray(cat.contents)) return;
+          cat.contents = cat.contents.filter(e => !e || e.kind !== 'block' || isAllowedBlock(e.type));
+        });
+      }
+    } catch(_) {}
     // If a workspace already exists, update its toolbox now
     try {
       const ws = Blockly.getMainWorkspace && Blockly.getMainWorkspace();

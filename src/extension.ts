@@ -2292,6 +2292,30 @@ export function activate(context: vscode.ExtensionContext) {
   const autoBlocksJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'p5_autoblocks.js')));
     const p5Js = webview.asWebviewUri(vscode.Uri.file(path.join(context.extensionPath, 'assets', 'p5.min.js')));
 
+    // Try to read the exported allowlist of blocks from blockly_categories.json
+    let allowedBlocksScript = '';
+    try {
+      const allowPath = path.join(context.extensionPath, 'blockly', 'blockly_categories.json');
+      if (fs.existsSync(allowPath)) {
+        const txt = fs.readFileSync(allowPath, 'utf8');
+        try {
+          const obj = JSON.parse(txt);
+          const allowed = new Set<string>();
+          if (obj && Array.isArray(obj.categories)) {
+            for (const cat of obj.categories) {
+              if (cat && Array.isArray(cat.blocks)) {
+                for (const b of cat.blocks) {
+                  if (typeof b === 'string' && b.trim()) allowed.add(b);
+                }
+              }
+            }
+          }
+          const arr = Array.from(allowed);
+          allowedBlocksScript = `<script nonce="${nonce}">\nwindow.ALLOWED_BLOCKS = ${JSON.stringify(arr)};\n</script>`;
+        } catch { /* ignore parse errors */ }
+      }
+    } catch { /* ignore file errors */ }
+
     // Build a name->category map for p5 functions based on p5types/src folder structure
     function buildP5CategoryMap(): Record<string, string> {
       const map: Record<string, string> = {};
@@ -2493,6 +2517,7 @@ export function activate(context: vscode.ExtensionContext) {
       </div>
 
     <script nonce="${nonce}" src="${toolboxJs}"></script>
+    ${allowedBlocksScript}
     <script nonce="${nonce}" src="${blocksJs}"></script>
     <script nonce="${nonce}" src="${generatorsJs}"></script>
     <script nonce="${nonce}">

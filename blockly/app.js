@@ -6,6 +6,15 @@
 
 (function(){
   // --- Dynamically populate 'p5 Quickstart' category when auto blocks are ready ---
+  function isAllowedBlock(type){
+    try {
+      const arr = window.ALLOWED_BLOCKS;
+      if (!arr) return true;
+      if (Array.isArray(arr)) return arr.indexOf(type) >= 0;
+      return !!arr[type];
+    } catch (e) { return true; }
+  }
+
   function populateP5QuickstartCategory() {
     // Find the category in the toolbox
     if (!window.toolbox || !window.toolbox.contents) return;
@@ -14,7 +23,7 @@
     // Only add blocks if they exist in Blockly.Blocks
   const blockTypes = ['p5_draw', 'p5_setup', 'p5_auto_createCanvas', 'p5_auto_background'];
     quickCat.contents = blockTypes
-      .filter(type => Blockly.Blocks && Blockly.Blocks[type])
+      .filter(type => (Blockly.Blocks && Blockly.Blocks[type]) && isAllowedBlock(type))
       .map(type => ({ kind: 'block', type }));
     // Refresh the toolbox in the workspace
     try { ws.updateToolbox(window.toolbox); } catch (e) {}
