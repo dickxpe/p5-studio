@@ -231,6 +231,12 @@
           "description": "OSC remote address (host to send OSC messages to).",
           "order": 10
         },
+        "liveP5.oscLocalAddress": {
+          "type": "string",
+          "default": "127.0.0.1",
+          "description": "OSC local bind address for receiving (e.g. '127.0.0.1' for localhost only, or '0.0.0.0' to accept from the network).",
+          "order": 10.5
+        },
         "liveP5.oscRemotePort": {
           "type": "number",
           "default": 57120,

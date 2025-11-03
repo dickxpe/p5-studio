@@ -25,3 +25,8 @@ function output(...args) {
     // This is a stub for autocompletion only.
     // The real implementation is injected in the webview.
 }
+
+function oscArgsToArray(args) {
+    const list = Array.isArray(args) ? args : [args];
+    return list.map(arg => (arg && typeof arg === 'object' && 'value' in arg) ? arg.value : arg);
+}

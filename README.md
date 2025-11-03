@@ -26,7 +26,7 @@ LIVE P5 LAUNCHER is a Visual Studio Code extension that brings live coding and r
 - **Capture:** Record animations or graphics from the webview with a record button.
 - **Save images:¨** Right click on your canvas to copy or save the current image.
 - **Duplicate sketches:** Right click on a file and duplicate it.
-- **OSC Bridge:** Send and Receive OSC messages with SendOSC(address,arguments) and the receivedOSC eventhandler.
+- **OSC Bridge:** Send and Receive OSC messages with `sendOSC(address, args)` and the `receivedOSC(address, args)` handler.
 
 ## How to Use
 1. **Install the Extension:**
@@ -76,6 +76,7 @@ All settings are under the `liveP5` namespace. You can configure these in your V
 | `liveP5.SingleP5Panel` | boolean | `true` | If enabled, only one P5 webpanel can be open at a time. Opening a new panel closes all others. |
 | `liveP5.showSetupNotification` | boolean | `true` | Show a setup prompt when the workspace has no P5 marker (`.p5`). |
 | `liveP5.oscRemoteAddress` | string | `127.0.0.1` | OSC remote address (host to send OSC messages to). |
+| `liveP5.oscLocalAddress` | string | `127.0.0.1` | OSC local bind address for receiving. Use `127.0.0.1` for local-only; set to `0.0.0.0` to accept from the network. |
 | `liveP5.oscRemotePort` | number | `57120` | OSC remote port (port to send OSC messages to). |
 | `liveP5.oscLocalPort` | number | `57121` | OSC local port (port to listen for incoming OSC messages). |
 
@@ -90,11 +91,11 @@ LIVE P5 Launcher supports sending and receiving OSC (Open Sound Control) message
 ### Usage
 
 #### Sending OSC messages from your sketch
-Use the global function `SendOSC(address, args)` in your p5.js code:
+Use the global function `sendOSC(address, args)` in your p5.js code:
 
 ```js
 // Send a message to /myAddress with two arguments
-SendOSC('/myAddress', [42, 'hello']);
+sendOSC('/myAddress', [42, 'hello']);
 ```
 - `address`: The OSC address string (e.g., `/myAddress`)
 - `args`: An array of arguments (numbers, strings, booleans)
@@ -104,20 +105,30 @@ Define a global function `receivedOSC(address, args)` in your sketch. This funct
 
 ```js
 function receivedOSC(address, args) {
-   print('Received OSC:', address, args);
+   // Convert OSC metadata objects (from osc.js) into plain JS values
+   const values = oscArgsToArray(args);
+   output('Received OSC:', address, values[0]);
    // Handle incoming OSC messages here
 }
 ```
 - `address`: The OSC address string of the received message
-- `args`: An array of arguments
+- `args`: An array of arguments (often objects like `{ type, value }` when sent with metadata)
+
+#### Helper: `oscArgsToArray(args)`
+OSC args can be delivered with type metadata objects. The helper `oscArgsToArray(args)` converts these into a plain array of JavaScript values.
 
 ### Configuration
 You can configure the OSC connection in your VS Code settings:
 - `liveP5.oscRemoteAddress`: The remote host to send OSC messages to (default: `127.0.0.1`)
+- `liveP5.oscLocalAddress`: The local bind address to receive on (default: `127.0.0.1`; set to `0.0.0.0` for LAN).
 - `liveP5.oscRemotePort`: The remote port to send OSC messages to (default: `57120`)
 - `liveP5.oscLocalPort`: The local port to listen for incoming OSC messages (default: `57121`)
 
 This allows you to connect your p5.js sketches to other creative coding tools, DAWs, or hardware that support OSC.
+
+### Tips & self-test
+- To self-test without an external server, temporarily set `liveP5.oscRemotePort` to match `liveP5.oscLocalPort` (default `57121`) and call `sendOSC('/test', [1,'a',true])` from your sketch. You should see `receivedOSC` fire.
+- To receive from another device on your network, set `liveP5.oscLocalAddress` to `0.0.0.0`, keep `liveP5.oscLocalPort` (e.g., `57121`), and send to your computer’s LAN IP at that port.
 
 ## Tips
 - For autocompletion of functions in import/common files, use a `jsconfig.json` and/or JSDoc references.

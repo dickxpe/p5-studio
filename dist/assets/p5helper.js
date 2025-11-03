@@ -1,1 +1,1 @@
-const MEDIA_FOLDER="",INCLUDE_FOLDER="";function sendOSC(n,t){}function output(...n){}
+const MEDIA_FOLDER="",INCLUDE_FOLDER="";function sendOSC(n,o){}function output(...n){}function oscArgsToArray(n){return(Array.isArray(n)?n:[n]).map(n=>n&&"object"==typeof n&&"value"in n?n.value:n)}

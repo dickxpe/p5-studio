@@ -23,3 +23,18 @@ declare function sendOSC(address: string, args?: any[]): void;
  * @param args Values to print
  */
 declare function output(...args: any[]): void;
+
+/**
+ * Convert OSC argument objects (with metadata) into plain JS values.
+ * The extension delivers OSC args as objects like { type: 'f'|'i'|'s'|'T'|'F', value: any }.
+ * This helper maps those to their primitive values, preserving non-object items as-is.
+ *
+ * Example:
+ *   // [{type:'f',value:1.23}, {type:'s',value:'hi'}, {type:'T',value:true}] -> [1.23, 'hi', true]
+ *   const values = oscArgsToArray(args);
+ *
+ * @param args A single OSC argument or an array of arguments.
+ * @returns A plain array of values.
+ */
+declare function oscArgsToArray(args: any[] | any): any[];
+

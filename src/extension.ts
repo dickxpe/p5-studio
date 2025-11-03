@@ -17,6 +17,8 @@ const autoReloadListenersMap = new Map<
 
 const outputChannelMap = new Map<string, vscode.OutputChannel>();
 let lastActiveOutputChannel: vscode.OutputChannel | null = null; // <--- NEW
+// Global OSC diagnostics output channel
+const oscOutputChannel: vscode.OutputChannel = vscode.window.createOutputChannel('LIVE P5: OSC');
 
 // Single-step highlight decoration (one at a time per editor)
 let stepHighlightDecoration: vscode.TextEditorDecorationType | null = null;
@@ -936,6 +938,12 @@ window.sendOSC = function(address, args) {
   if (typeof vscode !== "undefined" && address) {
     vscode.postMessage({ type: "oscSend", address, args: Array.isArray(args) ? args : [] });
   }
+};
+// Helper: normalize OSC args (supports osc.js metadata objects)
+// Example inputs: 42, [1,2], [{type:'i', value: 3}] -> returns plain JS values array
+window.oscArgsToArray = function(args) {
+  const list = Array.isArray(args) ? args : [args];
+  return list.map(arg => (arg && typeof arg === 'object' && 'value' in arg) ? arg.value : arg);
 };
 // Only window.receivedOSC(address, args) is supported for incoming OSC messages.
 window.addEventListener("message", function(e) {
@@ -2275,6 +2283,7 @@ function instrumentSetupForSingleStep(code: string, lineOffset: number): string 
 function getOscConfig() {
   const config = vscode.workspace.getConfiguration('liveP5');
   return {
+    localAddress: config.get<string>('oscLocalAddress', '127.0.0.1'),
     remoteAddress: config.get<string>('oscRemoteAddress', '127.0.0.1'),
     remotePort: config.get<number>('oscRemotePort', 57120),
     localPort: config.get<number>('oscLocalPort', 57121)
@@ -2288,9 +2297,9 @@ function setupOscPort() {
     try { oscPort.close(); } catch { }
     oscPort = null;
   }
-  const { remoteAddress, remotePort, localPort } = getOscConfig();
+  const { localAddress, remoteAddress, remotePort, localPort } = getOscConfig();
   oscPort = new osc.UDPPort({
-    localAddress: "127.0.0.1", // Use 127.0.0.1 for local loopback to ensure self-sending works
+    localAddress, // Bind to configured address (127.0.0.1 for localhost, or 0.0.0.0 for LAN)
     localPort,
     remoteAddress,
     remotePort,
@@ -2301,9 +2310,16 @@ function setupOscPort() {
   oscPort.on("ready", function () {
     // Enable loopback for self-sent messages (for some platforms, not always needed)
     // No-op: osc.js will deliver messages sent to remoteAddress:remotePort if that matches localAddress:localPort
+    try {
+      const cfg = getOscConfig();
+      oscOutputChannel.appendLine(`${getTime()} [OSC] Listening on ${cfg.localAddress}:${cfg.localPort} | Remote target ${cfg.remoteAddress}:${cfg.remotePort}`);
+    } catch {}
   });
 
   oscPort.on("message", function (oscMsg: any) {
+    try {
+      oscOutputChannel.appendLine(`${getTime()} [OSC] RX ${oscMsg.address} ${JSON.stringify(oscMsg.args)}`);
+    } catch {}
     if (activeP5Panel) {
       activeP5Panel.webview.postMessage({
         type: "oscReceive",
@@ -2312,6 +2328,12 @@ function setupOscPort() {
       });
     }
   });
+
+  try {
+    (oscPort as any).on && (oscPort as any).on('error', (err: any) => {
+      try { oscOutputChannel.appendLine(`${getTime()} [OSC] Error: ${err && err.message ? err.message : String(err)}`); } catch {}
+    });
+  } catch {}
 }
 setupOscPort();
 
@@ -4476,6 +4498,7 @@ text("P5", 50, 52);`;
   // Listen for OSC config changes and re-create port if needed
   vscode.workspace.onDidChangeConfiguration(e => {
     if (
+      e.affectsConfiguration('liveP5.oscLocalAddress') ||
       e.affectsConfiguration('liveP5.oscRemoteAddress') ||
       e.affectsConfiguration('liveP5.oscRemotePort') ||
       e.affectsConfiguration('liveP5.oscLocalPort')
