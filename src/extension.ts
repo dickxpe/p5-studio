@@ -2319,6 +2319,26 @@ setupOscPort();
 // Activate
 // ----------------------------
 export function activate(context: vscode.ExtensionContext) {
+  // --- Ensure restored LIVE/Blockly webviews are closed on VS Code reopen ---
+  try {
+    const liveSerializer = vscode.window.registerWebviewPanelSerializer('extension.live-p5', {
+      async deserializeWebviewPanel(panel: vscode.WebviewPanel, _state: any) {
+        // Close any restored LIVE P5 panels so empty tabs don't linger after restart
+        try { panel.dispose(); } catch {}
+      }
+    });
+    context.subscriptions.push(liveSerializer);
+  } catch {}
+
+  try {
+    const blocklySerializer = vscode.window.registerWebviewPanelSerializer('blocklyPanel', {
+      async deserializeWebviewPanel(panel: vscode.WebviewPanel, _state: any) {
+        // Close any restored Blockly panels on restart
+        try { panel.dispose(); } catch {}
+      }
+    });
+    context.subscriptions.push(blocklySerializer);
+  } catch {}
   // Create output channel and register with context to ensure it appears in Output panel
   // --- Simple Semicolon Linter (Problems panel) ---
   const semicolonDiagnostics = vscode.languages.createDiagnosticCollection('semicolon-linter');
