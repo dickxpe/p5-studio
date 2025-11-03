@@ -277,6 +277,14 @@
           "description": "Blockly theme to use in the Blockly panel. 'auto' currently resolves to 'dark'.",
           "order": 15
         }
+        ,
+        "liveP5.stepRunDelayMs": {
+          "type": "number",
+          "default": 250,
+          "minimum": 0,
+          "description": "Delay (in milliseconds) used by the Step-Run button between setup() statements and at the start of each loop iteration.",
+          "order": 16
+        }
       }
     },
     "keybindings": [

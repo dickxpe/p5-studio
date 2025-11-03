@@ -380,6 +380,7 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string,
       stmt.body && stmt.body.body
     ) {
       setupFound = true;
+      const originalStmt: any = stmt;
       const newSetupBody = [
         ...globalAssignments, // Inject assignments at the start
         ...stmt.body.body
@@ -398,11 +399,14 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string,
           )
         )
       );
-      stmt = recast.types.builders.functionDeclaration(
+      let newFn = recast.types.builders.functionDeclaration(
         stmt.id,
         stmt.params,
         recast.types.builders.blockStatement(newSetupBody)
       );
+      // Preserve async flag if original setup was async (needed for step-run instrumentation)
+      (newFn as any).async = !!(originalStmt as any).async;
+      stmt = newFn as any;
       newBody.push(stmt);
       continue;
     }
@@ -412,6 +416,7 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string,
       stmt.type === 'FunctionDeclaration' &&
       stmt.id && P5_EVENT_HANDLERS.includes(stmt.id.name)
     ) {
+      const originalStmt: any = stmt;
       const origBody = stmt.body.body;
       const guardedBody = [
         recast.types.builders.ifStatement(
@@ -428,11 +433,14 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string,
         ),
         ...origBody
       ];
-      stmt = recast.types.builders.functionDeclaration(
+      let newFn = recast.types.builders.functionDeclaration(
         stmt.id,
         stmt.params,
         recast.types.builders.blockStatement(guardedBody)
       );
+      // Preserve async if the original handler was async (unlikely, but keep semantics)
+      (newFn as any).async = !!(originalStmt as any).async;
+      stmt = newFn as any;
     }
 
     newBody.push(stmt);
@@ -465,7 +473,7 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string,
 
   ast.program.body = newBody;
 
-  recast.types.visit(ast, {
+    recast.types.visit(ast, {
     visitIdentifier(path) {
       const name = path.value.name;
       if (
@@ -760,6 +768,9 @@ async function createHtml(
 
   const reloadIconPath = vscode.Uri.file(path.join(extensionPath, 'images', 'reload.svg'));
   const reloadIconUri = panel.webview.asWebviewUri(reloadIconPath);
+  const stepIconPath = vscode.Uri.file(path.join(extensionPath, 'images', 'pauzeReload.svg'));
+  const stepIconUri = panel.webview.asWebviewUri(stepIconPath);
+  const stepRunDelayMs = vscode.workspace.getConfiguration('liveP5').get<number>('stepRunDelayMs', 500);
 
   const showReloadButton = vscode.workspace
     .getConfiguration('liveP5')
@@ -822,7 +833,7 @@ async function createHtml(
       // Fallback: just p5 and p5.sound
       scriptTags = `<script src='${p5UriWithCacheBust}'></script>\n` +
         `<script src='${p5SoundUriWithCacheBust}'></script>`;
-      `<script src='${p5CaptureUriWithCacheBust}'></script>`;
+      // capture is optional in fallback
     }
   } catch (e) { /* ignore */ }
 
@@ -1085,7 +1096,8 @@ canvas.p5Canvas{
   display: flex;
   flex-direction: row;
   gap: 10px;
-  z-index: 9999;
+  /* Keep toolbar above overlays so buttons remain clickable even when an overlay is visible */
+  z-index: 10003;
 }
 #reload-button {
   width: 16px; height: 16px;
@@ -1095,6 +1107,14 @@ canvas.p5Canvas{
 }
 #reload-button img { width: 12px; height: 12px; }
 #reload-button[style*="display: none"] { display: none !important; }
+#step-run-button {
+  width: 16px; height: 16px;
+  background: white; border-radius: 4px; display: flex;
+  align-items: center; justify-content: center; cursor: pointer;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+#step-run-button img { width: 12px; height: 12px; }
+#step-run-button[style*="display: none"] { display: none !important; }
 #capture-toggle-button {
   width: 16px; height: 16px;
   background: white; border-radius: 4px; display: flex;
@@ -1162,131 +1182,6 @@ canvas.p5Canvas{
   transform: translateY(100%);
   transition: opacity 0.2s cubic-bezier(.4,0,.2,1), transform 0.2s cubic-bezier(.4,0,.2,1);
 }
-#p5-var-drawer-tab.tab-visible {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-input[type=number]::-webkit-inner-spin-button, 
-input[type=number]::-webkit-outer-spin-button {
-  opacity: 1;
-}
-
-/* Hide spin buttons when input is readonly OR when the var-controls container is marked readonly.
-   This covers WebKit/Blink and provides a Firefox fallback by forcing textfield appearance. */
-input[readonly][type=number]::-webkit-inner-spin-button,
-input[readonly][type=number]::-webkit-outer-spin-button,
-#p5-var-controls.vars-readonly input[type=number]::-webkit-inner-spin-button,
-#p5-var-controls.vars-readonly input[type=number]::-webkit-outer-spin-button {
-  opacity: 0;
-  -webkit-appearance: none;
-  margin: 0;
-  width: 0;
-  height: 0;
-}
-
-/* Firefox: remove the number spinner arrows by using textfield appearance on readonly/readonly-container */
-input[readonly][type=number],
-#p5-var-controls.vars-readonly input[type=number] {
-  -moz-appearance: textfield;
-}
-
-#p5-var-controls {
-  position: fixed;
-  left: 0; right: 0; bottom: 0;
-  background: #1f1f1f;
-  z-index: 10000;
-  padding: 4px 12px 2px 12px;
-  font-family: monospace;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 4px 10px;
-  max-height: calc(3 * 2.0em);
-  overflow-y: auto;
-  transition: transform 0.2s cubic-bezier(.4,0,.2,1), box-shadow 0.2s;
-  box-shadow: 0 -2px 8px rgba(0,0,0,0.2);
-}
-#p5-var-controls.drawer-hidden {
-  transform: translateY(100%);
-  box-shadow: none;
-}
-#p5-var-controls .drawer-toggle {
-  position: absolute;
-  top: 2px;
-  right: 4px;
-  background: none;
-  border: none;
-  color: #fff;
-  font-size: 16px;
-  cursor: pointer;
-  z-index: 10001;
-  padding: 2px 4px;
-  transition: color 0.2s;
-}
-#p5-var-controls .drawer-toggle:hover {
-  color: #ff0;
-}
-
-.arrow:hover {
-  color: #ff0;
-}
-#p5-var-drawer-tab {
-  display: none;
-  position: fixed;
-  right: 0px;
-  bottom: 0;
-  background: #1f1f1f;
-  color: #fff;
-  border-radius: 6px 0px 0px 0px;
-  padding: 0px 4px 2px 4px;
-  font-family: monospace;
-  font-size: 20px;
-  z-index: 10001;
-  box-shadow: 0 -2px 8px rgba(0,0,0,0.2);
-  cursor: pointer;
-  min-width: 24px;
-  min-height: 28px;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  transform: translateY(100%);
-  transition: opacity 0.2s cubic-bezier(.4,0,.2,1), transform 0.2s cubic-bezier(.4,0,.2,1);
-}
-#p5-var-drawer-tab.tab-visible {
-  opacity: 1;
-  transform: translateY(0);
-}
-input[type=number]::-webkit-inner-spin-button, 
-input[type=number]::-webkit-outer-spin-button {
-  opacity: 1;
-}
-  #p5-var-controls input {
-  width: 63px;
-}
-  #p5-var-controls input[type=checkbox] {
-    width: 16px;
-}
-
-/* Hide spin buttons when input is readonly OR when the var-controls container is marked readonly.
-   This covers WebKit/Blink and provides a Firefox fallback by forcing textfield appearance. */
-input[readonly][type=number]::-webkit-inner-spin-button,
-input[readonly][type=number]::-webkit-outer-spin-button,
-#p5-var-controls.vars-readonly input[type=number]::-webkit-inner-spin-button,
-#p5-var-controls.vars-readonly input[type=number]::-webkit-outer-spin-button {
-  opacity: 0;
-  -webkit-appearance: none;
-  margin: 0;
-  width: 0;
-  height: 0;
-}
-
-/* Firefox: remove the number spinner arrows by using textfield appearance on readonly/readonly-container */
-input[readonly][type=number],
-#p5-var-controls.vars-readonly input[type=number] {
-  -moz-appearance: textfield;
-}
-
 </style>
 </head>
 <body>
@@ -1304,6 +1199,7 @@ input[readonly][type=number],
   </div>
 <div id="p5-toolbar">
   <div id="reload-button" style="display:${showReloadButton ? 'flex' : 'none'}"><img src="${reloadIconUri}" title="Reload P5 Sketch"></div>
+  <div id="step-run-button" title="Run with ${stepRunDelayMs}ms delay between statements and per loop iteration"><img src="${stepIconUri}" /></div>
   <div id="capture-toggle-button" title="Toggle P5 Capture Panel"></div>
 </div>
 <script>
@@ -1580,6 +1476,9 @@ waitForP5AndRunSketch();
 
 document.getElementById("reload-button").addEventListener("click",()=>{
   vscode.postMessage({type:"reload-button-clicked", preserveGlobals: true});
+});
+document.getElementById("step-run-button").addEventListener("click",()=>{
+  vscode.postMessage({type:"step-run-clicked"});
 });
 
 window.addEventListener("resize",()=>{ 
@@ -1986,6 +1885,118 @@ function syncDrawerWithGlobals() {
 </script>
 </body>
 </html>`;
+}
+
+// Instrument setup() to insert `await __sleep(delayMs)` between top-level statements/blocks.
+// Returns original code if setup() cannot be found.
+function instrumentSetupWithDelays(code: string, delayMs: number): string {
+  try {
+    const acorn = require('acorn');
+    const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
+
+    let changed = false;
+    recast.types.visit(ast, {
+      visitFunctionDeclaration(path) {
+        const node: any = path.value;
+        if (node.id && node.id.name === 'setup' && node.body && Array.isArray(node.body.body)) {
+          // Ensure async
+          node.async = true;
+          const b = recast.types.builders;
+          // const __sleep = (ms) => new Promise(r => setTimeout(r, ms));
+          const sleepDecl = b.variableDeclaration('const', [
+            b.variableDeclarator(
+              b.identifier('__sleep'),
+              b.arrowFunctionExpression(
+                [b.identifier('ms')],
+                b.newExpression(
+                  b.identifier('Promise'),
+                  [b.arrowFunctionExpression(
+                    [b.identifier('r')],
+                    b.callExpression(
+                      b.identifier('setTimeout'),
+                      [b.identifier('r'), b.identifier('ms')]
+                    )
+                  )]
+                )
+              )
+            )
+          ]);
+          const makeAwaitStmt = () => b.expressionStatement(
+            b.awaitExpression(
+              b.callExpression(b.identifier('__sleep'), [b.literal(delayMs)])
+            )
+          );
+
+          // Add an await at the start of every loop body inside setup(), but do not descend into nested functions
+          recast.types.visit(node.body, {
+            visitFunctionDeclaration(p) { return false; },
+            visitFunctionExpression(p) { return false; },
+            visitArrowFunctionExpression(p) { return false; },
+            visitForStatement(p) {
+              const loop: any = p.value;
+              if (loop.body && loop.body.type === 'BlockStatement') {
+                loop.body.body.unshift(makeAwaitStmt());
+              } else if (loop.body) {
+                loop.body = b.blockStatement([makeAwaitStmt(), loop.body]);
+              }
+              this.traverse(p);
+            },
+            visitWhileStatement(p) {
+              const loop: any = p.value;
+              if (loop.body && loop.body.type === 'BlockStatement') {
+                loop.body.body.unshift(makeAwaitStmt());
+              } else if (loop.body) {
+                loop.body = b.blockStatement([makeAwaitStmt(), loop.body]);
+              }
+              this.traverse(p);
+            },
+            visitDoWhileStatement(p) {
+              const loop: any = p.value;
+              if (loop.body && loop.body.type === 'BlockStatement') {
+                loop.body.body.unshift(makeAwaitStmt());
+              } else if (loop.body) {
+                loop.body = b.blockStatement([makeAwaitStmt(), loop.body]);
+              }
+              this.traverse(p);
+            },
+            visitForInStatement(p) {
+              const loop: any = p.value;
+              if (loop.body && loop.body.type === 'BlockStatement') {
+                loop.body.body.unshift(makeAwaitStmt());
+              } else if (loop.body) {
+                loop.body = b.blockStatement([makeAwaitStmt(), loop.body]);
+              }
+              this.traverse(p);
+            },
+            visitForOfStatement(p) {
+              const loop: any = p.value;
+              if (loop.body && loop.body.type === 'BlockStatement') {
+                loop.body.body.unshift(makeAwaitStmt());
+              } else if (loop.body) {
+                loop.body = b.blockStatement([makeAwaitStmt(), loop.body]);
+              }
+              this.traverse(p);
+            },
+          });
+
+          const orig = node.body.body.slice();
+          const interleaved: any[] = [sleepDecl];
+          for (let i = 0; i < orig.length; i++) {
+            interleaved.push(orig[i]);
+            interleaved.push(makeAwaitStmt());
+          }
+          node.body.body = interleaved;
+          changed = true;
+          return false; // do not traverse into this function further
+        }
+        this.traverse(path);
+      }
+    });
+    if (!changed) return code;
+    return recast.print(ast).code;
+  } catch (e) {
+    return code;
+  }
 }
 
 // --- OSC SETUP ---
@@ -3510,6 +3521,106 @@ export function activate(context: vscode.ExtensionContext) {
               panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: false });
               setTimeout(() => {
                 const { globals } = extractGlobalVariablesWithConflicts(code);
+                let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+                const hiddenSet = getHiddenGlobalsByDirective(editor.document.getText());
+                if (hiddenSet.size > 0) {
+                  filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name));
+                }
+                const readOnly = hasOnlySetup(editor.document.getText());
+                panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
+              }, 200);
+            }
+          }
+          // --- STEP RUN HANDLER ---
+          else if (msg.type === 'step-run-clicked') {
+            // Similar to reload, but instrument setup() to add 500ms delays between top-level statements
+            const docUri = editor.document.uri.toString();
+            const fileName = path.basename(editor.document.fileName);
+            const rawCode = editor.document.getText();
+            const delayMs = vscode.workspace.getConfiguration('liveP5').get<number>('stepRunDelayMs', 500);
+            // Info log for quick feedback
+            try {
+              const ch = getOrCreateOutputChannel(docUri, fileName);
+              ch.appendLine(`${getTime()} [INFO] Step run: delaying setup() by ${delayMs}ms between statements and per loop iteration`);
+            } catch {}
+            // Friendly error for input misuse
+            if (hasNonTopInputUsage(rawCode)) {
+              panel.webview.html = await createHtml('', panel, context.extensionPath);
+              setTimeout(() => {
+                panel.webview.postMessage({ type: 'showError', message: 'input can only be used at the top' });
+              }, 150);
+              const outputChannel = getOrCreateOutputChannel(docUri, fileName);
+              outputChannel.appendLine(`${getTime()} [‼️RUNTIME ERROR in ${fileName}] input can only be used at the top`);
+              return;
+            }
+            // Log semicolon warnings on explicit action
+            logSemicolonWarningsForDocument(editor.document);
+            // Optionally block sketch on warning
+            {
+              const blockOnWarning = vscode.workspace.getConfiguration('liveP5').get<boolean>('BlockSketchOnWarning', true);
+              const warn = hasSemicolonWarnings(editor.document);
+              if (blockOnWarning && warn.has) {
+                panel.webview.html = await createHtml('', panel, context.extensionPath);
+                return;
+              }
+            }
+            // Reserved-name conflicts block execution
+            const { conflicts } = extractGlobalVariablesWithConflicts(rawCode);
+            if (conflicts.length > 0) {
+              const outputChannel = getOrCreateOutputChannel(docUri, fileName);
+              let syntaxErrorMsg = `${getTime()} [‼️SYNTAX ERROR in ${fileName}] Reserved variable name(s) used: ${conflicts.join(', ')}`;
+              syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
+              panel.webview.html = await createHtml('', panel, context.extensionPath);
+              setTimeout(() => {
+                panel.webview.postMessage({ type: 'syntaxError', message: stripLeadingTimestamp(syntaxErrorMsg) });
+              }, 150);
+              outputChannel.appendLine(syntaxErrorMsg);
+              (panel as any)._lastSyntaxError = syntaxErrorMsg;
+              (panel as any)._lastRuntimeError = null;
+              return;
+            }
+            // Handle top-level input() placeholders with cache-aware preprocessing
+            const inputsBefore = detectTopLevelInputs(rawCode);
+            let codeForRun = rawCode;
+            if (inputsBefore.length > 0) {
+              const key = editor.document.fileName;
+              if (hasCachedInputsForKey(key, inputsBefore)) {
+                _allowInteractiveTopInputs = false;
+                codeForRun = await preprocessTopLevelInputs(rawCode, { key, interactive: false });
+                _allowInteractiveTopInputs = true;
+              } else {
+                // No cache: show overlay (prefill with defaults)
+                panel.webview.html = await createHtml('', panel, context.extensionPath);
+                setTimeout(() => {
+                  panel.webview.postMessage({ type: 'showTopInputs', items: inputsBefore });
+                }, 150);
+                return;
+              }
+            }
+            // Wrap and instrument setup()
+            let wrapped = wrapInSetupIfNeeded(codeForRun);
+            let instrumented = instrumentSetupWithDelays(wrapped, delayMs);
+            const globals = extractGlobalVariables(instrumented);
+            let rewrittenCode = rewriteUserCodeWithWindowGlobals(instrumented, globals);
+            const hasDraw = /\bfunction\s+draw\s*\(/.test(wrapped);
+            if (!hasDraw) {
+              // For sketches without draw(), replace HTML so it reruns from scratch with instrumented code
+              panel.webview.html = await createHtml(instrumented, panel, context.extensionPath);
+              setTimeout(() => {
+                const { globals } = extractGlobalVariablesWithConflicts(wrapped);
+                let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+                const hiddenSet = getHiddenGlobalsByDirective(editor.document.getText());
+                if (hiddenSet.size > 0) {
+                  filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name));
+                }
+                const readOnly = hasOnlySetup(editor.document.getText());
+                panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
+              }, 200);
+            } else {
+              // For sketches with draw(), perform a normal reload with rewritten (instrumented) code
+              panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: false });
+              setTimeout(() => {
+                const { globals } = extractGlobalVariablesWithConflicts(wrapped);
                 let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
                 const hiddenSet = getHiddenGlobalsByDirective(editor.document.getText());
                 if (hiddenSet.size > 0) {
