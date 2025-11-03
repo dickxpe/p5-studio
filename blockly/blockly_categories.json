@@ -21,40 +21,16 @@
       ]
     },
     {
-      "name": "p5 Events",
+      "name": "p5 · Events",
       "colour": "#FF8A65",
       "blocks": [
         "p5_setup",
-        "p5_draw",
-        "p5_mouseMoved",
-        "p5_mouseDragged",
-        "p5_mousePressed",
-        "p5_mouseReleased",
-        "p5_mouseClicked",
-        "p5_doubleClicked",
-        "p5_mouseWheel",
-        "p5_keyPressed",
-        "p5_keyReleased",
-        "p5_keyTyped",
-        "p5_windowResized",
-        "p5_preload",
-        "p5_touchStarted",
-        "p5_touchMoved",
-        "p5_touchEnded",
-        "p5_deviceMoved",
-        "p5_deviceTurned",
-        "p5_deviceShaken",
-        "p5_resized",
-        "p5_focused",
-        "p5_unfocused",
-        "p5_blurred",
-        "p5_entered",
-        "p5_exited"
+        "p5_draw"
       ]
     },
     {
       "name": "Logic",
-      "categorystyle": "logic_category",
+  "colour": "#FF0000",
       "blocks": [
         "controls_if",
         "logic_compare",
@@ -65,7 +41,7 @@
     },
     {
       "name": "Loops",
-      "categorystyle": "loop_category",
+     "colour": "#FF0000",
       "blocks": [
         "controls_repeat_ext",
         "controls_whileUntil",
@@ -76,7 +52,7 @@
     },
     {
       "name": "Math",
-      "categorystyle": "math_category",
+     "colour": "#FF0000",
       "blocks": [
         "math_arithmetic",
         "math_single",
@@ -94,7 +70,7 @@
     },
     {
       "name": "Text",
-      "categorystyle": "text_category",
+    "colour": "#FF0000",
       "blocks": [
         "text_join",
         "text_append",
@@ -112,7 +88,7 @@
     },
     {
       "name": "Lists",
-      "categorystyle": "list_category",
+      "colour": "#FF0000",
       "blocks": [
         "lists_create_with",
         "lists_create_with",
@@ -130,7 +106,7 @@
     },
     {
       "name": "Values",
-      "categorystyle": "value_category",
+"colour": "#FF0000",
       "blocks": [
         "math_number",
         "text",
@@ -139,19 +115,19 @@
     },
     {
       "name": "Variables",
-      "categorystyle": "variable_category",
+     "colour": "#FF0000",
       "custom": "VARIABLE",
       "blocks": []
     },
     {
       "name": "Functions",
-      "categorystyle": "procedure_category",
+  "colour": "#FF0000",
       "custom": "PROCEDURE",
       "blocks": []
     },
     {
       "name": "Debug",
-      "categorystyle": "debug_category",
+      "colour": "#FF0000",
       "blocks": [
         "output",
         "input"
@@ -376,7 +352,7 @@
       ]
     },
     {
-      "name": "p5 · Events",
+      "name": "p5 · Input",
       "colour": "#FF8A65",
       "blocks": [
         "p5_auto_deviceMoved",

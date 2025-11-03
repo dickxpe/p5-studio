@@ -42,6 +42,14 @@
         }
       },
       {
+        "command": "extension.open-blockly-json",
+        "title": "Live P5: Open Blockly Toolbox JSON",
+        "icon": {
+          "light": "images/blockly.png",
+          "dark": "images/blockly.png"
+        }
+      },
+      {
         "command": "extension.open-blockly",
         "title": "B5",
          "icon": {
@@ -157,6 +165,10 @@
       "commandPalette": [
         {
           "command": "liveP5.scrollOutputToEnd",
+          "when": "true"
+        },
+        {
+          "command": "extension.open-blockly-json",
           "when": "true"
         }
       ]

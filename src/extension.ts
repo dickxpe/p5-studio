@@ -2226,6 +2226,19 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Convenience: open the JSON that defines the Blockly toolbox
+  context.subscriptions.push(
+    vscode.commands.registerCommand('extension.open-blockly-json', async () => {
+      try {
+        const jsonPath = path.join(context.extensionPath, 'blockly', 'blockly_categories.json');
+        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(jsonPath));
+        await vscode.window.showTextDocument(doc, { preview: false });
+      } catch (e) {
+        vscode.window.showErrorMessage('Could not open blockly_categories.json');
+      }
+    })
+  );
+
   // Blockly Webview: command and panel
   // Track which document opened which blockly panel (for multi-panel support)
   const blocklyPanelForDocument = new Map<string, vscode.WebviewPanel>();
@@ -2290,7 +2303,28 @@ export function activate(context: vscode.ExtensionContext) {
     const generatorsJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'generators.js')));
   const appJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'app.js')));
   const autoBlocksJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'p5_autoblocks.js')));
-    const p5Js = webview.asWebviewUri(vscode.Uri.file(path.join(context.extensionPath, 'assets', 'p5.min.js')));
+    // Prefer local Blockly distribution if present under vendor/blockly, else fall back to CDN
+    const vendorBlocklyRoot = path.join(context.extensionPath, 'vendor', 'blockly');
+    const hasLocalBlockly = (() => {
+      try {
+        return fs.existsSync(path.join(vendorBlocklyRoot, 'blockly_compressed.js')) &&
+               fs.existsSync(path.join(vendorBlocklyRoot, 'blocks_compressed.js')) &&
+               fs.existsSync(path.join(vendorBlocklyRoot, 'javascript_compressed.js')) &&
+               fs.existsSync(path.join(vendorBlocklyRoot, 'msg', 'en.js'));
+      } catch { return false; }
+    })();
+    const blkCore = hasLocalBlockly
+      ? webview.asWebviewUri(vscode.Uri.file(path.join(vendorBlocklyRoot, 'blockly_compressed.js'))).toString()
+      : 'https://unpkg.com/blockly/blockly_compressed.js';
+    const blkBlocks = hasLocalBlockly
+      ? webview.asWebviewUri(vscode.Uri.file(path.join(vendorBlocklyRoot, 'blocks_compressed.js'))).toString()
+      : 'https://unpkg.com/blockly/blocks_compressed.js';
+    const blkJsGen = hasLocalBlockly
+      ? webview.asWebviewUri(vscode.Uri.file(path.join(vendorBlocklyRoot, 'javascript_compressed.js'))).toString()
+      : 'https://unpkg.com/blockly/javascript_compressed.js';
+    const blkMsgEn = hasLocalBlockly
+      ? webview.asWebviewUri(vscode.Uri.file(path.join(vendorBlocklyRoot, 'msg', 'en.js'))).toString()
+      : 'https://unpkg.com/blockly/msg/en.js';
 
     // Try to read the exported allowlist of blocks and extra categories from blockly_categories.json
     let allowedBlocksScript = '';
@@ -2506,11 +2540,10 @@ export function activate(context: vscode.ExtensionContext) {
       <meta name="viewport" content="width=device-width, initial-scale=1" />
       <title>Blockly</title>
       <link rel="stylesheet" href="${indexCss}" />
-      <script nonce="${nonce}" src="https://unpkg.com/blockly/blockly_compressed.js"></script>
-      <script nonce="${nonce}" src="https://unpkg.com/blockly/blocks_compressed.js"></script>
-      <script nonce="${nonce}" src="https://unpkg.com/blockly/javascript_compressed.js"></script>
-      <script nonce="${nonce}" src="https://unpkg.com/blockly/msg/en.js"></script>
-      <script nonce="${nonce}" src="${p5Js}"></script>
+  <script nonce="${nonce}" src="${blkCore}"></script>
+  <script nonce="${nonce}" src="${blkBlocks}"></script>
+  <script nonce="${nonce}" src="${blkJsGen}"></script>
+  <script nonce="${nonce}" src="${blkMsgEn}"></script>
     </head>
     <body>
       <div id="pageContainer">
@@ -2531,6 +2564,7 @@ export function activate(context: vscode.ExtensionContext) {
   window.P5_PARAM_MAP = ${JSON.stringify(p5ParamMap)};
   window.BLOCKLY_STORAGE_KEY = ${JSON.stringify(storageKey)};
   window.BLOCKLY_THEME = ${JSON.stringify(configuredBlocklyTheme)};
+  window.BLOCKLY_JSON_ONLY = true;
     </script>
     <script nonce="${nonce}" src="${autoBlocksJs}"></script>
       <script nonce="${nonce}" src="${appJs}"></script>

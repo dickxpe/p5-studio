@@ -43,3 +43,28 @@
         "p5_auto_torus"
       ]
     },
+
+     "p5_mouseMoved",
+        "p5_mouseDragged",
+        "p5_mousePressed",
+        "p5_mouseReleased",
+        "p5_mouseClicked",
+        "p5_doubleClicked",
+        "p5_mouseWheel",
+        "p5_keyPressed",
+        "p5_keyReleased",
+        "p5_keyTyped",
+        "p5_windowResized",
+        "p5_preload",
+        "p5_touchStarted",
+        "p5_touchMoved",
+        "p5_touchEnded",
+        "p5_deviceMoved",
+        "p5_deviceTurned",
+        "p5_deviceShaken",
+        "p5_resized",
+        "p5_focused",
+        "p5_unfocused",
+        "p5_blurred",
+        "p5_entered",
+        "p5_exited"

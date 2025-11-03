@@ -85,26 +85,13 @@
       console.warn(`[B5] Block NOT registered: ${type}`);
     }
   });
-  if (typeof p5 === 'undefined') return;
-
-  // Create a temporary instance to enumerate methods
-  let tmp = null;
-  try {
-    tmp = new p5(function sketch(){});
-  } catch(_) {}
-
-  function enumerateFunctions(obj){
-    const names = new Set();
+  // Prefer the function list from the type map provided by the host
+  function enumerateFromTypeMap(){
     try {
-      let proto = Object.getPrototypeOf(obj);
-      while (proto && proto !== Object.prototype) {
-        Object.getOwnPropertyNames(proto).forEach(n => names.add(n));
-        proto = Object.getPrototypeOf(proto);
-      }
-    } catch(_) {}
-    // also include direct props on the instance (rare for functions)
-    try { Object.getOwnPropertyNames(obj).forEach(n => names.add(n)); } catch(_) {}
-    return Array.from(names);
+      const catMap = (window && window.P5_CATEGORY_MAP) || {};
+      const names = Object.keys(catMap || {});
+      return names.filter(n => typeof n === 'string' && /^[a-z][A-Za-z0-9_]*$/.test(n));
+    } catch(_) { return []; }
   }
 
   const exclude = new Set([
@@ -112,10 +99,7 @@
     // noisy or internal-ish
     '__defineSetter__','__defineGetter__','__lookupGetter__','__lookupSetter__','hasOwnProperty','isPrototypeOf','propertyIsEnumerable','toLocaleString','toString','valueOf'
   ]);
-
-  const names = tmp ? enumerateFunctions(tmp) : [];
-  // Remove the temporary instance & any canvas
-  try { tmp && tmp.remove && tmp.remove(); } catch(_) {}
+  const names = enumerateFromTypeMap();
 
   // Filter to likely p5 API: lowercase names, exclude internal/underscored
   const api = names.filter(n => typeof n === 'string' && /^[a-z][A-Za-z0-9_]*$/.test(n) && !n.startsWith('_') && !exclude.has(n));
@@ -151,14 +135,10 @@
 
   api.forEach(name => {
     try {
-      const fn = (window)[name] || (p5.prototype && p5.prototype[name]) || null;
       const paramMap = (window && window.P5_PARAM_MAP) || {};
       const catMap = (window && window.P5_CATEGORY_MAP) || {};
       const paramNames = Array.isArray(paramMap[name]) ? paramMap[name] : [];
-      let arity = paramNames.length;
-      if (arity === 0) {
-        arity = typeof fn === 'function' && isFinite(fn.length) ? Math.max(0, Math.min(8, fn.length)) : 0; // fallback cap 8
-      }
+      let arity = paramNames.length; // do not rely on fn.length (no p5 instance needed)
       if (arity > 8) arity = 8;
       const type = 'p5_auto_' + name;
 
@@ -263,7 +243,7 @@ if (window._p5AutoBlockGenQueue && window.javascript && javascript.javascriptGen
 
   const CONSTS = [];
   try {
-    const candidates = Object.getOwnPropertyNames(window).concat(Object.getOwnPropertyNames(p5.prototype || {}));
+    const candidates = Object.getOwnPropertyNames(window).concat((window.p5 && window.p5.prototype) ? Object.getOwnPropertyNames(window.p5.prototype) : []);
     const uniq = Array.from(new Set(candidates));
     uniq.forEach(n => {
       try {
@@ -325,6 +305,39 @@ if (window._p5AutoBlockGenQueue && window.javascript && javascript.javascriptGen
   // Add a toolbox category at the end
   try {
     if (!window.toolbox) window.toolbox = { kind: 'categoryToolbox', contents: [] };
+    const JSON_ONLY = !!(window && window.BLOCKLY_JSON_ONLY);
+    if (JSON_ONLY) {
+      // Strict JSON: build toolbox only from EXTRA_TOOLBOX_CATEGORIES
+      try {
+        const cats = window.EXTRA_TOOLBOX_CATEGORIES || [];
+        const contents = [];
+        cats.forEach(cat => {
+          try {
+            if (!cat || typeof cat.name !== 'string') return;
+            const entry = {
+              kind: 'category',
+              name: cat.name,
+              colour: cat.colour || cat.color || '#9E9E9E',
+              categorystyle: cat.categorystyle,
+              contents: []
+            };
+            if (cat.custom) {
+              entry.custom = cat.custom;
+              entry.contents = [];
+            } else if (Array.isArray(cat.blocks)) {
+              entry.contents = cat.blocks
+                .filter(t => typeof t === 'string' && (!Blockly.Blocks || !!Blockly.Blocks[t]) && isAllowedBlock(t))
+                .map(t => ({ kind: 'block', type: t }));
+            }
+            contents.push(entry);
+          } catch(_) {}
+        });
+        window.toolbox.contents = contents;
+        // Update toolbox if workspace exists
+        try { const ws = Blockly.getMainWorkspace && Blockly.getMainWorkspace(); if (ws && ws.updateToolbox) ws.updateToolbox(window.toolbox); } catch(_) {}
+      } catch(_) {}
+      return;
+    }
     // Grouped categories based on p5 reference
     const CATEGORY_COLORS = {
       'Color': '#F06292',
