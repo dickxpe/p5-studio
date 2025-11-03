@@ -18,6 +18,35 @@ const autoReloadListenersMap = new Map<
 const outputChannelMap = new Map<string, vscode.OutputChannel>();
 let lastActiveOutputChannel: vscode.OutputChannel | null = null; // <--- NEW
 
+// Single-step highlight decoration (one at a time per editor)
+let stepHighlightDecoration: vscode.TextEditorDecorationType | null = null;
+function ensureStepHighlightDecoration() {
+  if (!stepHighlightDecoration) {
+    stepHighlightDecoration = vscode.window.createTextEditorDecorationType({
+      isWholeLine: true,
+      backgroundColor: 'rgba(255,215,0,0.25)',
+      overviewRulerColor: 'rgba(255,215,0,0.8)',
+      overviewRulerLane: vscode.OverviewRulerLane.Full,
+      border: '1px solid rgba(255,215,0,0.7)'
+    });
+  }
+  return stepHighlightDecoration;
+}
+function clearStepHighlight(editor?: vscode.TextEditor) {
+  if (!stepHighlightDecoration) return;
+  const ed = editor || vscode.window.activeTextEditor;
+  if (ed && ed.document) {
+    ed.setDecorations(stepHighlightDecoration, []);
+  }
+}
+function applyStepHighlight(editor: vscode.TextEditor, line: number) {
+  const deco = ensureStepHighlightDecoration();
+  const lineIdx = Math.max(0, Math.min(editor.document.lineCount - 1, line - 1));
+  const range = new vscode.Range(lineIdx, 0, lineIdx, editor.document.lineAt(lineIdx).text.length);
+  editor.setDecorations(deco, [range]);
+  try { editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport); } catch {}
+}
+
 function showAndTrackOutputChannel(ch: vscode.OutputChannel) {
   ch.show(true);
   lastActiveOutputChannel = ch;
@@ -768,8 +797,10 @@ async function createHtml(
 
   const reloadIconPath = vscode.Uri.file(path.join(extensionPath, 'images', 'reload.svg'));
   const reloadIconUri = panel.webview.asWebviewUri(reloadIconPath);
-  const stepIconPath = vscode.Uri.file(path.join(extensionPath, 'images', 'pauzeReload.svg'));
+  const stepIconPath = vscode.Uri.file(path.join(extensionPath, 'images', 'step.svg'));
   const stepIconUri = panel.webview.asWebviewUri(stepIconPath);
+  const delayIconPath = vscode.Uri.file(path.join(extensionPath, 'images', 'play.svg'));
+  const delayIconUri = panel.webview.asWebviewUri(delayIconPath);
   const stepRunDelayMs = vscode.workspace.getConfiguration('liveP5').get<number>('stepRunDelayMs', 500);
 
   const showReloadButton = vscode.workspace
@@ -1115,6 +1146,14 @@ canvas.p5Canvas{
 }
 #step-run-button img { width: 12px; height: 12px; }
 #step-run-button[style*="display: none"] { display: none !important; }
+#single-step-button {
+  width: 16px; height: 16px;
+  background: white; border-radius: 4px; display: flex;
+  align-items: center; justify-content: center; cursor: pointer;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+#single-step-button img { width: 12px; height: 12px; }
+#single-step-button[style*="display: none"] { display: none !important; }
 #capture-toggle-button {
   width: 16px; height: 16px;
   background: white; border-radius: 4px; display: flex;
@@ -1199,7 +1238,8 @@ canvas.p5Canvas{
   </div>
 <div id="p5-toolbar">
   <div id="reload-button" style="display:${showReloadButton ? 'flex' : 'none'}"><img src="${reloadIconUri}" title="Reload P5 Sketch"></div>
-  <div id="step-run-button" title="Run with ${stepRunDelayMs}ms delay between statements and per loop iteration"><img src="${stepIconUri}" /></div>
+  <div id="step-run-button" title="Run with ${stepRunDelayMs}ms delay between statements and per loop iteration"><img src="${delayIconUri}" /></div>
+  <div id="single-step-button" title="Step through statements (click to execute next statement)"><img src="${stepIconUri}" /></div>
   <div id="capture-toggle-button" title="Toggle P5 Capture Panel"></div>
 </div>
 <script>
@@ -1480,6 +1520,9 @@ document.getElementById("reload-button").addEventListener("click",()=>{
 document.getElementById("step-run-button").addEventListener("click",()=>{
   vscode.postMessage({type:"step-run-clicked"});
 });
+document.getElementById("single-step-button").addEventListener("click",()=>{
+  vscode.postMessage({type:"single-step-clicked"});
+});
 
 window.addEventListener("resize",()=>{ 
   if(window._p5Instance?._renderer && window._p5UserAutoFill){
@@ -1541,6 +1584,13 @@ window.addEventListener("message", e => {
           vscode.postMessage({type:"showError",message:msg});
         }
       }
+      break;
+    case 'step-advance':
+      try {
+        if (typeof window.__liveP5StepAdvance === 'function') {
+          window.__liveP5StepAdvance();
+        }
+      } catch (e) { }
       break;
     case 'setGlobalVars':
       if (typeof data.debounceDelay === 'number') {
@@ -1992,6 +2042,227 @@ function instrumentSetupWithDelays(code: string, delayMs: number): string {
         this.traverse(path);
       }
     });
+    if (!changed) return code;
+    return recast.print(ast).code;
+  } catch (e) {
+    return code;
+  }
+}
+
+// Instrument setup() for single-step execution. Before each statement in setup() (and inside loop/if blocks),
+// insert a call to __highlight(line/col) and `await __waitStep()` so each click advances to the next statement.
+function instrumentSetupForSingleStep(code: string, lineOffset: number): string {
+  try {
+    const acorn = require('acorn');
+    const ast = recast.parse(code, {
+      parser: {
+        parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script', locations: true })
+      }
+    });
+
+    const b = recast.types.builders;
+    let changed = false;
+
+    const makeHighlightFor = (node: any) => {
+      const loc = node && node.loc ? node.loc : null;
+      if (!loc) return null;
+      const start = loc.start || { line: 1, column: 0 };
+      const end = loc.end || start;
+      return b.expressionStatement(
+        b.callExpression(b.identifier('__highlight'), [
+          b.literal(start.line), b.literal(start.column + 1), b.literal(end.line), b.literal(end.column + 1)
+        ])
+      );
+    };
+    const makeAwaitStep = () => b.expressionStatement(b.awaitExpression(b.callExpression(b.identifier('__waitStep'), [])));
+
+    function instrumentBlock(block: any): any {
+      if (!block || block.type !== 'BlockStatement' || !Array.isArray(block.body)) return block;
+      const newBody: any[] = [];
+      for (const stmt of block.body) {
+        // Don't instrument nested function declarations
+        if (stmt && (stmt.type === 'FunctionDeclaration' || stmt.type === 'FunctionExpression')) {
+          newBody.push(stmt);
+          continue;
+        }
+        const hi = makeHighlightFor(stmt);
+        if (hi) newBody.push(hi);
+        newBody.push(makeAwaitStep());
+        newBody.push(instrumentNode(stmt));
+      }
+      block.body = newBody;
+      return block;
+    }
+
+    function ensureBlock(node: any, prop: string) {
+      if (!node[prop]) return;
+      if (node[prop].type !== 'BlockStatement') {
+        node[prop] = b.blockStatement([node[prop]]);
+      }
+      node[prop] = instrumentBlock(node[prop]);
+    }
+
+    function instrumentNode(node: any): any {
+      if (!node || typeof node.type !== 'string') return node;
+      switch (node.type) {
+        case 'BlockStatement':
+          return instrumentBlock(node);
+        case 'IfStatement':
+          if (node.consequent) {
+            if (node.consequent.type !== 'BlockStatement') node.consequent = b.blockStatement([node.consequent]);
+            node.consequent = instrumentBlock(node.consequent);
+          }
+          if (node.alternate) {
+            if (node.alternate.type !== 'BlockStatement' && node.alternate.type !== 'IfStatement') {
+              node.alternate = b.blockStatement([node.alternate]);
+            }
+            if (node.alternate.type === 'BlockStatement') node.alternate = instrumentBlock(node.alternate);
+            else node.alternate = instrumentNode(node.alternate);
+          }
+          return node;
+        case 'ForStatement':
+        case 'WhileStatement':
+        case 'DoWhileStatement':
+        case 'ForInStatement':
+        case 'ForOfStatement':
+          ensureBlock(node, 'body');
+          return node;
+        case 'SwitchStatement':
+          if (Array.isArray(node.cases)) {
+            for (const c of node.cases) {
+              if (Array.isArray(c.consequent)) {
+                const newCons: any[] = [];
+                for (const s of c.consequent) {
+                  const hi = makeHighlightFor(s);
+                  if (hi) newCons.push(hi);
+                  newCons.push(makeAwaitStep());
+                  newCons.push(instrumentNode(s));
+                }
+                c.consequent = newCons;
+              }
+            }
+          }
+          return node;
+        default:
+          return node;
+      }
+    }
+
+    recast.types.visit(ast, {
+      visitFunctionDeclaration(path) {
+        const node: any = path.value;
+        if (node.id && node.id.name === 'setup' && node.body && Array.isArray(node.body.body)) {
+          node.async = true;
+          // Controller helpers at the top of setup
+          const highlightDecl = b.variableDeclaration('const', [
+            b.variableDeclarator(
+              b.identifier('__highlight'),
+              b.arrowFunctionExpression(
+                [b.identifier('l'), b.identifier('c'), b.identifier('el'), b.identifier('ec')],
+                b.blockStatement([
+                  b.tryStatement(
+                    b.blockStatement([
+                      b.expressionStatement(
+                        b.callExpression(b.memberExpression(b.identifier('vscode'), b.identifier('postMessage')),
+                          [b.objectExpression([
+                            b.property('init', b.identifier('type'), b.literal('highlightLine')),
+                            // Apply line offset from wrapper if present; clamp in extension when applying
+                            b.property('init', b.identifier('line'), b.binaryExpression('-', b.identifier('l'), b.literal(lineOffset || 0))),
+                            b.property('init', b.identifier('column'), b.identifier('c')),
+                            b.property('init', b.identifier('endLine'), b.identifier('el')),
+                            b.property('init', b.identifier('endColumn'), b.identifier('ec'))
+                          ])]
+                        )
+                      )
+                    ]),
+                    b.catchClause(b.identifier('_'), null, b.blockStatement([])),
+                    null
+                  )
+                ])
+              )
+            )
+          ]);
+          const clearDecl = b.variableDeclaration('const', [
+            b.variableDeclarator(
+              b.identifier('__clearHighlight'),
+              b.arrowFunctionExpression(
+                [],
+                b.blockStatement([
+                  b.tryStatement(
+                    b.blockStatement([
+                      b.expressionStatement(
+                        b.callExpression(
+                          b.memberExpression(b.identifier('vscode'), b.identifier('postMessage')),
+                          [b.objectExpression([b.property('init', b.identifier('type'), b.literal('clearHighlight'))])]
+                        )
+                      )
+                    ]),
+                    b.catchClause(b.identifier('_'), null, b.blockStatement([])),
+                    null
+                  )
+                ])
+              )
+            )
+          ]);
+          const waitDecl = b.variableDeclaration('const', [
+            b.variableDeclarator(
+              b.identifier('__waitStep'),
+              b.arrowFunctionExpression([],
+                b.newExpression(b.identifier('Promise'), [
+                  b.arrowFunctionExpression([b.identifier('rs')],
+                    b.blockStatement([
+                      b.expressionStatement(
+                        b.assignmentExpression('=',
+                          b.memberExpression(b.identifier('window'), b.identifier('__liveP5StepResolve')),
+                          b.identifier('rs')
+                        )
+                      )
+                    ])
+                  )
+                ])
+              )
+            )
+          ]);
+          const advanceDecl = b.expressionStatement(
+            b.assignmentExpression('=',
+              b.memberExpression(b.identifier('window'), b.identifier('__liveP5StepAdvance')),
+              b.functionExpression(null, [],
+                b.blockStatement([
+                  b.variableDeclaration('const', [
+                    b.variableDeclarator(
+                      b.identifier('r'),
+                      b.memberExpression(b.identifier('window'), b.identifier('__liveP5StepResolve'))
+                    )
+                  ]),
+                  b.expressionStatement(
+                    b.assignmentExpression('=',
+                      b.memberExpression(b.identifier('window'), b.identifier('__liveP5StepResolve')),
+                      b.literal(null)
+                    )
+                  ),
+                  b.ifStatement(
+                    b.identifier('r'),
+                    b.blockStatement([b.expressionStatement(b.callExpression(b.identifier('r'), []))])
+                  )
+                ])
+              )
+            )
+          );
+
+          const original = node.body.body.slice();
+          const prelude = [highlightDecl, clearDecl, waitDecl, advanceDecl];
+          // Instrument the original body statements
+          const instrumentedBlock = instrumentBlock(b.blockStatement(original));
+          // Append a final clear highlight call when setup finishes
+          const callClear = b.expressionStatement(b.callExpression(b.identifier('__clearHighlight'), []));
+          node.body.body = [...prelude, ...instrumentedBlock.body, callClear];
+          changed = true;
+          return false;
+        }
+        this.traverse(path);
+      }
+    });
+
     if (!changed) return code;
     return recast.print(ast).code;
   } catch (e) {
@@ -3531,18 +3802,30 @@ export function activate(context: vscode.ExtensionContext) {
               }, 200);
             }
           }
-          // --- STEP RUN HANDLER ---
+          // --- STEP RUN HANDLER (merged with single-step instrumentation + auto-advance) ---
           else if (msg.type === 'step-run-clicked') {
-            // Similar to reload, but instrument setup() to add 500ms delays between top-level statements
             const docUri = editor.document.uri.toString();
             const fileName = path.basename(editor.document.fileName);
             const rawCode = editor.document.getText();
             const delayMs = vscode.workspace.getConfiguration('liveP5').get<number>('stepRunDelayMs', 500);
-            // Info log for quick feedback
-            try {
-              const ch = getOrCreateOutputChannel(docUri, fileName);
-              ch.appendLine(`${getTime()} [INFO] Step run: delaying setup() by ${delayMs}ms between statements and per loop iteration`);
-            } catch {}
+            // If already stepping, just enable auto-advance from current position
+            if ((panel as any)._steppingActive) {
+              try {
+                const ch = getOrCreateOutputChannel(docUri, fileName);
+                ch.appendLine(`${getTime()} [INFO] Step-run: continuing from current statement with ${delayMs}ms delay.`);
+              } catch {}
+              // Stop any previous timer before starting a new one
+              if ((panel as any)._autoStepTimer) {
+                try { clearInterval((panel as any)._autoStepTimer); } catch {}
+                (panel as any)._autoStepTimer = null;
+              }
+              (panel as any)._autoStepMode = true;
+              (panel as any)._autoStepTimer = setInterval(() => {
+                try { panel.webview.postMessage({ type: 'step-advance' }); } catch {}
+              }, delayMs);
+              return;
+            }
+            // Not stepping yet: instrument with single-step and start auto-advance
             // Friendly error for input misuse
             if (hasNonTopInputUsage(rawCode)) {
               panel.webview.html = await createHtml('', panel, context.extensionPath);
@@ -3589,7 +3872,6 @@ export function activate(context: vscode.ExtensionContext) {
                 codeForRun = await preprocessTopLevelInputs(rawCode, { key, interactive: false });
                 _allowInteractiveTopInputs = true;
               } else {
-                // No cache: show overlay (prefill with defaults)
                 panel.webview.html = await createHtml('', panel, context.extensionPath);
                 setTimeout(() => {
                   panel.webview.postMessage({ type: 'showTopInputs', items: inputsBefore });
@@ -3597,14 +3879,125 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
               }
             }
-            // Wrap and instrument setup()
             let wrapped = wrapInSetupIfNeeded(codeForRun);
-            let instrumented = instrumentSetupWithDelays(wrapped, delayMs);
+            const didWrap = wrapped !== codeForRun;
+            let instrumented = instrumentSetupForSingleStep(wrapped, didWrap ? 1 : 0);
             const globals = extractGlobalVariables(instrumented);
             let rewrittenCode = rewriteUserCodeWithWindowGlobals(instrumented, globals);
             const hasDraw = /\bfunction\s+draw\s*\(/.test(wrapped);
+            try {
+              const ch = getOrCreateOutputChannel(docUri, fileName);
+              ch.appendLine(`${getTime()} [INFO] Step-run: auto-advancing with ${delayMs}ms delay.`);
+            } catch {}
+            const afterLoad = () => {
+              const { globals } = extractGlobalVariablesWithConflicts(wrapped);
+              let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+              const hiddenSet = getHiddenGlobalsByDirective(editor.document.getText());
+              if (hiddenSet.size > 0) {
+                filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name));
+              }
+              const readOnly = hasOnlySetup(editor.document.getText());
+              panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
+              (panel as any)._steppingActive = true;
+              // Start auto-advance timer
+              if ((panel as any)._autoStepTimer) {
+                try { clearInterval((panel as any)._autoStepTimer); } catch {}
+                (panel as any)._autoStepTimer = null;
+              }
+              (panel as any)._autoStepMode = true;
+              (panel as any)._autoStepTimer = setInterval(() => {
+                try { panel.webview.postMessage({ type: 'step-advance' }); } catch {}
+              }, delayMs);
+            };
             if (!hasDraw) {
-              // For sketches without draw(), replace HTML so it reruns from scratch with instrumented code
+              panel.webview.html = await createHtml(instrumented, panel, context.extensionPath);
+              setTimeout(afterLoad, 200);
+            } else {
+              panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: false });
+              setTimeout(afterLoad, 200);
+            }
+          }
+          // --- SINGLE STEP HANDLER ---
+          else if (msg.type === 'single-step-clicked') {
+            const docUri = editor.document.uri.toString();
+            const fileName = path.basename(editor.document.fileName);
+            const rawCode = editor.document.getText();
+            const isStepping = !!(panel as any)._steppingActive;
+            // If auto-step is currently running, stop it to switch to manual stepping
+            if ((panel as any)._autoStepTimer) {
+              try { clearInterval((panel as any)._autoStepTimer); } catch {}
+              (panel as any)._autoStepTimer = null;
+              (panel as any)._autoStepMode = false;
+            }
+            if (isStepping) {
+              // Advance to next statement in the webview
+              panel.webview.postMessage({ type: 'step-advance' });
+              return;
+            }
+            // First click: enter stepping mode by instrumenting setup()
+            // Friendly error for input misuse
+            if (hasNonTopInputUsage(rawCode)) {
+              panel.webview.html = await createHtml('', panel, context.extensionPath);
+              setTimeout(() => {
+                panel.webview.postMessage({ type: 'showError', message: 'input can only be used at the top' });
+              }, 150);
+              const outputChannel = getOrCreateOutputChannel(docUri, fileName);
+              outputChannel.appendLine(`${getTime()} [‼️RUNTIME ERROR in ${fileName}] input can only be used at the top`);
+              return;
+            }
+            // Semicolon warnings on explicit action
+            logSemicolonWarningsForDocument(editor.document);
+            {
+              const blockOnWarning = vscode.workspace.getConfiguration('liveP5').get<boolean>('BlockSketchOnWarning', true);
+              const warn = hasSemicolonWarnings(editor.document);
+              if (blockOnWarning && warn.has) {
+                panel.webview.html = await createHtml('', panel, context.extensionPath);
+                return;
+              }
+            }
+            const { conflicts } = extractGlobalVariablesWithConflicts(rawCode);
+            if (conflicts.length > 0) {
+              const outputChannel = getOrCreateOutputChannel(docUri, fileName);
+              let syntaxErrorMsg = `${getTime()} [‼️SYNTAX ERROR in ${fileName}] Reserved variable name(s) used: ${conflicts.join(', ')}`;
+              syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
+              panel.webview.html = await createHtml('', panel, context.extensionPath);
+              setTimeout(() => {
+                panel.webview.postMessage({ type: 'syntaxError', message: stripLeadingTimestamp(syntaxErrorMsg) });
+              }, 150);
+              outputChannel.appendLine(syntaxErrorMsg);
+              (panel as any)._lastSyntaxError = syntaxErrorMsg;
+              (panel as any)._lastRuntimeError = null;
+              return;
+            }
+            // Handle top-level input() placeholders
+            let codeForRun = rawCode;
+            const inputsBefore = detectTopLevelInputs(rawCode);
+            if (inputsBefore.length > 0) {
+              const key = editor.document.fileName;
+              if (hasCachedInputsForKey(key, inputsBefore)) {
+                _allowInteractiveTopInputs = false;
+                codeForRun = await preprocessTopLevelInputs(rawCode, { key, interactive: false });
+                _allowInteractiveTopInputs = true;
+              } else {
+                panel.webview.html = await createHtml('', panel, context.extensionPath);
+                setTimeout(() => {
+                  panel.webview.postMessage({ type: 'showTopInputs', items: inputsBefore });
+                }, 150);
+                return;
+              }
+            }
+            let wrapped = wrapInSetupIfNeeded(codeForRun);
+            const didWrap = wrapped !== codeForRun;
+            let instrumented = instrumentSetupForSingleStep(wrapped, didWrap ? 1 : 0);
+            const globals = extractGlobalVariables(instrumented);
+            let rewrittenCode = rewriteUserCodeWithWindowGlobals(instrumented, globals);
+            const hasDraw = /\bfunction\s+draw\s*\(/.test(wrapped);
+            // Log info
+            try {
+              const ch = getOrCreateOutputChannel(docUri, fileName);
+              ch.appendLine(`${getTime()} [INFO] Single-step mode: click the step button to advance.`);
+            } catch {}
+            if (!hasDraw) {
               panel.webview.html = await createHtml(instrumented, panel, context.extensionPath);
               setTimeout(() => {
                 const { globals } = extractGlobalVariablesWithConflicts(wrapped);
@@ -3615,9 +4008,10 @@ export function activate(context: vscode.ExtensionContext) {
                 }
                 const readOnly = hasOnlySetup(editor.document.getText());
                 panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
+                (panel as any)._steppingActive = true;
+                // No auto-advance: the first click should execute the first statement
               }, 200);
             } else {
-              // For sketches with draw(), perform a normal reload with rewritten (instrumented) code
               panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: false });
               setTimeout(() => {
                 const { globals } = extractGlobalVariablesWithConflicts(wrapped);
@@ -3628,8 +4022,33 @@ export function activate(context: vscode.ExtensionContext) {
                 }
                 const readOnly = hasOnlySetup(editor.document.getText());
                 panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
+                (panel as any)._steppingActive = true;
+                // No auto-advance
               }, 200);
             }
+          }
+          // --- HIGHLIGHT CURRENT LINE HANDLER ---
+          else if (msg.type === 'highlightLine') {
+            const ed = editor; // current sketch editor
+            if (ed && ed.document && ed.document.uri.toString() === editor.document.uri.toString()) {
+              const line = typeof msg.line === 'number' ? msg.line : 1;
+              applyStepHighlight(ed, line);
+            }
+          }
+          // --- CLEAR HIGHLIGHT HANDLER ---
+          else if (msg.type === 'clearHighlight') {
+            const ed = editor;
+            if (ed && ed.document && ed.document.uri.toString() === editor.document.uri.toString()) {
+              clearStepHighlight(ed);
+            }
+            // Log that stepping has finished
+            try {
+              const docUri = editor.document.uri.toString();
+              const fileName = path.basename(editor.document.fileName);
+              const ch = getOrCreateOutputChannel(docUri, fileName);
+              ch.appendLine(`${getTime()} [INFO] Single-step finished.`);
+            } catch {}
+            (panel as any)._steppingActive = false;
           }
           // --- OSC SEND HANDLER ---
           else if (msg.type === 'oscSend') {
@@ -3702,6 +4121,18 @@ export function activate(context: vscode.ExtensionContext) {
           listeners?.changeListener?.dispose();
           listeners?.saveListener?.dispose();
           autoReloadListenersMap.delete(docUri);
+          // Clear any step highlight when panel is closed
+          try {
+            const edToClear = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === docUri);
+            if (edToClear) clearStepHighlight(edToClear);
+          } catch {}
+          (panel as any)._steppingActive = false;
+          // Stop auto-step timer if running
+          if ((panel as any)._autoStepTimer) {
+            try { clearInterval((panel as any)._autoStepTimer); } catch {}
+            (panel as any)._autoStepTimer = null;
+          }
+          (panel as any)._autoStepMode = false;
           // Dispose output channel when panel is closed
           const channel = outputChannelMap.get(docUri);
           if (channel) {
