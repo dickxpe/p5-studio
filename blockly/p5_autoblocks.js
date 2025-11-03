@@ -45,7 +45,7 @@
     Blockly.Blocks['p5_draw'] = {
       init: function() {
         this.appendDummyInput().appendField('draw');
-        this.appendStatementInput('DO').setCheck(null).appendField('do');
+        this.appendStatementInput('DO').setCheck(null);
         this.setNextStatement(true, null);
         this.setColour('#BA68C8');
         this.setTooltip('p5.js draw() function');
@@ -370,12 +370,88 @@ if (window._p5AutoBlockGenQueue && window.javascript && javascript.javascriptGen
     //   contents: categoryContents
     // });
     // Globals/constants category
-    const globalsCategory = { kind: 'category', name: 'p5 globals & constants', colour: '#ffd180', contents: [] };
-    if (numOpts.length && isAllowedBlock('p5_global_number')) globalsCategory.contents.push({ kind: 'block', type: 'p5_global_number' });
-    if (boolOpts.length && isAllowedBlock('p5_global_boolean')) globalsCategory.contents.push({ kind: 'block', type: 'p5_global_boolean' });
-    if (strOpts.length && isAllowedBlock('p5_global_string')) globalsCategory.contents.push({ kind: 'block', type: 'p5_global_string' });
-    if (constOpts.length && isAllowedBlock('p5_constant')) globalsCategory.contents.push({ kind: 'block', type: 'p5_constant' });
-    window.toolbox.contents.push(globalsCategory);
+ //   const globalsCategory = { kind: 'category', name: 'p5 globals & constants', colour: '#ffd180', contents: [] };
+    // if (numOpts.length && isAllowedBlock('p5_global_number')) globalsCategory.contents.push({ kind: 'block', type: 'p5_global_number' });
+    // if (boolOpts.length && isAllowedBlock('p5_global_boolean')) globalsCategory.contents.push({ kind: 'block', type: 'p5_global_boolean' });
+    // if (strOpts.length && isAllowedBlock('p5_global_string')) globalsCategory.contents.push({ kind: 'block', type: 'p5_global_string' });
+    // if (constOpts.length && isAllowedBlock('p5_constant')) globalsCategory.contents.push({ kind: 'block', type: 'p5_constant' });
+    // window.toolbox.contents.push(globalsCategory);
+    // Append extra categories provided by host JSON (names not already present)
+    try {
+      const extras = window.EXTRA_TOOLBOX_CATEGORIES;
+      if (Array.isArray(extras) && window.toolbox && Array.isArray(window.toolbox.contents)) {
+        const existingNames = new Set();
+        try {
+          window.toolbox.contents.forEach(c => { if (c && c.kind === 'category' && c.name) existingNames.add(c.name); });
+        } catch(_) {}
+        extras.forEach(cat => {
+          try {
+            if (!cat || typeof cat.name !== 'string') return;
+            if (existingNames.has(cat.name)) return; // don't duplicate existing categories
+            const entry = {
+              kind: 'category',
+              name: cat.name,
+              colour: cat.colour || '#9E9E9E',
+              categorystyle: cat.categorystyle,
+              contents: []
+            };
+            const blocks = Array.isArray(cat.blocks) ? cat.blocks : [];
+            entry.contents = blocks
+              .filter(t => typeof t === 'string' && (!Blockly.Blocks || !!Blockly.Blocks[t]) && isAllowedBlock(t))
+              .map(t => ({ kind: 'block', type: t }));
+            window.toolbox.contents.push(entry);
+            existingNames.add(cat.name);
+          } catch(_) {}
+        });
+      }
+    } catch(_) {}
+
+    // Reorder categories to match the JSON order if provided
+    try {
+      const extras = window.EXTRA_TOOLBOX_CATEGORIES;
+      if (Array.isArray(extras) && window.toolbox && Array.isArray(window.toolbox.contents)) {
+        const desiredOrder = extras.map(c => (c && typeof c.name === 'string') ? c.name : null).filter(Boolean);
+        const existing = window.toolbox.contents.slice();
+        const catByName = new Map();
+        const nonCats = [];
+        existing.forEach(item => {
+          if (item && item.kind === 'category' && item.name) {
+            catByName.set(item.name, item);
+          } else {
+            nonCats.push(item);
+          }
+        });
+        const newContents = [];
+        desiredOrder.forEach(name => {
+          if (catByName.has(name)) newContents.push(catByName.get(name));
+        });
+        // Append any categories not mentioned in JSON to the end, preserving their original relative order
+        existing.forEach(item => {
+          if (item && item.kind === 'category' && item.name) {
+            if (desiredOrder.indexOf(item.name) === -1) newContents.push(item);
+          }
+        });
+        // Optionally append non-category items (like seps) at the end to avoid breaking toolbox
+        nonCats.forEach(nc => newContents.push(nc));
+        window.toolbox.contents = newContents;
+      }
+    } catch(_) {}
+
+    // Apply JSON category swatch colors (override existing category colours when provided)
+    try {
+      const extras = window.EXTRA_TOOLBOX_CATEGORIES;
+      if (Array.isArray(extras) && window.toolbox && Array.isArray(window.toolbox.contents)) {
+        const colorByName = new Map();
+        extras.forEach(c => { if (c && c.name && c.colour) colorByName.set(c.name, c.colour); });
+        window.toolbox.contents.forEach(cat => {
+          try {
+            if (cat && cat.kind === 'category' && cat.name && colorByName.has(cat.name)) {
+              cat.colour = colorByName.get(cat.name);
+            }
+          } catch(_) {}
+        });
+      }
+    } catch(_) {}
     // Filter any pre-existing static toolbox blocks by allowlist
     try {
       if (_ALLOWED_SET && window.toolbox && Array.isArray(window.toolbox.contents)) {

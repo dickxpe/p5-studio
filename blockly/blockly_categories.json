@@ -1,5 +1,25 @@
 {
   "categories": [
+       {
+      "name": "p5 · Quick Start",
+      "colour": "#64B5F6",
+      "blocks": [
+        "p5_setup",
+        "p5_draw",
+        "p5_auto_circle",
+        "p5_auto_rect"
+      ]
+    },
+     {
+      "name": "p5 · Globals & Constants",
+      "colour": "#ffd180",
+      "blocks": [
+        "p5_global_number",
+        "p5_global_boolean",
+        "p5_global_string",
+        "p5_constant"
+      ]
+    },
     {
       "name": "p5 Events",
       "colour": "#FF8A65",
@@ -30,16 +50,6 @@
         "p5_blurred",
         "p5_entered",
         "p5_exited"
-      ]
-    },
-    {
-      "name": "p5 Quickstart",
-      "categorystyle": "value_category",
-      "blocks": [
-        "p5_draw",
-        "p5_setup",
-        "p5_auto_createCanvas",
-        "p5_auto_background"
       ]
     },
     {
@@ -433,44 +443,7 @@
         "p5_auto_year"
       ]
     },
-    {
-      "name": "p5 · WebGL",
-      "colour": "#7986CB",
-      "blocks": [
-        "p5_auto_cylinder",
-        "p5_auto_debugMode",
-        "p5_auto_directionalLight",
-        "p5_auto_ellipsoid",
-        "p5_auto_emissiveMaterial",
-        "p5_auto_frustum",
-        "p5_auto_lightFalloff",
-        "p5_auto_lights",
-        "p5_auto_loadModel",
-        "p5_auto_loadShader",
-        "p5_auto_model",
-        "p5_auto_noDebugMode",
-        "p5_auto_noLights",
-        "p5_auto_normalMaterial",
-        "p5_auto_orbitControl",
-        "p5_auto_ortho",
-        "p5_auto_perspective",
-        "p5_auto_plane",
-        "p5_auto_pointLight",
-        "p5_auto_resetShader",
-        "p5_auto_setAttributes",
-        "p5_auto_setCamera",
-        "p5_auto_shader",
-        "p5_auto_shininess",
-        "p5_auto_specularColor",
-        "p5_auto_specularMaterial",
-        "p5_auto_sphere",
-        "p5_auto_spotLight",
-        "p5_auto_texture",
-        "p5_auto_textureMode",
-        "p5_auto_textureWrap",
-        "p5_auto_torus"
-      ]
-    },
+    
     {
       "name": "p5 · Core",
       "colour": "#90CAF9",
@@ -508,16 +481,6 @@
         "p5_auto_shearY",
         "p5_auto_translate",
         "p5_auto_windowResized"
-      ]
-    },
-    {
-      "name": "p5 globals & constants",
-      "colour": "#ffd180",
-      "blocks": [
-        "p5_global_number",
-        "p5_global_boolean",
-        "p5_global_string",
-        "p5_constant"
       ]
     }
   ]

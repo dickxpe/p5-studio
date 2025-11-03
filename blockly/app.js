@@ -5,52 +5,27 @@
 
 
 (function(){
-  // --- Dynamically populate 'p5 Quickstart' category when auto blocks are ready ---
-  function isAllowedBlock(type){
+  // Build color maps from JSON categories (name -> colour, blockType -> colour)
+  function buildJsonColorMaps() {
+    const nameToColour = new Map();
+    const blockToColour = new Map();
     try {
-      const arr = window.ALLOWED_BLOCKS;
-      if (!arr) return true;
-      if (Array.isArray(arr)) return arr.indexOf(type) >= 0;
-      return !!arr[type];
-    } catch (e) { return true; }
-  }
-
-  function populateP5QuickstartCategory() {
-    // Find the category in the toolbox
-    if (!window.toolbox || !window.toolbox.contents) return;
-    const quickCat = window.toolbox.contents.find(c => c.name === 'p5 Quickstart');
-    if (!quickCat) return;
-    // Only add blocks if they exist in Blockly.Blocks
-  const blockTypes = ['p5_draw', 'p5_setup', 'p5_auto_createCanvas', 'p5_auto_background'];
-    quickCat.contents = blockTypes
-      .filter(type => (Blockly.Blocks && Blockly.Blocks[type]) && isAllowedBlock(type))
-      .map(type => ({ kind: 'block', type }));
-    // Refresh the toolbox in the workspace
-    try { ws.updateToolbox(window.toolbox); } catch (e) {}
-  }
-
-  // Wait for auto blocks to be registered, then populate the category
-  function waitForP5AutoBlocks(attempts = 0) {
-  const blockTypes = ['p5_draw', 'p5_setup', 'p5_auto_createCanvas', 'p5_auto_background'];
-    const missing = blockTypes.filter(type => !(Blockly.Blocks && Blockly.Blocks[type]));
-    if (missing.length > 0) {
-      if (attempts % 5 === 0) {
-        console.log('[Blockly] Waiting for p5 auto blocks. Missing:', missing);
+      const cats = window.EXTRA_TOOLBOX_CATEGORIES;
+      if (Array.isArray(cats)) {
+        cats.forEach(c => {
+          if (!c || typeof c.name !== 'string') return;
+          const col = c.colour || c.color; // support alt spelling if provided
+          if (col) nameToColour.set(c.name, col);
+          if (Array.isArray(c.blocks) && col) {
+            c.blocks.forEach(t => { if (typeof t === 'string') blockToColour.set(t, col); });
+          }
+        });
       }
-    }
-    const allReady = missing.length === 0;
-    if (allReady) {
-      console.log('[Blockly] All p5 auto blocks are registered. Populating Quickstart category.');
-      populateP5QuickstartCategory();
-    } else if (attempts < 40) { // Try for ~2s (40 x 50ms)
-      setTimeout(() => waitForP5AutoBlocks(attempts + 1), 50);
-    } else {
-      console.warn('[Blockly] Some p5 auto blocks never registered:', missing);
-    }
+    } catch (e) { /* ignore */ }
+    return { nameToColour, blockToColour };
   }
 
-  // Start waiting after Blockly is initialized
-  setTimeout(() => waitForP5AutoBlocks(), 100);
+  const { nameToColour: JSON_NAME_COLOUR, blockToColour: JSON_BLOCK_COLOUR } = buildJsonColorMaps();
   // Define a dark theme for Blockly and register it
   let darkTheme = undefined;
   try {
@@ -166,33 +141,43 @@
     if (!e.isUiEvent) save(ws);
   });
 
-  // --- Custom coloring for "Values" category blocks ---
-  // Ensure the blocks moved to the Values category visually match the category color
+  // --- Coloring helpers (Values fallback + JSON overrides) ---
   const VALUES_COLOR = '#5ec453';
   const VALUE_TYPES = ['math_number', 'text', 'logic_boolean'];
+
+  function applyBlockColorIfMapped(block) {
+    try {
+      if (!block || !block.type) return;
+      const type = block.type;
+      const col = JSON_BLOCK_COLOUR.get(type);
+      if (col) {
+        block.setColour(col);
+      } else if (VALUE_TYPES.indexOf(type) >= 0) {
+        block.setColour(VALUES_COLOR);
+      }
+    } catch (e) { /* ignore */ }
+  }
 
   function recolorWorkspaceValueBlocks() {
     try {
       const all = ws.getAllBlocks(false);
-      all.forEach(b => {
-        if (!b || !b.type) return;
-        if (VALUE_TYPES.indexOf(b.type) >= 0) {
-          try { b.setColour(VALUES_COLOR); } catch (e) { /* ignore */ }
-        }
-      });
+      all.forEach(b => applyBlockColorIfMapped(b));
     } catch (e) { /* ignore */ }
   }
 
   function recolorFlyoutVisuals() {
     try {
+      // Find selected category name in the toolbox
+      let selectedName = null;
+      try {
+        const selected = document.querySelector('.blocklyTreeRow.blocklyTreeSelected .blocklyTreeLabel');
+        if (selected && selected.textContent) selectedName = selected.textContent.trim();
+      } catch (e) {}
+      const fillColor = (selectedName && JSON_NAME_COLOUR.get(selectedName)) || VALUES_COLOR;
       // Color any SVG paths in the flyout that represent block backgrounds
       const paths = document.querySelectorAll('.blocklyFlyout .blocklyPath, .blocklyFlyout .blocklyBlockBackground');
-      paths.forEach(p => {
-        try {
-          if (p.setAttribute) p.setAttribute('fill', VALUES_COLOR);
-        } catch (e) { /* ignore */ }
-      });
-      // Also ensure flyout text is readable
+      paths.forEach(p => { try { if (p.setAttribute) p.setAttribute('fill', fillColor); } catch (e) {} });
+      // Ensure flyout text is readable
       const texts = document.querySelectorAll('.blocklyFlyout .blocklyText');
       texts.forEach(t => { try { t.setAttribute('fill', '#000'); } catch (e) {} });
     } catch (e) { /* ignore */ }
@@ -206,9 +191,7 @@
         ids.forEach(id => {
           try {
             const b = ws.getBlockById(id);
-            if (b && VALUE_TYPES.indexOf(b.type) >= 0) {
-              b.setColour(VALUES_COLOR);
-            }
+            if (b) applyBlockColorIfMapped(b);
           } catch (err) { /* ignore */ }
         });
       } else if (e.type === Blockly.Events.UI && e.element === 'category') {
@@ -224,7 +207,7 @@
     recolorFlyoutVisuals();
   }, 200);
 
-  // --- Strong override: patch block definitions to set default colour ---
+  // --- Override: set default colour on Value-types or JSON mapped blocks on init ---
   try {
     VALUE_TYPES.forEach(type => {
       try {
@@ -233,7 +216,7 @@
           const orig = def.init;
           def.init = function() {
             try { orig.call(this); } catch (e) { /* ignore */ }
-            try { this.setColour(VALUES_COLOR); } catch (e) { /* ignore */ }
+            try { applyBlockColorIfMapped(this); } catch (e) { /* ignore */ }
           };
         }
       } catch (e) { /* ignore per-type errors */ }

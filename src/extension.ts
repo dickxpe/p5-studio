@@ -2292,8 +2292,9 @@ export function activate(context: vscode.ExtensionContext) {
   const autoBlocksJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'p5_autoblocks.js')));
     const p5Js = webview.asWebviewUri(vscode.Uri.file(path.join(context.extensionPath, 'assets', 'p5.min.js')));
 
-    // Try to read the exported allowlist of blocks from blockly_categories.json
+    // Try to read the exported allowlist of blocks and extra categories from blockly_categories.json
     let allowedBlocksScript = '';
+    let extraCategoriesScript = '';
     try {
       const allowPath = path.join(context.extensionPath, 'blockly', 'blockly_categories.json');
       if (fs.existsSync(allowPath)) {
@@ -2301,6 +2302,7 @@ export function activate(context: vscode.ExtensionContext) {
         try {
           const obj = JSON.parse(txt);
           const allowed = new Set<string>();
+          let extraCats: any[] = [];
           if (obj && Array.isArray(obj.categories)) {
             for (const cat of obj.categories) {
               if (cat && Array.isArray(cat.blocks)) {
@@ -2309,9 +2311,12 @@ export function activate(context: vscode.ExtensionContext) {
                 }
               }
             }
+            // Pass entire categories array to let the webview append completely new categories
+            extraCats = obj.categories;
           }
           const arr = Array.from(allowed);
           allowedBlocksScript = `<script nonce="${nonce}">\nwindow.ALLOWED_BLOCKS = ${JSON.stringify(arr)};\n</script>`;
+          extraCategoriesScript = `<script nonce="${nonce}">\nwindow.EXTRA_TOOLBOX_CATEGORIES = ${JSON.stringify(extraCats)};\n</script>`;
         } catch { /* ignore parse errors */ }
       }
     } catch { /* ignore file errors */ }
@@ -2517,7 +2522,8 @@ export function activate(context: vscode.ExtensionContext) {
       </div>
 
     <script nonce="${nonce}" src="${toolboxJs}"></script>
-    ${allowedBlocksScript}
+  ${allowedBlocksScript}
+  ${extraCategoriesScript}
     <script nonce="${nonce}" src="${blocksJs}"></script>
     <script nonce="${nonce}" src="${generatorsJs}"></script>
     <script nonce="${nonce}">

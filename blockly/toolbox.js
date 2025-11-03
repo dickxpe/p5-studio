@@ -42,45 +42,6 @@
       },
       {
         kind: 'category',
-        name: 'p5 Quickstart',
-        categorystyle: 'value_category',
-        contents: [] // Will be filled dynamically in app.js
-      },
-      // {
-      //   kind: 'category',
-      //   name: 'p5.js',
-      //   colour: '#ff3e3e',
-      //   contents: [
-      //     { kind:'block', type:'p5_setup' },
-      //     { kind:'block', type:'p5_draw' },
-      //     { kind:'sep' },
-      //     { kind:'block', type:'p5_createCanvas', inputs:{ W:{shadow:{type:'math_number', fields:{NUM:400}}}, H:{shadow:{type:'math_number', fields:{NUM:400}}} } },
-      //     { kind:'block', type:'p5_frameRate', inputs:{ FPS:{shadow:{type:'math_number', fields:{NUM:60}}} } },
-      //     { kind:'block', type:'p5_clear' },
-      //     { kind:'sep' },
-      //     { kind:'block', type:'p5_background', inputs:{ C:{shadow:{type:'math_number', fields:{NUM:220}}} } },
-      //     { kind:'block', type:'p5_fill', inputs:{ C:{shadow:{type:'math_number', fields:{NUM:0}}} } },
-      //     { kind:'block', type:'p5_noFill' },
-      //     { kind:'block', type:'p5_stroke', inputs:{ C:{shadow:{type:'math_number', fields:{NUM:0}}} } },
-      //     { kind:'block', type:'p5_noStroke' },
-      //     { kind:'block', type:'p5_strokeWeight', inputs:{ W:{shadow:{type:'math_number', fields:{NUM:1}}} } },
-      //     { kind:'sep' },
-      //     { kind:'block', type:'p5_rect', inputs:{ X:{shadow:{type:'math_number', fields:{NUM:10}}}, Y:{shadow:{type:'math_number', fields:{NUM:10}}}, W:{shadow:{type:'math_number', fields:{NUM:100}}}, H:{shadow:{type:'math_number', fields:{NUM:50}}} } },
-      //     { kind:'block', type:'p5_circle', inputs:{ X:{shadow:{type:'math_number', fields:{NUM:200}}}, Y:{shadow:{type:'math_number', fields:{NUM:200}}}, D:{shadow:{type:'math_number', fields:{NUM:50}}} } },
-      //     { kind:'block', type:'p5_ellipse', inputs:{ X:{shadow:{type:'math_number', fields:{NUM:150}}}, Y:{shadow:{type:'math_number', fields:{NUM:150}}}, W:{shadow:{type:'math_number', fields:{NUM:80}}}, H:{shadow:{type:'math_number', fields:{NUM:40}}} } },
-      //     { kind:'block', type:'p5_line', inputs:{ X1:{shadow:{type:'math_number', fields:{NUM:0}}}, Y1:{shadow:{type:'math_number', fields:{NUM:0}}}, X2:{shadow:{type:'math_number', fields:{NUM:300}}}, Y2:{shadow:{type:'math_number', fields:{NUM:300}}} } },
-      //     { kind:'sep' },
-      //     { kind:'block', type:'p5_push' },
-      //     { kind:'block', type:'p5_pop' },
-      //     { kind:'block', type:'p5_translate', inputs:{ X:{shadow:{type:'math_number', fields:{NUM:10}}}, Y:{shadow:{type:'math_number', fields:{NUM:10}}} } },
-      //     { kind:'block', type:'p5_rotate', inputs:{ A:{shadow:{type:'math_number', fields:{NUM:0.1}}} } },
-      //     { kind:'sep' },
-      //     { kind:'block', type:'p5_text', inputs:{ S:{shadow:{type:'text', fields:{TEXT:'hello'}}}, X:{shadow:{type:'math_number', fields:{NUM:20}}}, Y:{shadow:{type:'math_number', fields:{NUM:20}}} } },
-      //     { kind:'block', type:'p5_textSize', inputs:{ SZ:{shadow:{type:'math_number', fields:{NUM:16}}} } },
-      //   ],
-      // },
-      {
-        kind: 'category',
         name: 'Logic',
         categorystyle: 'logic_category',
         contents: [
@@ -184,7 +145,6 @@
           {kind: 'block', type: 'lists_reverse'},
         ],
       },
-      {kind: 'sep'},
         {kind: 'category', name: 'Values', categorystyle: 'value_category', contents: [
           {kind: 'block', type: 'math_number', fields: {NUM: 123}},
             {kind: 'block', type: 'text'},
@@ -197,7 +157,7 @@
                 {kind: 'block', type: 'output', inputs: {TEXT: {shadow: {type: 'text', fields: {TEXT: 'abc'}}}}},
                  {kind: 'block', type: 'input', inputs: {TEXT: {shadow: {type: 'text', fields: {TEXT: 'abc'}}}}},
         ]
-        },     {kind: 'sep'}
+        }
     ],
   };
 })();

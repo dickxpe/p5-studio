@@ -158,7 +158,7 @@ function buildDynamicP5Categories(p5Map) {
     result.push({ name, colour: colourBy[cat] || '#9E9E9E', blocks });
   }
   // Add globals/constants category similar to the webview (block types only)
-  result.push({ name: 'p5 globals & constants', colour: '#ffd180', blocks: ['p5_global_number','p5_global_boolean','p5_global_string','p5_constant'] });
+ // result.push({ name: 'p5 globals & constants', colour: '#ffd180', blocks: ['p5_global_number','p5_global_boolean','p5_global_string','p5_constant'] });
   return result;
 }
 
