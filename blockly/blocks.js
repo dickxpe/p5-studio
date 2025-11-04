@@ -17,11 +17,10 @@
       },
       {
         "type": "inputprompt",
-        "message0": "inputPrompt %1",
-        "args0": [ { "type": "input_value", "name": "TEXT" } ],
+        "message0": "inputPrompt",
         "output": null,
         "colour": "#ec43f5",
-  "tooltip": "Top-of-sketch only: use to initialize a variable, e.g., let a = inputPrompt('Label')",
+  "tooltip": "Top-of-sketch only: use to initialize a variable, e.g., let a = inputPrompt()",
       }
     ];
     if (typeof Blockly !== 'undefined' && Blockly.defineBlocksWithJsonArray) {

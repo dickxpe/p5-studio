@@ -381,6 +381,24 @@
         });
       }
     } catch (e) { /* ignore post-process errors */ }
+    // Convert any for-loop headers to use let instead of var (e.g., for (var i = ...)
+    try {
+      code = code.replace(/\bfor\s*\(\s*var\b/g, 'for (let');
+    } catch (e) { /* ignore */ }
+    // Convert standalone var declarations at line start to let (e.g., "var i;" -> "let i;")
+    try {
+      code = code.replace(/(^|\n)([\t ]*)var\b/g, '$1$2let');
+    } catch (e) { /* ignore */ }
+    // Fold standalone loop var declaration into for-header: let i;\nfor (i = ...; ...; ...) -> for (let i = ...; ...; ...)
+    try {
+      code = code.replace(
+        /(^|\n)([\t ]*)let\s+([A-Za-z_$][\w$]*)\s*;\s*\n([\t ]*)for\s*\(\s*\3\s*=\s*([^;]+);\s*([^;]*);\s*([^\)]*)\)/g,
+        function(_m, p1, indentDecl, varName, indentFor, initExpr, condExpr, incrExpr){
+          const indent = indentFor || indentDecl || '';
+          return `${p1}${indent}for (let ${varName} = ${initExpr}; ${condExpr}; ${incrExpr})`;
+        }
+      );
+    } catch (e) { /* ignore */ }
     // If post-processing created leading blank lines (e.g., removed a first-line var decl),
     // trim them and shift the lineMap accordingly to keep highlights aligned.
     try {

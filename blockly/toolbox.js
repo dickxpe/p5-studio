@@ -153,10 +153,10 @@
         },
       {kind: 'category', name: 'Variables', categorystyle: 'variable_category', custom: 'VARIABLE'},
       {kind: 'category', name: 'Functions', categorystyle: 'procedure_category', custom: 'PROCEDURE'},
-        {kind: 'category', name: 'Debug', categorystyle: 'debug_category', contents: [
-                {kind: 'block', type: 'output', inputs: {TEXT: {shadow: {type: 'text', fields: {TEXT: 'abc'}}}}},
-                 {kind: 'block', type: 'inputprompt', inputs: {TEXT: {shadow: {type: 'text', fields: {TEXT: 'abc'}}}}},
-        ]
+  {kind: 'category', name: 'Debug', categorystyle: 'debug_category', contents: [
+    {kind: 'block', type: 'output', inputs: {TEXT: {shadow: {type: 'text', fields: {TEXT: 'abc'}}}}},
+     {kind: 'block', type: 'inputprompt'},
+  ]
         }
     ],
   };

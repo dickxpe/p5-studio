@@ -1545,6 +1545,14 @@ window.addEventListener("message", e => {
   switch(data.type){
     case "reload":
       if (data.preserveGlobals) {
+        // Reset stepping control flags before reloading
+        try {
+          window.__liveP5Gate = null;
+          window.__liveP5DrawBusy = false;
+          window.__liveP5FrameCounter = 0;
+          window.__liveP5StepResolve = null;
+          window.__liveP5StepAdvance = null;
+        } catch {}
         // Save current global values
         const prevGlobals = {};
         if (window._p5GlobalVarTypes) {
@@ -1570,10 +1578,28 @@ window.addEventListener("message", e => {
           });
         }
       } else {
+        // Reset stepping control flags before reloading
+        try {
+          window.__liveP5Gate = null;
+          window.__liveP5DrawBusy = false;
+          window.__liveP5FrameCounter = 0;
+          window.__liveP5StepResolve = null;
+          window.__liveP5StepAdvance = null;
+        } catch {}
         runUserSketch(data.code);
       }
       break;
-    case "stop": if(window._p5Instance){window._p5Instance.remove(); window._p5Instance=null;} document.querySelectorAll("canvas").forEach(c=>c.remove()); break;
+    case "stop":
+      try {
+        window.__liveP5Gate = null;
+        window.__liveP5DrawBusy = false;
+        window.__liveP5FrameCounter = 0;
+        window.__liveP5StepResolve = null;
+        window.__liveP5StepAdvance = null;
+      } catch {}
+      if(window._p5Instance){window._p5Instance.remove(); window._p5Instance=null;}
+      document.querySelectorAll("canvas").forEach(c=>c.remove());
+      break;
   case "showError": showError(data.message); break;
   case "showWarning": showWarning(data.message); break;
     case "toggleReloadButton": document.getElementById("reload-button").style.display = data.show ? "flex" : "none"; break;
@@ -2159,7 +2185,7 @@ function instrumentSetupForSingleStep(code: string, lineOffset: number): string 
     recast.types.visit(ast, {
       visitFunctionDeclaration(path) {
         const node: any = path.value;
-        if (node.id && node.id.name === 'setup' && node.body && Array.isArray(node.body.body)) {
+        if (node.id && (node.id.name === 'setup' || node.id.name === 'draw') && node.body && Array.isArray(node.body.body)) {
           node.async = true;
           // Controller helpers at the top of setup
           const highlightDecl = b.variableDeclaration('const', [
@@ -2259,11 +2285,81 @@ function instrumentSetupForSingleStep(code: string, lineOffset: number): string 
 
           const original = node.body.body.slice();
           const prelude = [highlightDecl, clearDecl, waitDecl, advanceDecl];
+          // Gate: prevent draw() from running before setup() has fully finished stepping
+          const setGateSetup = b.expressionStatement(
+            b.assignmentExpression('=',
+              b.memberExpression(b.identifier('window'), b.identifier('__liveP5Gate')),
+              b.literal('setup')
+            )
+          );
+          const clearGate = b.expressionStatement(
+            b.assignmentExpression('=',
+              b.memberExpression(b.identifier('window'), b.identifier('__liveP5Gate')),
+              b.literal(null)
+            )
+          );
+          const drawGateGuard = b.ifStatement(
+            b.binaryExpression('===',
+              b.memberExpression(b.identifier('window'), b.identifier('__liveP5Gate')),
+              b.literal('setup')
+            ),
+            b.blockStatement([b.returnStatement(null)])
+          );
+          const drawBusyGuard = b.ifStatement(
+            b.memberExpression(b.identifier('window'), b.identifier('__liveP5DrawBusy')),
+            b.blockStatement([b.returnStatement(null)])
+          );
+          const setDrawBusy = b.expressionStatement(
+            b.assignmentExpression('=',
+              b.memberExpression(b.identifier('window'), b.identifier('__liveP5DrawBusy')),
+              b.literal(true)
+            )
+          );
+          const clearDrawBusy = b.expressionStatement(
+            b.assignmentExpression('=',
+              b.memberExpression(b.identifier('window'), b.identifier('__liveP5DrawBusy')),
+              b.literal(false)
+            )
+          );
+          // frame counter: init in setup, increment in accepted draw frames
+          const initFrameCounter = b.expressionStatement(
+            b.assignmentExpression('=',
+              b.memberExpression(b.identifier('window'), b.identifier('__liveP5FrameCounter')),
+              b.literal(0)
+            )
+          );
+          const incFrameCounter = b.expressionStatement(
+            b.assignmentExpression('=',
+              b.memberExpression(b.identifier('window'), b.identifier('__liveP5FrameCounter')),
+              b.binaryExpression('+',
+                b.logicalExpression('||',
+                  b.memberExpression(b.identifier('window'), b.identifier('__liveP5FrameCounter')),
+                  b.literal(0)
+                ),
+                b.literal(1)
+              )
+            )
+          );
           // Instrument the original body statements
           const instrumentedBlock = instrumentBlock(b.blockStatement(original));
-          // Append a final clear highlight call when setup finishes
+          // If setup() has no statements, still start stepping at setup by inserting an entry highlight/await
+          const entryStep: any[] = [];
+          if (node.id && node.id.name === 'setup' && (!instrumentedBlock.body || instrumentedBlock.body.length === 0)) {
+            const hiAtFunc = makeHighlightFor(node);
+            if (hiAtFunc) {
+              entryStep.push(hiAtFunc);
+              entryStep.push(makeAwaitStep());
+            }
+          }
+          // Append a final clear highlight call when function finishes (setup or draw)
           const callClear = b.expressionStatement(b.callExpression(b.identifier('__clearHighlight'), []));
-          node.body.body = [...prelude, ...instrumentedBlock.body, callClear];
+          if (node.id && node.id.name === 'setup') {
+            // setup(): set gate before any stepping, then clear gate at the very end
+            node.body.body = [...prelude, initFrameCounter, setGateSetup, ...entryStep, ...instrumentedBlock.body, clearGate, callClear];
+          } else {
+            // draw(): skip if gate indicates setup not finished yet; guard against re-entrancy across frames while stepping
+            node.body.body = [...prelude, drawGateGuard, drawBusyGuard, setDrawBusy, incFrameCounter, ...entryStep, ...instrumentedBlock.body, clearDrawBusy];
+          }
           changed = true;
           return false;
         }
@@ -2942,6 +3038,74 @@ export function activate(context: vscode.ExtensionContext) {
     </html>`;
   }
 
+  // Rewrite references to global p5 frameCount so stepping can use a custom counter.
+  // Replaces bare `frameCount` and `window.frameCount` with `window.__liveP5FrameCounter` in user code.
+  function rewriteFrameCountRefs(code: string): string {
+    try {
+      const acorn = require('acorn');
+      const ast = recast.parse(code, {
+        parser: {
+          parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' })
+        }
+      });
+      const b = recast.types.builders;
+
+      function isPropertyKey(path: any) {
+        const parent = path.parent && path.parent.value;
+        return parent && parent.type === 'Property' && parent.key === path.value && parent.computed === false;
+      }
+      function isMemberUncomputedProperty(path: any) {
+        const parent = path.parent && path.parent.value;
+        return parent && parent.type === 'MemberExpression' && parent.property === path.value && parent.computed === false;
+      }
+      function isFunctionParam(path: any) {
+        const parent = path.parent && path.parent.value;
+        if (!parent) return false;
+        if (parent.type === 'FunctionDeclaration' || parent.type === 'FunctionExpression' || parent.type === 'ArrowFunctionExpression') {
+          return Array.isArray(parent.params) && parent.params.includes(path.value);
+        }
+        return false;
+      }
+      function isVarDeclaratorId(path: any) {
+        const parent = path.parent && path.parent.value;
+        return parent && parent.type === 'VariableDeclarator' && parent.id === path.value;
+      }
+
+      recast.types.visit(ast, {
+        visitIdentifier(path) {
+          const id: any = path.value;
+          if (id && id.name === 'frameCount') {
+            // Skip keys, member properties, function params, and variable declaration identifiers
+            if (isPropertyKey(path) || isMemberUncomputedProperty(path) || isFunctionParam(path) || isVarDeclaratorId(path)) {
+              return false;
+            }
+            // Replace bare identifier with window.__liveP5FrameCounter
+            const replacement = b.memberExpression(b.identifier('window'), b.identifier('__liveP5FrameCounter'));
+            path.replace(replacement);
+            return false;
+          }
+          this.traverse(path);
+        },
+        visitMemberExpression(path) {
+          const me: any = path.value;
+          if (
+            me &&
+            me.object && me.object.type === 'Identifier' && me.object.name === 'window' &&
+            me.property && !me.computed && me.property.type === 'Identifier' && me.property.name === 'frameCount'
+          ) {
+            // Replace window.frameCount -> window.__liveP5FrameCounter
+            path.get('property').replace(recast.types.builders.identifier('__liveP5FrameCounter'));
+            return false;
+          }
+          this.traverse(path);
+        }
+      });
+      return recast.print(ast).code;
+    } catch {
+      return code;
+    }
+  }
+
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.open-blockly', async () => {
       const originatingEditor = vscode.window.activeTextEditor;
@@ -3339,7 +3503,7 @@ export function activate(context: vscode.ExtensionContext) {
     try {
       if (hasNonTopInputUsage(code)) {
         panel.webview.html = await createHtml('', panel, context.extensionPath);
-  const friendly = 'inputPrompt() can only be used at the very top of the sketch to initialize a variable, e.g.: let a = inputPrompt()); ';
+  const friendly = 'inputPrompt() can only be used at the very top of the sketch to initialize a variable, e.g.: let a = inputPrompt(); ';
         setTimeout(() => { panel.webview.postMessage({ type: 'showError', message: friendly }); }, 150);
         const time = getTime();
         outputChannel.appendLine(`${time} [‼️RUNTIME ERROR in ${fileName}] ${friendly}`);
@@ -3569,7 +3733,7 @@ export function activate(context: vscode.ExtensionContext) {
         try {
           // Friendly error for inputPrompt() used outside top-of-sketch
           if (hasNonTopInputUsage(codeToInject)) {
-            syntaxErrorMsg = `${getTime()} [‼️RUNTIME ERROR in ${path.basename(editor.document.fileName)}] inputPrompt() must be used at the very top of the sketch to initialize a variable (e.g., let a = inputPrompt("Label")); runtime prompts are not supported.`;
+            syntaxErrorMsg = `${getTime()} [‼️RUNTIME ERROR in ${path.basename(editor.document.fileName)}] inputPrompt() must be used at the very top of the sketch to initialize a variable (e.g., let a = inputPrompt()); runtime prompts are not supported.`;
             codeToInject = '';
             throw new Error('inputPrompt must initialize a top-level variable');
           }
@@ -3830,10 +3994,10 @@ export function activate(context: vscode.ExtensionContext) {
             if (hasNonTopInputUsage(rawCode)) {
               panel.webview.html = await createHtml('', panel, context.extensionPath);
               setTimeout(() => {
-                panel.webview.postMessage({ type: 'showError', message: 'inputPrompt() must be used at the very top of the sketch to initialize a variable (e.g., let a = inputPrompt("Label")); runtime prompts are not supported.' });
+                panel.webview.postMessage({ type: 'showError', message: 'inputPrompt() must be used at the very top of the sketch to initialize a variable (e.g., let a = inputPrompt()); runtime prompts are not supported.' });
               }, 150);
               const outputChannel = getOrCreateOutputChannel(docUri, fileName);
-              outputChannel.appendLine(`${getTime()} [‼️RUNTIME ERROR in ${fileName}] inputPrompt() must be used at the very top of the sketch to initialize a variable (e.g., let a = inputPrompt("Label")); runtime prompts are not supported.`);
+              outputChannel.appendLine(`${getTime()} [‼️RUNTIME ERROR in ${fileName}] inputPrompt() must be used at the very top of the sketch to initialize a variable (e.g., let a = inputPrompt()); runtime prompts are not supported.`);
               return;
             }
             // Log semicolon warnings on explicit reload action
@@ -4030,6 +4194,8 @@ export function activate(context: vscode.ExtensionContext) {
               }
             }
             let wrapped = wrapInSetupIfNeeded(codeForRun);
+            // Replace p5 frameCount references with custom counter for stable stepping
+            wrapped = rewriteFrameCountRefs(wrapped);
             const didWrap = wrapped !== codeForRun;
             let instrumented = instrumentSetupForSingleStep(wrapped, didWrap ? 1 : 0);
             const globals = extractGlobalVariables(instrumented);
@@ -4163,6 +4329,8 @@ export function activate(context: vscode.ExtensionContext) {
               }
             }
             let wrapped = wrapInSetupIfNeeded(codeForRun);
+            // Replace p5 frameCount references with custom counter for stable stepping
+            wrapped = rewriteFrameCountRefs(wrapped);
             const didWrap = wrapped !== codeForRun;
             let instrumented = instrumentSetupForSingleStep(wrapped, didWrap ? 1 : 0);
             const globals = extractGlobalVariables(instrumented);
@@ -4275,13 +4443,18 @@ export function activate(context: vscode.ExtensionContext) {
                 blocklyPanel.webview.postMessage({ type: 'clearBlocklyHighlight' });
               }
             } catch {}
-            // Log that stepping has finished
+            // Only mark stepping finished if there is no draw() in the user's code
             try {
-              const fileName = path.basename(editor.document.fileName);
-              const ch = getOrCreateOutputChannel(docUri, fileName);
-              ch.appendLine(`${getTime()} [▶️INFO] Code stepping finished.`);
+              const codeText = editor.document.getText();
+              const hasDraw = /\bfunction\s+draw\s*\(/.test(codeText);
+              if (!hasDraw) {
+                const fileName = path.basename(editor.document.fileName);
+                const ch = getOrCreateOutputChannel(docUri, fileName);
+                ch.appendLine(`${getTime()} [▶️INFO] Code stepping finished.`);
+                (panel as any)._steppingActive = false;
+              }
+              // If draw() exists, keep stepping active to continue into draw frames
             } catch {}
-            (panel as any)._steppingActive = false;
           }
           // --- OSC SEND HANDLER ---
           else if (msg.type === 'oscSend') {

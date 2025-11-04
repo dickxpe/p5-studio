@@ -1,5 +1,4 @@
-# LIVE P5 LAUNCHER
-
+# P5 Studio
 ## Who am I & why did i develop this extension?
 My name is Peter Dickx and I'm a coding teacher at [EHB (Erasmushogeschool Brussel)](http://www.ehb.be/).\
 In the course [Multimedia & Creative Technologies](https://www.erasmushogeschool.be/nl/opleidingen/multimedia-en-creatieve-technologie) I teach the first course module **"Creative Coding I"**,\
@@ -11,7 +10,7 @@ However it can be also be used as a prototyping tool for any creative coder!
 ## Introduction
 LIVE P5 LAUNCHER is a Visual Studio Code extension that brings live coding and rapid prototyping to p5.js sketches. It provides an interactive webview panel for instant feedback, variable control, and error reporting, making it ideal for creative coding, teaching, and experimentation with p5.js in JavaScript or TypeScript.
 
-![LIVE P5 Launcher Screenshot](./readme/p5live_Screenshot.png)
+![P5 Studio Screenshot](./readme/p5live_Screenshot.png)
 
 ## Features
 - **Live Preview:** Instantly see your p5.js sketch update as you type or save.
@@ -62,23 +61,23 @@ LIVE P5 LAUNCHER is a Visual Studio Code extension that brings live coding and r
 
 
 ## Configuration
-All settings are under the `liveP5` namespace. You can configure these in your VS Code settings (search for "liveP5").
+All settings are under the `P5 Studio` namespace. You can configure these in your VS Code settings (search for "P5 Studio").
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
-| `liveP5.reloadOnSave` | boolean | `true` | Automatically reload the P5 webpanel when saving the file. |
-| `liveP5.reloadWhileTyping` | boolean | `true` | Automatically reload the P5 webpanel as you type. |
-| `liveP5.debounceDelay` | number | `300` | Debounce delay in milliseconds for live reload while typing. |
-| `liveP5.varDrawerDefaultState` | string (`open`, `collapsed`, `hidden`) | `collapsed` | Default state of the global variable drawer in the P5 panel. |
-| `liveP5.varControlDebounceDelay` | number | `500` | Debounce delay (ms) for global variable drawer input changes before applying them to the sketch. |
-| `liveP5.showReloadButton` | boolean | `true` | Show the reload button in the webview toolbar. |
-| `liveP5.showRecordButton` | boolean | `false` | Show the record (capture) button in the webview toolbar. |
-| `liveP5.SingleP5Panel` | boolean | `true` | If enabled, only one P5 webpanel can be open at a time. Opening a new panel closes all others. |
-| `liveP5.showSetupNotification` | boolean | `true` | Show a setup prompt when the workspace has no P5 marker (`.p5`). |
-| `liveP5.oscRemoteAddress` | string | `127.0.0.1` | OSC remote address (host to send OSC messages to). |
-| `liveP5.oscLocalAddress` | string | `127.0.0.1` | OSC local bind address for receiving. Use `127.0.0.1` for local-only; set to `0.0.0.0` to accept from the network. |
-| `liveP5.oscRemotePort` | number | `57120` | OSC remote port (port to send OSC messages to). |
-| `liveP5.oscLocalPort` | number | `57121` | OSC local port (port to listen for incoming OSC messages). |
+| `P5Studio.reloadOnSave` | boolean | `true` | Automatically reload the P5 webpanel when saving the file. |
+| `P5Studio.reloadWhileTyping` | boolean | `true` | Automatically reload the P5 webpanel as you type. |
+| `P5Studio.debounceDelay` | number | `300` | Debounce delay in milliseconds for live reload while typing. |
+| `P5Studio.varDrawerDefaultState` | string (`open`, `collapsed`, `hidden`) | `collapsed` | Default state of the global variable drawer in the P5 panel. |
+| `P5Studio.varControlDebounceDelay` | number | `500` | Debounce delay (ms) for global variable drawer input changes before applying them to the sketch. |
+| `P5Studio.showReloadButton` | boolean | `true` | Show the reload button in the webview toolbar. |
+| `P5Studio.showRecordButton` | boolean | `false` | Show the record (capture) button in the webview toolbar. |
+| `P5Studio.SingleP5Panel` | boolean | `true` | If enabled, only one P5 webpanel can be open at a time. Opening a new panel closes all others. |
+| `P5Studio.showSetupNotification` | boolean | `true` | Show a setup prompt when the workspace has no P5 marker (`.p5`). |
+| `P5Studio.oscRemoteAddress` | string | `127.0.0.1` | OSC remote address (host to send OSC messages to). |
+| `P5Studio.oscLocalAddress` | string | `127.0.0.1` | OSC local bind address for receiving. Use `127.0.0.1` for local-only; set to `0.0.0.0` to accept from the network. |
+| `P5Studio.oscRemotePort` | number | `57120` | OSC remote port (port to send OSC messages to). |
+| `P5Studio.oscLocalPort` | number | `57121` | OSC local port (port to listen for incoming OSC messages). |
 
 ## OSC (Open Sound Control)
 LIVE P5 Launcher supports sending and receiving OSC (Open Sound Control) messages between your p5.js sketch and other OSC-compatible software or devices.
@@ -119,16 +118,16 @@ OSC args can be delivered with type metadata objects. The helper `oscArgsToArray
 
 ### Configuration
 You can configure the OSC connection in your VS Code settings:
-- `liveP5.oscRemoteAddress`: The remote host to send OSC messages to (default: `127.0.0.1`)
-- `liveP5.oscLocalAddress`: The local bind address to receive on (default: `127.0.0.1`; set to `0.0.0.0` for LAN).
-- `liveP5.oscRemotePort`: The remote port to send OSC messages to (default: `57120`)
-- `liveP5.oscLocalPort`: The local port to listen for incoming OSC messages (default: `57121`)
+- `P5Studio.oscRemoteAddress`: The remote host to send OSC messages to (default: `127.0.0.1`)
+- `P5Studio.oscLocalAddress`: The local bind address to receive on (default: `127.0.0.1`; set to `0.0.0.0` for LAN).
+- `P5Studio.oscRemotePort`: The remote port to send OSC messages to (default: `57120`)
+- `P5Studio.oscLocalPort`: The local port to listen for incoming OSC messages (default: `57121`)
 
 This allows you to connect your p5.js sketches to other creative coding tools, DAWs, or hardware that support OSC.
 
 ### Tips & self-test
-- To self-test without an external server, temporarily set `liveP5.oscRemotePort` to match `liveP5.oscLocalPort` (default `57121`) and call `sendOSC('/test', [1,'a',true])` from your sketch. You should see `receivedOSC` fire.
-- To receive from another device on your network, set `liveP5.oscLocalAddress` to `0.0.0.0`, keep `liveP5.oscLocalPort` (e.g., `57121`), and send to your computer’s LAN IP at that port.
+- To self-test without an external server, temporarily set `P5Studio.oscRemotePort` to match `P5Studio.oscLocalPort` (default `57121`) and call `sendOSC('/test', [1,'a',true])` from your sketch. You should see `receivedOSC` fire.
+- To receive from another device on your network, set `P5Studio.oscLocalAddress` to `0.0.0.0`, keep `P5Studio.oscLocalPort` (e.g., `57121`), and send to your computer’s LAN IP at that port.
 
 ## Tips
 - For autocompletion of functions in import/common files, use a `jsconfig.json` and/or JSDoc references.

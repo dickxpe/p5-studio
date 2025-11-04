@@ -8,8 +8,8 @@
   const Order = gen.Order || javascript.Order;
 
   gen.forBlock['output']         = (b,g)=> `output(${v(g,b,'TEXT')});\n`;
-  // Value block: returns the entered value from the prompt (new type)
-  gen.forBlock['inputprompt']    = (b,g)=> [ `inputPrompt(${v(g,b,'TEXT')})`, (Order ? Order.NONE : gen.ORDER_NONE) ];
+  // Value block: returns the entered value from the prompt (no parameters)
+  gen.forBlock['inputprompt']    = (b,g)=> [ `inputPrompt()`, (Order ? Order.NONE : gen.ORDER_NONE) ];
 
 
   // p5: structure
@@ -54,4 +54,41 @@
   // p5: typography
   gen.forBlock['p5_text']           = (b,g)=> `text(${s(g,b,'S')}, ${v(g,b,'X')}, ${v(g,b,'Y')});\n`;
   gen.forBlock['p5_textSize']       = (b,g)=> `textSize(${v(g,b,'SZ')});\n`;
+
+  // Override default loop generators to use let instead of var in for-headers
+  try {
+    const origControlsFor = gen.forBlock['controls_for'];
+    gen.forBlock['controls_for'] = function(block, generator){
+      try {
+        const out = origControlsFor ? origControlsFor.call(this, block, generator) : javascript.javascriptGenerator.forBlock['controls_for'](block, generator);
+        if (typeof out === 'string') return out.replace(/for \(var\s+/, 'for (let ');
+        return out;
+      } catch(e){
+        // Fallback: minimal for-loop code using let
+        const variable = block.getFieldValue('VAR') || 'i';
+        const from = generator.valueToCode(block, 'FROM', Order ? Order.NONE : gen.ORDER_NONE) || '0';
+        const to = generator.valueToCode(block, 'TO', Order ? Order.NONE : gen.ORDER_NONE) || '0';
+        const by = generator.valueToCode(block, 'BY', Order ? Order.NONE : gen.ORDER_NONE) || '1';
+        const branch = generator.statementToCode(block, 'DO');
+        return `for (let ${variable} = ${from}; ${variable} <= ${to}; ${variable} += ${by}) {\n${branch}}\n`;
+      }
+    };
+  } catch(e){}
+
+  try {
+    const origControlsForEach = gen.forBlock['controls_forEach'];
+    gen.forBlock['controls_forEach'] = function(block, generator){
+      try {
+        const out = origControlsForEach ? origControlsForEach.call(this, block, generator) : javascript.javascriptGenerator.forBlock['controls_forEach'](block, generator);
+        if (typeof out === 'string') return out.replace(/for \(var\s+/, 'for (let ');
+        return out;
+      } catch(e){
+        // Fallback minimal implementation
+        const variable = block.getFieldValue('VAR') || 'x';
+        const list = generator.valueToCode(block, 'LIST', Order ? Order.NONE : gen.ORDER_NONE) || '[]';
+        const branch = generator.statementToCode(block, 'DO');
+        return `for (let ${variable} of ${list}) {\n${branch}}\n`;
+      }
+    };
+  } catch(e){}
 })();

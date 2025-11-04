@@ -32,15 +32,13 @@ function oscArgsToArray(args) {
 }
 
 /**
- * Request a value from the user with an optional default.
+ * Request a value from the user.
  * Note: This is a stub for IntelliSense only; the runtime implementation
  * is provided by the extension/webview and may coerce strings like
  * "true"/"false" to booleans and numeric strings to numbers.
- * @param {string} label The message to show to the user
- * @param {any} [defaultValue] Optional default value
  * @returns {any} The entered value (type depends on implementation)
  */
-function inputPrompt(label, defaultValue) {
+function inputPrompt() {
     // This is a stub for autocompletion only.
     // The real implementation (for top-of-file placeholders) is handled by the extension.
 }

@@ -1,8 +1,8 @@
 {
-  "name": "live-p5-launcher",
-  "displayName": "LIVE P5 LAUNCHER",
-  "description": "Launch and edit P5 in VS Code",
-  "version": "1.4.3",
+  "name": "p5-studio",
+  "displayName": "P5 Studio",
+  "description": "Live code p5js in VS Code",
+  "version": "1.0.0",
   "icon": "images/ICON.png",
   "author": {
     "name": "peterdickx"
@@ -14,7 +14,10 @@
   "keywords": [
     "p5",
     "live",
-    "auto-reload"
+    "auto-reload",
+    "preview",
+    "blockly",
+    "osc"
   ],
   "categories": [
     "Visualization",
@@ -35,23 +38,15 @@
     "commands": [
       {
         "command": "extension.live-p5",
-        "title": "Live P5: Open P5 Panel",
+        "title": "P5 Studio Open P5 Panel",
         "icon": {
           "light": "images/p5.svg",
           "dark": "images/p5.svg"
         }
       },
       {
-        "command": "extension.open-blockly-json",
-        "title": "Live P5: Open Blockly Toolbox JSON",
-        "icon": {
-          "light": "images/blockly.png",
-          "dark": "images/blockly.png"
-        }
-      },
-      {
         "command": "extension.open-blockly",
-        "title": "B5",
+        "title": "Blockly ",
          "icon": {
           "light": "images/blockly.png",
           "dark": "images/blockly.png"
@@ -67,7 +62,7 @@
       },
       {
         "command": "extension.create-jsconfig",
-        "title": "Live P5: Setup new project"
+        "title": "P5 Studio Setup new project"
       },
       {
         "command": "extension.openP5Ref",
@@ -84,7 +79,7 @@
           "light": "images/keyboard_off.svg",
           "dark": "images/keyboard.svg"
         },
-        "category": "LIVE P5"
+        "category": "P5 Studio"
       },
       {
         "command": "liveP5.toggleReloadWhileTypingOff",
@@ -93,12 +88,12 @@
           "light": "images/keyboard.svg",
           "dark": "images/keyboard_off.svg"
         },
-        "category": "LIVE P5"
+        "category": "P5 Studio"
       },
       {
         "command": "liveP5.scrollOutputToEnd",
         "title": "Scroll Output to End",
-        "category": "LIVE P5"
+        "category": "P5 Studio"
       },
       {
         "command": "extension.duplicateFile",
@@ -175,7 +170,7 @@
     },
     "configuration": {
       "type": "object",
-      "title": "LIVE P5 Launcher Settings",
+      "title": "P5 Studio Settings",
       "properties": {
         "liveP5.reloadWhileTyping": {
           "type": "boolean",
@@ -272,7 +267,7 @@
         "liveP5.enableBlockly": {
           "type": "boolean",
           "default": true,
-          "description": "Enable Blockly integration: shows the Blockly button (B5) and the Decouple Blockly context menu entry.",
+          "description": "Enable Blockly integration: shows the Blockly button and the Decouple Blockly context menu entry.",
           "order": 14
         }
         ,
@@ -343,11 +338,11 @@
   },
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/dickxpe/vscode-live-p5/issues"
+    "url": "https://github.com/dickxpe/p5-studio/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/dickxpe/vscode-live-p5.git"
+    "url": "https://github.com/dickxpe/p5-studio.git"
   },
-  "homepage": "https://github.com/dickxpe/vscode-live-p5"
+  "homepage": "https://github.com/dickxpe/p5-studio"
 }
