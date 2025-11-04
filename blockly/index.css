@@ -91,7 +91,7 @@ body.light-theme .blocklyFlyout .blocklyText {
 body.light-theme .blocklyToolboxDiv::-webkit-scrollbar,
 body.light-theme .blocklyTreeDiv::-webkit-scrollbar,
 body.light-theme .blocklyFlyout::-webkit-scrollbar {
-  width: 10px;
+  width: 12px;
 }
 body.light-theme .blocklyToolboxDiv::-webkit-scrollbar-thumb,
 body.light-theme .blocklyTreeDiv::-webkit-scrollbar-thumb,
@@ -105,6 +105,13 @@ body.light-theme .blocklyFlyout::-webkit-scrollbar-track {
   background: transparent;
 }
 
+/* Ensure Firefox uses a thin scrollbar for toolbox/tree/flyout in light theme */
+body.light-theme .blocklyToolboxDiv,
+body.light-theme .blocklyTreeDiv,
+body.light-theme .blocklyFlyout {
+  scrollbar-width: auto; /* slightly thicker than thin */
+}
+
 /* Broader fallback: style any scrollbar inside the Blockly page when light-theme
    is active. This ensures the toolbox scrollbar (wherever it lives) gets a
    visible, light-theme-appropriate thumb on platforms where the specific
@@ -114,7 +121,7 @@ body.light-theme #pageContainer ::-webkit-scrollbar-thumb {
   border-radius: 6px !important;
 }
 body.light-theme #pageContainer ::-webkit-scrollbar {
-  width: 10px !important;
+  width: 12px !important;
 }
 body.light-theme #pageContainer ::-webkit-scrollbar-track {
   background: transparent !important;
@@ -122,6 +129,46 @@ body.light-theme #pageContainer ::-webkit-scrollbar-track {
 body.light-theme #pageContainer {
   /* Firefox: ensure scrollbar color applies to any scrollable child */
   scrollbar-color: rgba(0,0,0,0.35) transparent !important;
+}
+
+/* Dark-theme scrollbar styling to keep widths consistent with categories slider */
+body.dark-theme .blocklyToolboxDiv,
+body.dark-theme .blocklyTreeDiv,
+body.dark-theme .blocklyFlyout {
+  /* Firefox */
+  scrollbar-color: rgba(255,255,255,0.35) transparent;
+  scrollbar-width: auto; /* slightly thicker than thin */
+}
+body.dark-theme .blocklyToolboxDiv::-webkit-scrollbar,
+body.dark-theme .blocklyTreeDiv::-webkit-scrollbar,
+body.dark-theme .blocklyFlyout::-webkit-scrollbar {
+  width: 12px;
+}
+body.dark-theme .blocklyToolboxDiv::-webkit-scrollbar-thumb,
+body.dark-theme .blocklyTreeDiv::-webkit-scrollbar-thumb,
+body.dark-theme .blocklyFlyout::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.35);
+  border-radius: 6px;
+}
+body.dark-theme .blocklyToolboxDiv::-webkit-scrollbar-track,
+body.dark-theme .blocklyTreeDiv::-webkit-scrollbar-track,
+body.dark-theme .blocklyFlyout::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Dark-theme general fallback for any scrollable in the page */
+body.dark-theme #pageContainer ::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.35) !important;
+  border-radius: 6px !important;
+}
+body.dark-theme #pageContainer ::-webkit-scrollbar {
+  width: 12px !important;
+}
+body.dark-theme #pageContainer ::-webkit-scrollbar-track {
+  background: transparent !important;
+}
+body.dark-theme #pageContainer {
+  scrollbar-color: rgba(255,255,255,0.35) transparent !important;
 }
 
 /* Note: avoid a blanket "hide all scrollbars" rule so toolbox/flyout

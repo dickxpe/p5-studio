@@ -5,6 +5,44 @@
 
 
 (function(){
+  // Remove default 'do'/'then' labels from standard blocks by overriding Blockly messages early
+  function overrideDoThenMessages() {
+    try {
+      if (!window.Blockly || !Blockly.Msg) return;
+      const keys = [
+        'CONTROLS_REPEAT_INPUT_DO',
+        'CONTROLS_WHILEUNTIL_INPUT_DO',
+        'CONTROLS_FOR_INPUT_DO',
+        'CONTROLS_FOREACH_INPUT_DO',
+        'CONTROLS_IF_MSG_THEN'
+      ];
+      keys.forEach(k => { try { Blockly.Msg[k] = ''; } catch (e) {} });
+    } catch (e) { /* ignore */ }
+  }
+  overrideDoThenMessages();
+
+  // Ensure custom Blockly scrollbars (especially the flyout scrollbar) match toolbox width
+  function overrideScrollbarThickness(thickness) {
+    try {
+      if (!window.Blockly) return;
+      // Core scrollbar statics across versions
+      try {
+        if (Blockly.Scrollbar) {
+          if ('scrollbarThickness' in Blockly.Scrollbar) Blockly.Scrollbar.scrollbarThickness = thickness;
+          if ('scrollbarThickness_' in Blockly.Scrollbar) Blockly.Scrollbar.scrollbarThickness_ = thickness;
+          if (Blockly.ScrollbarSvg && 'scrollbarThickness' in Blockly.ScrollbarSvg) {
+            Blockly.ScrollbarSvg.scrollbarThickness = thickness;
+          }
+        }
+      } catch (e) {}
+      // Flyout-specific prototypes across versions
+      try { if (Blockly.Flyout && Blockly.Flyout.prototype && 'scrollbarThickness_' in Blockly.Flyout.prototype) Blockly.Flyout.prototype.scrollbarThickness_ = thickness; } catch (e) {}
+      try { if (Blockly.VerticalFlyout && Blockly.VerticalFlyout.prototype) Blockly.VerticalFlyout.prototype.scrollbarThickness_ = thickness; } catch (e) {}
+      try { if (Blockly.HorizontalFlyout && Blockly.HorizontalFlyout.prototype) Blockly.HorizontalFlyout.prototype.scrollbarThickness_ = thickness; } catch (e) {}
+    } catch (e) { /* ignore */ }
+  }
+  // Match the categories (toolbox) scrollbar width (CSS now uses ~12px)
+  overrideScrollbarThickness(15);
   // Build color maps from JSON categories (name -> colour, blockType -> colour)
   function buildJsonColorMaps() {
     const nameToColour = new Map();
@@ -233,7 +271,16 @@
       paths.forEach(p => { try { if (p.setAttribute) p.setAttribute('fill', fillColor); } catch (e) {} });
       // Ensure flyout text is readable
       const texts = document.querySelectorAll('.blocklyFlyout .blocklyText');
-      texts.forEach(t => { try { t.setAttribute('fill', '#000'); } catch (e) {} });
+      texts.forEach(t => {
+        try {
+          // Hide default 'do'/'then' labels in the flyout as well
+          const tx = (t.textContent || '').trim().toLowerCase();
+          if (tx === 'do' || tx === 'then') {
+            t.textContent = '';
+          }
+          t.setAttribute('fill', '#000');
+        } catch (e) {}
+      });
     } catch (e) { /* ignore */ }
   }
 
@@ -245,7 +292,11 @@
         ids.forEach(id => {
           try {
             const b = ws.getBlockById(id);
-            if (b) applyBlockColorIfMapped(b);
+            if (b) {
+              applyBlockColorIfMapped(b);
+              // Also sanitize away any 'do'/'then' label fields on this block
+              try { sanitizeBlockDoThenLabels(b); } catch (e) {}
+            }
           } catch (err) { /* ignore */ }
         });
       } else if (e.type === Blockly.Events.UI && e.element === 'category') {
@@ -259,7 +310,39 @@
   setTimeout(() => {
     recolorWorkspaceValueBlocks();
     recolorFlyoutVisuals();
+    try { sanitizeWorkspaceDoThenLabels(); } catch (e) {}
   }, 200);
+
+  // --- Label sanitizers: remove 'do'/'then' labels from existing blocks ---
+  function sanitizeBlockDoThenLabels(block) {
+    try {
+      if (!block || !block.inputList) return;
+      block.inputList.forEach(input => {
+        try {
+          const row = input.fieldRow || [];
+          row.forEach(field => {
+            try {
+              // Match label-like fields with the text 'do' or 'then'
+              const val = (typeof field.getValue === 'function' ? field.getValue() : field.getText ? field.getText() : '') || '';
+              const txt = ('' + val).trim().toLowerCase();
+              if (txt === 'do' || txt === 'then') {
+                if (typeof field.setValue === 'function') field.setValue('');
+                else if (typeof field.setText === 'function') field.setText('');
+              }
+            } catch (e) { /* ignore field errors */ }
+          });
+        } catch (e) { /* ignore input errors */ }
+      });
+      try { if (typeof block.render === 'function') block.render(); } catch (e) {}
+    } catch (e) { /* ignore */ }
+  }
+
+  function sanitizeWorkspaceDoThenLabels() {
+    try {
+      const all = ws.getAllBlocks(false);
+      all.forEach(b => { try { sanitizeBlockDoThenLabels(b); } catch (e) {} });
+    } catch (e) { /* ignore */ }
+  }
 
   // --- Override: set default colour on Value-types or JSON mapped blocks on init ---
   try {
@@ -355,6 +438,8 @@
           const paths = document.querySelectorAll('.blocklyWorkspace .blocklyPath, .blocklyWorkspace .blocklyBlockBackground');
           paths.forEach(p => { try { p.removeAttribute('stroke'); p.removeAttribute('stroke-width'); } catch (e) {} });
         } catch (e) {}
+        // Remove any 'do'/'then' labels from blocks after load
+        try { sanitizeWorkspaceDoThenLabels(); } catch (e) {}
           // After loading the workspace from the extension sidecar, send the generated
           // code + serialized workspace back to the extension so it can persist any
           // changes or keep sidecar/file in sync. This avoids an initial empty write.
