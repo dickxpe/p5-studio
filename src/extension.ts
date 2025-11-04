@@ -2569,6 +2569,8 @@ export function activate(context: vscode.ExtensionContext) {
   // When a blockly panel is open for a document, we keep track of outstanding extension-updates
   const ignoreDocumentChangeForBlockly = new Set<string>();
   const workspaceDebounceTimers = new Map<string, NodeJS.Timeout>();
+  // Map of document URI -> array of { line: number, blockId: string } from Blockly code generation
+  const blocklyLineMapForDocument = new Map<string, Array<{ line: number; blockId: string }>>();
 
   function extractEmbeddedWorkspaceFromCode(code: string): string | null {
     if (!code) return null;
@@ -2897,8 +2899,6 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   context.subscriptions.push(
-
-
     vscode.commands.registerCommand('extension.open-blockly', async () => {
       const originatingEditor = vscode.window.activeTextEditor;
       if (!originatingEditor) {
@@ -2947,7 +2947,7 @@ export function activate(context: vscode.ExtensionContext) {
         blocklyPanelForDocument.delete(docUri);
           // nothing else to cleanup here
       });
-      blocklyPanel.webview.html = getBlocklyHtml(blocklyPanel);
+  blocklyPanel.webview.html = getBlocklyHtml(blocklyPanel);
           // After setting HTML, send the resolved theme to the webview so it can apply
           try {
             const cfg = vscode.workspace.getConfiguration('liveP5');
@@ -2964,13 +2964,31 @@ export function activate(context: vscode.ExtensionContext) {
 
         // After the webview is ready, prefer loading workspace from a sibling .blockly sidecar.
         // If no sidecar exists, fall back to embedded workspace and migrate it to sidecar.
-        (async () => {
+  (async () => {
           try {
             const filePath = doc.fileName;
             const sidecar = sidecarPathForFile(filePath);
             let workspaceContent: string | null = null;
+            // If sidecar contains a wrapper object with workspace + lineMap, extract both
             if (sidecar && fs.existsSync(sidecar)) {
-              try { workspaceContent = fs.readFileSync(sidecar, 'utf8'); } catch (e) { workspaceContent = null; }
+              try {
+                const raw = fs.readFileSync(sidecar, 'utf8');
+                try {
+                  const obj = JSON.parse(raw);
+                  if (obj && obj.workspace) {
+                    workspaceContent = JSON.stringify(obj.workspace);
+                    if (Array.isArray(obj.lineMap)) {
+                      try { blocklyLineMapForDocument.set(docUri, obj.lineMap); } catch {}
+                    }
+                  } else {
+                    // Backward compat: file is the raw workspace JSON/string
+                    workspaceContent = raw;
+                  }
+                } catch {
+                  // Not JSON, assume raw workspace string
+                  workspaceContent = raw;
+                }
+              } catch (e) { workspaceContent = null; }
             }
             if (!workspaceContent) {
               const embedded = extractEmbeddedWorkspaceFromCode(text);
@@ -2980,7 +2998,13 @@ export function activate(context: vscode.ExtensionContext) {
                 try {
                   const sidecarDir = path.dirname(sidecar!);
                   fs.mkdirSync(sidecarDir, { recursive: true });
-                  fs.writeFileSync(sidecar!, workspaceContent, 'utf8');
+                  // Write wrapped object to allow future line maps (no lineMap yet)
+                  try {
+                    const payload = { workspace: JSON.parse(workspaceContent) };
+                    fs.writeFileSync(sidecar!, JSON.stringify(payload, null, 2), 'utf8');
+                  } catch {
+                    fs.writeFileSync(sidecar!, workspaceContent, 'utf8');
+                  }
                 } catch (e) { /* ignore migration errors */ }
               }
             }
@@ -2999,6 +3023,10 @@ export function activate(context: vscode.ExtensionContext) {
       try {
         if (msg.workspace && typeof msg.workspace === 'string') wsObj = JSON.parse(msg.workspace);
       } catch (e) { wsObj = null; }
+      // Store line map for this document (if provided)
+      try {
+        if (Array.isArray(msg.lineMap)) blocklyLineMapForDocument.set(docUri, msg.lineMap);
+      } catch {}
       if (originatingEditor && !originatingEditor.document.isClosed) {
         try {
           const filePath = originatingEditor.document.fileName;
@@ -3008,19 +3036,23 @@ export function activate(context: vscode.ExtensionContext) {
             try {
               const sidecarDir = path.dirname(sidecar);
               fs.mkdirSync(sidecarDir, { recursive: true });
-              // Prefer writing a pretty JSON representation if it's a valid object
+              // Write a wrapped payload so we can include the lineMap for step highlighting
               try {
-                const pretty = wsObj ? JSON.stringify(wsObj, null, 2) : msg.workspace;
-                fs.writeFileSync(sidecar, pretty, 'utf8');
+                const payload: any = { workspace: wsObj || JSON.parse(msg.workspace) };
+                if (Array.isArray(msg.lineMap)) payload.lineMap = msg.lineMap;
+                fs.writeFileSync(sidecar, JSON.stringify(payload, null, 2), 'utf8');
               } catch (e) {
+                // Fallback to raw workspace string
                 fs.writeFileSync(sidecar, msg.workspace, 'utf8');
               }
             } catch (e) {
               // ignore
             }
           }
-          // Write generated code to file WITHOUT embedded workspace comment
-          let finalCode = msg.code.replace(/\/\*@BlocklyWorkspace[\s\S]*?\*\//g, '');
+          // Write generated code to file WITHOUT embedded workspace comment and WITHOUT any debug markers
+          let finalCode = msg.code
+            .replace(/\/\*@BlocklyWorkspace[\s\S]*?\*\//g, '')
+            .replace(/\/\*@b:(?:'[^']+'|[^*]+)\*\//g, '');
           // If code is empty, clear the file
           if (finalCode.trim().length === 0) {
             finalCode = '';
@@ -3035,17 +3067,13 @@ export function activate(context: vscode.ExtensionContext) {
             originatingEditor.document.positionAt(originatingEditor.document.getText().length)
           );
           edit.replace(originatingEditor.document.uri, fullRange, finalCode);
-          const ok = await vscode.workspace.applyEdit(edit);
-          if (ok) {
-            try {
-              await originatingEditor.document.save();
-            } catch (e) { /* ignore save errors */ }
-          }
-          setTimeout(() => ignoreDocumentChangeForBlockly.delete(docUri), 300);
-        } catch (e) { }
+          await vscode.workspace.applyEdit(edit);
+          await originatingEditor.document.save();
+        } catch (e) { /* ignore save errors */ }
       }
-    }
-  });
+      setTimeout(() => ignoreDocumentChangeForBlockly.delete(docUri), 300);
+  }
+});
     })
   );
 
@@ -3147,7 +3175,22 @@ export function activate(context: vscode.ExtensionContext) {
               const sidecar = sidecarPathForFile(filePath);
               let workspaceContent: string | null = null;
               if (sidecar && fs.existsSync(sidecar)) {
-                try { workspaceContent = fs.readFileSync(sidecar, 'utf8'); } catch (e) { workspaceContent = null; }
+                try {
+                  const raw = fs.readFileSync(sidecar, 'utf8');
+                  try {
+                    const obj = JSON.parse(raw);
+                    if (obj && obj.workspace) {
+                      workspaceContent = JSON.stringify(obj.workspace);
+                      if (Array.isArray(obj.lineMap)) {
+                        try { blocklyLineMapForDocument.set(docUri, obj.lineMap); } catch {}
+                      }
+                    } else {
+                      workspaceContent = raw;
+                    }
+                  } catch {
+                    workspaceContent = raw;
+                  }
+                } catch (e) { workspaceContent = null; }
               }
               if (!workspaceContent) {
                 const embedded = extractEmbeddedWorkspaceFromCode(txt);
@@ -4113,21 +4156,70 @@ export function activate(context: vscode.ExtensionContext) {
           }
           // --- HIGHLIGHT CURRENT LINE HANDLER ---
           else if (msg.type === 'highlightLine') {
-            const ed = editor; // current sketch editor
-            if (ed && ed.document && ed.document.uri.toString() === editor.document.uri.toString()) {
+            const docUri = editor.document.uri.toString();
+            // Prefer a currently visible editor for this document over the captured reference
+            const ed = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === docUri)
+              || (vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.uri.toString() === docUri
+                    ? vscode.window.activeTextEditor
+                    : null);
+            if (ed && ed.document) {
               const line = typeof msg.line === 'number' ? msg.line : 1;
               applyStepHighlight(ed, line);
+            } else {
+              // Editor not visible: emit a lightweight note to the per-sketch channel once
+              try {
+                const fileName = path.basename(editor.document.fileName);
+                const ch = getOrCreateOutputChannel(docUri, fileName);
+                ch.appendLine(`${getTime()} [ℹ️INFO] Highlight requested but sketch editor is not visible. Open the sketch to see line highlights.`);
+              } catch {}
             }
+            // If a Blockly panel exists for this document and we have a lineMap, highlight the corresponding block
+            try {
+              const blocklyPanel = blocklyPanelForDocument.get(docUri);
+              const mapping = blocklyLineMapForDocument.get(docUri);
+              const line = typeof msg.line === 'number' ? msg.line : 1;
+              if (blocklyPanel) {
+                // Always clear previous selection first so only one block is highlighted at a time
+                try { blocklyPanel.webview.postMessage({ type: 'clearBlocklyHighlight' }); } catch {}
+              }
+              if (blocklyPanel && Array.isArray(mapping) && mapping.length > 0) {
+                // Ensure mapping is sorted by line ascending
+                const sorted = [...mapping].sort((a, b) => (a.line || 0) - (b.line || 0));
+                // Prefer exact match
+                let entry = sorted.find(m => m && typeof m.line === 'number' && m.line === line);
+                if (!entry) {
+                  // Fallback: choose the last mapping whose line is <= current line
+                  // and ensure we don't pass the start of the next mapping line
+                  let idx = -1;
+                  for (let i = 0; i < sorted.length; i++) {
+                    if (sorted[i] && typeof sorted[i].line === 'number' && sorted[i].line <= line) idx = i;
+                    else break;
+                  }
+                  if (idx >= 0) entry = sorted[idx];
+                }
+                if (entry && entry.blockId) {
+                  blocklyPanel.webview.postMessage({ type: 'highlightBlocklyBlock', blockId: entry.blockId });
+                }
+              }
+            } catch {}
           }
           // --- CLEAR HIGHLIGHT HANDLER ---
           else if (msg.type === 'clearHighlight') {
-            const ed = editor;
-            if (ed && ed.document && ed.document.uri.toString() === editor.document.uri.toString()) {
-              clearStepHighlight(ed);
-            }
+            const docUri = editor.document.uri.toString();
+            const ed = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === docUri)
+              || (vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.uri.toString() === docUri
+                    ? vscode.window.activeTextEditor
+                    : null);
+            if (ed && ed.document) { clearStepHighlight(ed); }
+            // Also clear block highlight in Blockly (if open)
+            try {
+              const blocklyPanel = blocklyPanelForDocument.get(docUri);
+              if (blocklyPanel) {
+                blocklyPanel.webview.postMessage({ type: 'clearBlocklyHighlight' });
+              }
+            } catch {}
             // Log that stepping has finished
             try {
-              const docUri = editor.document.uri.toString();
               const fileName = path.basename(editor.document.fileName);
               const ch = getOrCreateOutputChannel(docUri, fileName);
               ch.appendLine(`${getTime()} [▶️INFO] Code stepping finished.`);

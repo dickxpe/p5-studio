@@ -124,19 +124,73 @@
   }
 
   function getGeneratedCode() {
-    return javascript.javascriptGenerator.workspaceToCode(ws);
+    // Temporarily inject a statement prefix that tags each top-level statement with its originating block id.
+    const gen = javascript.javascriptGenerator;
+    const prevPrefix = gen.STATEMENT_PREFIX;
+    // %1 will be replaced by block.id by Blockly's generator
+    gen.STATEMENT_PREFIX = '/*@b:%1*/\n';
+    let code = gen.workspaceToCode(ws);
+    // Build a line -> blockId map by scanning for our markers and produce the final code without markers.
+    // Robust to markers with quoted ids (Blockly wraps %1 in quotes) and markers inline with code.
+    const lineMap = [];
+    const inLines = code.split(/\r?\n/);
+    const outLines = [];
+    let pendingBlockId = null; // carry to next non-empty line if marker line is empty
+    const markerRe = /\/\*@b:(?:'([^']+)'|([^*]+))\*\//g; // captures id in group 1 (quoted) or 2 (raw)
+    for (let i = 0; i < inLines.length; i++) {
+      const original = inLines[i] || '';
+      let idOnThisLine = null;
+      // Extract last marker id found on this line (if multiple, last wins)
+      let mm;
+      while ((mm = markerRe.exec(original)) !== null) {
+        const raw = (mm[1] || mm[2] || '').trim();
+        // Strip any surrounding quotes just in case
+        const clean = raw.replace(/^['"]|['"]$/g, '');
+        idOnThisLine = clean;
+      }
+      // Remove all markers from the emitted code
+      const stripped = original.replace(markerRe, '');
+      // If there was a marker on this line, prefer it over any previous pending id
+      if (idOnThisLine) pendingBlockId = idOnThisLine;
+      // If the remaining line has non-whitespace content, emit it and map if we have a pending id
+      if (stripped.trim().length > 0) {
+        if (pendingBlockId) {
+          lineMap.push({ line: outLines.length + 1, blockId: pendingBlockId });
+          pendingBlockId = null;
+        }
+        outLines.push(stripped);
+      } else {
+        // No content after stripping; do not emit a line, keep pending id for next non-empty
+      }
+    }
+    code = outLines.join('\n');
+    // Restore previous prefix
+    gen.STATEMENT_PREFIX = prevPrefix;
+    return { code, lineMap };
   }
 
   // Send code to extension on every change
   ws.addChangeListener((e) => {
     if (!e.isUiEvent && e.type !== Blockly.Events.FINISHED_LOADING && !ws.isDragging()) {
       // Always export code, even if workspace is empty
-      let code = getGeneratedCode();
+      const res = getGeneratedCode();
+      let code = res && res.code != null ? res.code : '';
       // If workspace is empty or code is only whitespace, send empty string
       if (ws.getAllBlocks(false).length === 0 || !code.trim()) {
         code = '';
       }
-      postCodeToExtension(code);
+      if (res && Array.isArray(res.lineMap)) {
+        if (window.vscode && typeof window.vscode.postMessage === 'function') {
+          let workspaceObj = null;
+          try { workspaceObj = Blockly.serialization.workspaces.save(ws); } catch (e) { workspaceObj = null; }
+          const workspaceJson = workspaceObj ? JSON.stringify(workspaceObj) : null;
+          window.vscode.postMessage({ type: 'blocklyGeneratedCode', code, workspace: workspaceJson, lineMap: res.lineMap });
+        } else {
+          postCodeToExtension(code);
+        }
+      } else {
+        postCodeToExtension(code);
+      }
     }
     if (!e.isUiEvent) save(ws);
   });
@@ -296,18 +350,24 @@
         Blockly.Events.disable();
         Blockly.serialization.workspaces.load(obj, ws, true);
         Blockly.Events.enable();
+        // Ensure any lingering outline strokes from previous sessions are cleared
+        try {
+          const paths = document.querySelectorAll('.blocklyWorkspace .blocklyPath, .blocklyWorkspace .blocklyBlockBackground');
+          paths.forEach(p => { try { p.removeAttribute('stroke'); p.removeAttribute('stroke-width'); } catch (e) {} });
+        } catch (e) {}
           // After loading the workspace from the extension sidecar, send the generated
           // code + serialized workspace back to the extension so it can persist any
           // changes or keep sidecar/file in sync. This avoids an initial empty write.
           try {
-            const code = getGeneratedCode();
+            const res = getGeneratedCode();
+            const code = res && res.code != null ? res.code : '';
             // Mark this export as the initial load so the extension can ignore it
             // and avoid overwriting the user's file when the workspace is first loaded.
             if (window.vscode && typeof window.vscode.postMessage === 'function') {
               let workspaceObj = null;
               try { workspaceObj = Blockly.serialization.workspaces.save(ws); } catch (e) { workspaceObj = null; }
               const workspaceJson = workspaceObj ? JSON.stringify(workspaceObj) : null;
-              window.vscode.postMessage({ type: 'blocklyGeneratedCode', code: code, workspace: workspaceJson, initialLoad: true });
+              window.vscode.postMessage({ type: 'blocklyGeneratedCode', code: code, workspace: workspaceJson, lineMap: (res && res.lineMap) || null, initialLoad: true });
             }
           } catch (e) { /* ignore */ }
         // Do not persist to localStorage; persistence is handled by the extension via
@@ -323,6 +383,74 @@
     const pref = window.BLOCKLY_THEME || 'dark';
     if (pref === 'auto') applyAutoTheme();
     else applyThemeByName(pref === 'dark' ? 'dark' : 'light');
+  } catch (e) { /* ignore */ }
+
+  // --- Highlight a block when the extension asks (during step-run/single-step) ---
+  try {
+    window.addEventListener('message', (event) => {
+      const msg = event.data;
+      if (!msg) return;
+      if (msg.type === 'highlightBlocklyBlock') {
+        try {
+          const id = msg.blockId;
+          const b = id ? ws.getBlockById(id) : null;
+          // Clear highlight from all blocks first to ensure a single active highlight
+          try {
+            const all = ws.getAllBlocks(false);
+            all.forEach(bl => { try { if (typeof bl.setHighlighted === 'function') bl.setHighlighted(false); } catch (e) {} });
+          } catch (e) {}
+          if (b) {
+            // Highlight current block without relying on selection state
+            try { if (typeof b.setHighlighted === 'function') b.setHighlighted(true); } catch (e) {}
+            // Scroll into view
+            try { b.workspace.centerOnBlock(b.id); } catch (e) {}
+          }
+        } catch (e) { /* ignore */ }
+      } else if (msg.type === 'highlightAllBlocks') {
+        try {
+          const all = ws.getAllBlocks(false);
+          all.forEach(b => {
+            try {
+              const root = (typeof b.getSvgRoot === 'function') ? b.getSvgRoot() : (b.svgGroup_ || null);
+              if (!root) return;
+              const pathEl = root.querySelector('.blocklyPath, .blocklyBlockBackground');
+              if (pathEl && pathEl.setAttribute) {
+                // Apply a bright yellow stroke to simulate highlight
+                pathEl.setAttribute('stroke', '#ffd700');
+                pathEl.setAttribute('stroke-width', '3');
+              }
+            } catch (e) { /* per-block ignore */ }
+          });
+        } catch (e) { /* ignore */ }
+      } else if (msg.type === 'clearAllBlockHighlights') {
+        try {
+          // Remove the highlight stroke from all block backgrounds
+          const paths = document.querySelectorAll('.blocklyWorkspace .blocklyPath, .blocklyWorkspace .blocklyBlockBackground');
+          paths.forEach(p => {
+            try {
+              if (p.removeAttribute) {
+                p.removeAttribute('stroke');
+                p.removeAttribute('stroke-width');
+              }
+            } catch (e) { /* ignore */ }
+          });
+        } catch (e) { /* ignore */ }
+      } else if (msg.type === 'clearBlocklyHighlight') {
+        try {
+          // Turn off highlight from all blocks and clear selection
+          try {
+            const all = ws.getAllBlocks(false);
+            all.forEach(bl => { try { if (typeof bl.setHighlighted === 'function') bl.setHighlighted(false); } catch (e) {} });
+          } catch (e) {}
+          try { if (Blockly && Blockly.common && typeof Blockly.common.setSelected === 'function') Blockly.common.setSelected(null); } catch (e) {}
+          // Also clear any visual stroke outlines that may remain from earlier tests
+          try {
+            const paths = document.querySelectorAll('.blocklyWorkspace .blocklyPath, .blocklyWorkspace .blocklyBlockBackground');
+            paths.forEach(p => { try { p.removeAttribute('stroke'); p.removeAttribute('stroke-width'); } catch (e) {} });
+          } catch (e) {}
+        } catch (e) { /* ignore */ }
+      }
+    });
   } catch (e) { /* ignore */ }
 
 })();

@@ -30,7 +30,7 @@
     },
     {
       "name": "Logic",
-  "colour": "#FF0000",
+  "colour": "#0000FF",
       "blocks": [
         "controls_if",
         "logic_compare",
@@ -41,7 +41,7 @@
     },
     {
       "name": "Loops",
-     "colour": "#FF0000",
+     "colour": "#0000FF",
       "blocks": [
         "controls_repeat_ext",
         "controls_whileUntil",
@@ -52,7 +52,7 @@
     },
     {
       "name": "Math",
-     "colour": "#FF0000",
+     "colour": "#0000FF",
       "blocks": [
         "math_arithmetic",
         "math_single",
@@ -70,7 +70,7 @@
     },
     {
       "name": "Text",
-    "colour": "#FF0000",
+    "colour": "#0000FF",
       "blocks": [
         "text_join",
         "text_append",
@@ -88,7 +88,7 @@
     },
     {
       "name": "Lists",
-      "colour": "#FF0000",
+      "colour": "#0000FF",
       "blocks": [
         "lists_create_with",
         "lists_create_with",
@@ -106,7 +106,7 @@
     },
     {
       "name": "Values",
-"colour": "#FF0000",
+"colour": "#0000FF",
       "blocks": [
         "math_number",
         "text",
@@ -115,19 +115,19 @@
     },
     {
       "name": "Variables",
-     "colour": "#FF0000",
+     "colour": "#0000FF",
       "custom": "VARIABLE",
       "blocks": []
     },
     {
       "name": "Functions",
-  "colour": "#FF0000",
+  "colour": "#0000FF",
       "custom": "PROCEDURE",
       "blocks": []
     },
     {
       "name": "Debug",
-      "colour": "#FF0000",
+      "colour": "#0000FF",
       "blocks": [
         "output",
         "input"
