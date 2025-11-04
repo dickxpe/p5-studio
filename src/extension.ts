@@ -546,7 +546,7 @@ function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string,
 }
 
 // ----------------------------
-// Preprocess top-level input() placeholders with simple caching
+// Preprocess top-level inputPrompt() placeholders with simple caching
 // ----------------------------
 type TopInputItem = { varName: string; label?: string; defaultValue?: any };
 const _topInputCache = new Map<string, { items: TopInputItem[]; values: any[] }>();
@@ -577,7 +577,7 @@ function detectTopLevelInputs(code: string): TopInputItem[] {
       for (const d of decls) {
         if (d && d.type === 'VariableDeclarator' && d.init && d.init.type === 'CallExpression') {
           const callee = d.init.callee;
-          if (callee && callee.type === 'Identifier' && callee.name === 'input') {
+          if (callee && callee.type === 'Identifier' && callee.name === 'inputPrompt') {
             const varName = d.id && d.id.name ? d.id.name : `value${items.length + 1}`;
             let label: string | undefined;
             let defaultValue: any = undefined;
@@ -609,7 +609,7 @@ function hasCachedInputsForKey(key: string, items: TopInputItem[]): boolean {
   return true;
 }
 
-// Detect any usage of input() that is NOT at the very top of the file
+// Detect any usage of inputPrompt() that is NOT at the very top of the file
 function hasNonTopInputUsage(code: string): boolean {
   try {
     const acorn = require('acorn');
@@ -631,21 +631,21 @@ function hasNonTopInputUsage(code: string): boolean {
     }
     const allowedTopEnd = idx; // statements [0, allowedTopEnd) are top block
 
-    // Helper to decide if a CallExpression is an allowed top-level input()
+  // Helper to decide if a CallExpression is an allowed top-level inputPrompt()
     function isAllowedTopCall(node: any): boolean {
       // Must be within a VariableDeclarator.init inside one of the first allowedTopEnd VariableDeclaration statements
       // We'll walk up the parent chain using recast paths in a manual walk
       return false; // We'll do a positional check instead of parent links
     }
 
-    // Build a set of allowed input() nodes by scanning the top block
+    // Build a set of allowed inputPrompt() nodes by scanning the top block
     const allowedNodes = new Set<any>();
     for (let i = 0; i < allowedTopEnd; i++) {
       const node = body[i];
       if (node && node.type === 'VariableDeclaration') {
         const decls = (node as any).declarations || [];
         for (const d of decls) {
-          if (d && d.init && d.init.type === 'CallExpression' && d.init.callee && d.init.callee.type === 'Identifier' && d.init.callee.name === 'input') {
+          if (d && d.init && d.init.type === 'CallExpression' && d.init.callee && d.init.callee.type === 'Identifier' && d.init.callee.name === 'inputPrompt') {
             allowedNodes.add(d.init);
           }
         }
@@ -657,7 +657,7 @@ function hasNonTopInputUsage(code: string): boolean {
       visitCallExpression(path) {
         try {
           const call = path.value;
-          if (call && call.callee && call.callee.type === 'Identifier' && call.callee.name === 'input') {
+          if (call && call.callee && call.callee.type === 'Identifier' && call.callee.name === 'inputPrompt') {
             if (!allowedNodes.has(call)) {
               illegalFound = true;
               return false; // stop traversing further
@@ -700,7 +700,7 @@ async function preprocessTopLevelInputs(
       for (const d of decls) {
         if (d && d.type === 'VariableDeclarator' && d.init && d.init.type === 'CallExpression') {
           const callee = d.init.callee;
-          if (callee && callee.type === 'Identifier' && callee.name === 'input') {
+          if (callee && callee.type === 'Identifier' && callee.name === 'inputPrompt') {
             let label: string | undefined;
             let defaultValue: any = undefined;
             const args = d.init.arguments || [];
@@ -779,7 +779,7 @@ async function createHtml(
   panel: vscode.WebviewPanel,
   extensionPath: string
 ) {
-  // Preprocess top-of-file input() placeholders before anything else
+  // Preprocess top-of-file inputPrompt() placeholders before anything else
   const key = (panel && (panel as any)._sketchFilePath) ? String((panel as any)._sketchFilePath) : '';
   userCode = await preprocessTopLevelInputs(userCode, { key, interactive: _allowInteractiveTopInputs });
   // Get the sketch filename (without extension)
@@ -2618,6 +2618,25 @@ export function activate(context: vscode.ExtensionContext) {
     return text;
   }
 
+  // Check if a VS Code editor breakpoint exists on a given 1-based line for the provided document URI string
+  function hasBreakpointOnLine(docUriStr: string, line1Based: number): boolean {
+    try {
+      const bps = vscode.debug.breakpoints || [];
+      for (const bp of bps) {
+        // Only consider enabled SourceBreakpoints on this document
+        if (bp.enabled && bp instanceof vscode.SourceBreakpoint) {
+          const loc = bp.location;
+          if (loc && loc.uri && loc.uri.toString() === docUriStr) {
+            // Breakpoint ranges are 0-based; convert incoming to 0-based
+            const bpLine0 = loc.range.start.line;
+            if (bpLine0 === (line1Based - 1)) return true;
+          }
+        }
+      }
+    } catch {}
+    return false;
+  }
+
   function getBlocklyHtml(panel: vscode.WebviewPanel): string {
     const webview = panel.webview;
     const nonce = getNonce();
@@ -2772,9 +2791,11 @@ export function activate(context: vscode.ExtensionContext) {
     }
     const p5CategoryMap = buildP5CategoryMap();
 
-    // Build a name->param names map for p5 functions from p5types .d.ts
-    function buildP5ParamMap(): Record<string, string[]> {
+    // Build a name->param names map and optional/type flags for p5 functions from p5types .d.ts
+    function buildP5ParamData(): { paramMap: Record<string, string[]>; optionalMap: Record<string, boolean[]>; typeMap: Record<string, string[]> } {
       const paramMap: Record<string, string[]> = {};
+      const optionalMap: Record<string, boolean[]> = {};
+      const typeMap: Record<string, string[]> = {};
       try {
         const srcRoot = path.join(context.extensionPath, 'p5types', 'src');
         const folders = [
@@ -2812,36 +2833,57 @@ export function activate(context: vscode.ExtensionContext) {
               if (!name) continue;
               // Extract param names, drop types and modifiers
               const params: string[] = [];
+              const opts: boolean[] = [];
+              const kinds: string[] = [];
               if (paramsStr.length > 0) {
                 paramsStr.split(',').forEach(raw => {
                   let p = raw.trim();
+                  const beforeColon = (p.split(':')[0] || '').trim();
+                  const wasOptional = /\?$/.test(beforeColon);
                   if (!p) return;
                   // remove default value
                   const eqIdx = p.indexOf('=');
-                  if (eqIdx >= 0) p = p.slice(0, eqIdx).trim();
+                  let preDefault = p;
+                  if (eqIdx >= 0) preDefault = p.slice(0, eqIdx).trim();
                   // param may be like '...args: any[]' or 'x?: number' or 'x: number'
-                  // take identifier before ':'
-                  const colonIdx = p.indexOf(':');
-                  if (colonIdx >= 0) p = p.slice(0, colonIdx).trim();
+                  // take identifier before ':' and capture type after ':'
+                  const colonIdx = preDefault.indexOf(':');
+                  let typeAnn = '';
+                  if (colonIdx >= 0) {
+                    typeAnn = preDefault.slice(colonIdx + 1).trim();
+                    p = preDefault.slice(0, colonIdx).trim();
+                  } else {
+                    p = preDefault.trim();
+                  }
                   // strip decorators
                   p = p.replace(/^\.{3}/, ''); // ...rest
                   p = p.replace(/\?$/, ''); // optional marker
                   // ensure a sane label (avoid empty)
-                  if (p && /^[a-zA-Z_][\w]*$/.test(p)) params.push(p);
+                  if (p && /^[a-zA-Z_][\w]*$/.test(p)) {
+                    params.push(p);
+                    opts.push(!!wasOptional);
+                    // classify basic type kind from type annotation
+                    let kind = 'other';
+                    const t = (typeAnn || '').toLowerCase();
+                    if (/\bnumber\b/.test(t)) kind = 'number';
+                    else if (/\bstring\b/.test(t)) kind = 'string';
+                    else if (/\bboolean\b/.test(t)) kind = 'boolean';
+                    kinds.push(kind);
+                  }
                 });
               }
               // choose the signature with the most params
               const prev = paramMap[name];
               if (!prev || (params && params.length > prev.length)) {
-                if (params && params.length) paramMap[name] = params;
+                if (params && params.length) { paramMap[name] = params; optionalMap[name] = opts; typeMap[name] = kinds; }
               }
             }
           } catch {}
         });
       } catch {}
-      return paramMap;
+      return { paramMap, optionalMap, typeMap };
     }
-    const p5ParamMap = buildP5ParamMap();
+    const { paramMap: p5ParamMap, optionalMap: p5ParamOptionalMap, typeMap: p5ParamTypeMap } = buildP5ParamData();
 
     // Allow scripts from unpkg for the example; allow our own scripts via nonce
   const csp = `default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}' https: 'unsafe-eval'; font-src ${webview.cspSource} https:; connect-src https:; media-src https: ${webview.cspSource}`;
@@ -2888,6 +2930,8 @@ export function activate(context: vscode.ExtensionContext) {
     <script nonce="${nonce}">
   window.P5_CATEGORY_MAP = ${JSON.stringify(p5CategoryMap)};
   window.P5_PARAM_MAP = ${JSON.stringify(p5ParamMap)};
+  window.P5_PARAM_OPTIONAL = ${JSON.stringify(p5ParamOptionalMap)};
+  window.P5_PARAM_TYPE = ${JSON.stringify(p5ParamTypeMap)};
   window.BLOCKLY_STORAGE_KEY = ${JSON.stringify(storageKey)};
   window.BLOCKLY_THEME = ${JSON.stringify(configuredBlocklyTheme)};
   window.BLOCKLY_JSON_ONLY = true;
@@ -3291,11 +3335,11 @@ export function activate(context: vscode.ExtensionContext) {
     _pendingReloadReason = undefined;
 
     let code = document.getText();
-    // If input() is used outside top-of-sketch, block and show friendly error
+  // If inputPrompt() is used outside top-of-sketch, block and show friendly error
     try {
       if (hasNonTopInputUsage(code)) {
         panel.webview.html = await createHtml('', panel, context.extensionPath);
-        const friendly = 'input() can only be used at the top of the sketch';
+  const friendly = 'inputPrompt() can only be used at the very top of the sketch to initialize a variable, e.g.: let a = inputPrompt()); ';
         setTimeout(() => { panel.webview.postMessage({ type: 'showError', message: friendly }); }, 150);
         const time = getTime();
         outputChannel.appendLine(`${time} [‼️RUNTIME ERROR in ${fileName}] ${friendly}`);
@@ -3514,7 +3558,7 @@ export function activate(context: vscode.ExtensionContext) {
         let syntaxErrorMsg: string | null = null;
         let codeToInject = code;
         let _inputsNeeded: TopInputItem[] = [];
-        // --- Determine top-level inputs BEFORE syntax check/wrapping ---
+    // --- Determine top-level inputs BEFORE syntax check/wrapping ---
         try {
           const inputs = detectTopLevelInputs(codeToInject);
           if (inputs.length > 0) {
@@ -3523,11 +3567,11 @@ export function activate(context: vscode.ExtensionContext) {
           }
         } catch {}
         try {
-          // Friendly error for input() used outside top-of-sketch
+          // Friendly error for inputPrompt() used outside top-of-sketch
           if (hasNonTopInputUsage(codeToInject)) {
-            syntaxErrorMsg = `${getTime()} [‼️RUNTIME ERROR in ${path.basename(editor.document.fileName)}] input can only be used at the top`;
+            syntaxErrorMsg = `${getTime()} [‼️RUNTIME ERROR in ${path.basename(editor.document.fileName)}] inputPrompt() must be used at the very top of the sketch to initialize a variable (e.g., let a = inputPrompt("Label")); runtime prompts are not supported.`;
             codeToInject = '';
-            throw new Error('input can only be used at the top');
+            throw new Error('inputPrompt must initialize a top-level variable');
           }
           // --- Check for reserved global conflicts before syntax check ---
           const { globals, conflicts } = extractGlobalVariablesWithConflicts(codeToInject);
@@ -3782,14 +3826,14 @@ export function activate(context: vscode.ExtensionContext) {
             const docUri = editor.document.uri.toString();
             const fileName = path.basename(editor.document.fileName);
             const rawCode = editor.document.getText();
-            // Friendly error for input misuse
+            // Friendly error for inputPrompt misuse
             if (hasNonTopInputUsage(rawCode)) {
               panel.webview.html = await createHtml('', panel, context.extensionPath);
               setTimeout(() => {
-                panel.webview.postMessage({ type: 'showError', message: 'input can only be used at the top' });
+                panel.webview.postMessage({ type: 'showError', message: 'inputPrompt() must be used at the very top of the sketch to initialize a variable (e.g., let a = inputPrompt("Label")); runtime prompts are not supported.' });
               }, 150);
               const outputChannel = getOrCreateOutputChannel(docUri, fileName);
-              outputChannel.appendLine(`${getTime()} [‼️RUNTIME ERROR in ${fileName}] input can only be used at the top`);
+              outputChannel.appendLine(`${getTime()} [‼️RUNTIME ERROR in ${fileName}] inputPrompt() must be used at the very top of the sketch to initialize a variable (e.g., let a = inputPrompt("Label")); runtime prompts are not supported.`);
               return;
             }
             // Log semicolon warnings on explicit reload action
@@ -3818,7 +3862,7 @@ export function activate(context: vscode.ExtensionContext) {
               (panel as any)._lastRuntimeError = null;
               return;
             }
-            // Handle top-of-file input() placeholders: on webview Reload use cached values silently; if no cache, show overlay
+            // Handle top-of-file inputPrompt() placeholders: on webview Reload use cached values silently; if no cache, show overlay
             const inputsBefore = detectTopLevelInputs(rawCode);
             if (inputsBefore.length > 0) {
               const key = editor.document.fileName;
@@ -3968,7 +4012,7 @@ export function activate(context: vscode.ExtensionContext) {
               (panel as any)._lastRuntimeError = null;
               return;
             }
-            // Handle top-level input() placeholders with cache-aware preprocessing
+            // Handle top-level inputPrompt() placeholders with cache-aware preprocessing
             const inputsBefore = detectTopLevelInputs(rawCode);
             let codeForRun = rawCode;
             if (inputsBefore.length > 0) {
@@ -4101,7 +4145,7 @@ export function activate(context: vscode.ExtensionContext) {
               (panel as any)._lastRuntimeError = null;
               return;
             }
-            // Handle top-level input() placeholders
+            // Handle top-level inputPrompt() placeholders
             let codeForRun = rawCode;
             const inputsBefore = detectTopLevelInputs(rawCode);
             if (inputsBefore.length > 0) {
@@ -4165,6 +4209,19 @@ export function activate(context: vscode.ExtensionContext) {
             if (ed && ed.document) {
               const line = typeof msg.line === 'number' ? msg.line : 1;
               applyStepHighlight(ed, line);
+              // If we're auto-stepping and a breakpoint exists on this line, pause auto-advance
+              try {
+                if ((panel as any)._autoStepMode && hasBreakpointOnLine(docUri, line)) {
+                  if ((panel as any)._autoStepTimer) {
+                    try { clearInterval((panel as any)._autoStepTimer); } catch {}
+                    (panel as any)._autoStepTimer = null;
+                  }
+                  (panel as any)._autoStepMode = false;
+                  const fileName = path.basename(editor.document.fileName);
+                  const ch = getOrCreateOutputChannel(docUri, fileName);
+                  ch.appendLine(`${getTime()} [⏸️INFO] Paused at breakpoint on line ${line}. Click SINGLE-STEP to advance or STEP-RUN to resume.`);
+                }
+              } catch {}
             } else {
               // Editor not visible: emit a lightweight note to the per-sketch channel once
               try {

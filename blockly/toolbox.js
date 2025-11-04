@@ -72,8 +72,8 @@
             kind: 'block',
             type: 'controls_for',
             inputs: {
-              FROM: {shadow: {type: 'math_number', fields: {NUM: 1}}},
-              TO: {shadow: {type: 'math_number', fields: {NUM: 10}}},
+              FROM: {shadow: {type: 'math_number', fields: {NUM: 0}}},
+              TO: {shadow: {type: 'math_number', fields: {NUM: 1}}},
               BY: {shadow: {type: 'math_number', fields: {NUM: 1}}},
             },
           },
@@ -155,7 +155,7 @@
       {kind: 'category', name: 'Functions', categorystyle: 'procedure_category', custom: 'PROCEDURE'},
         {kind: 'category', name: 'Debug', categorystyle: 'debug_category', contents: [
                 {kind: 'block', type: 'output', inputs: {TEXT: {shadow: {type: 'text', fields: {TEXT: 'abc'}}}}},
-                 {kind: 'block', type: 'input', inputs: {TEXT: {shadow: {type: 'text', fields: {TEXT: 'abc'}}}}},
+                 {kind: 'block', type: 'inputprompt', inputs: {TEXT: {shadow: {type: 'text', fields: {TEXT: 'abc'}}}}},
         ]
         }
     ],

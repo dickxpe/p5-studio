@@ -16,13 +16,12 @@
         "tooltip": "Append text to the output pane",
       },
       {
-        "type": "input",
-        "message0": "input %1",
+        "type": "inputprompt",
+        "message0": "inputPrompt %1",
         "args0": [ { "type": "input_value", "name": "TEXT" } ],
-        "previousStatement": null,
-        "nextStatement": null,
+        "output": null,
         "colour": "#ec43f5",
-        "tooltip": "Read text from the input pane",
+  "tooltip": "Top-of-sketch only: use to initialize a variable, e.g., let a = inputPrompt('Label')",
       }
     ];
     if (typeof Blockly !== 'undefined' && Blockly.defineBlocksWithJsonArray) {

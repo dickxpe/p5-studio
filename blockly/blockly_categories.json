@@ -130,7 +130,7 @@
       "colour": "#0000FF",
       "blocks": [
         "output",
-        "input"
+        "inputprompt"
       ]
     },
     {

@@ -30,3 +30,17 @@ function oscArgsToArray(args) {
     const list = Array.isArray(args) ? args : [args];
     return list.map(arg => (arg && typeof arg === 'object' && 'value' in arg) ? arg.value : arg);
 }
+
+/**
+ * Request a value from the user with an optional default.
+ * Note: This is a stub for IntelliSense only; the runtime implementation
+ * is provided by the extension/webview and may coerce strings like
+ * "true"/"false" to booleans and numeric strings to numbers.
+ * @param {string} label The message to show to the user
+ * @param {any} [defaultValue] Optional default value
+ * @returns {any} The entered value (type depends on implementation)
+ */
+function inputPrompt(label, defaultValue) {
+    // This is a stub for autocompletion only.
+    // The real implementation (for top-of-file placeholders) is handled by the extension.
+}

@@ -8,7 +8,8 @@
   const Order = gen.Order || javascript.Order;
 
   gen.forBlock['output']         = (b,g)=> `output(${v(g,b,'TEXT')});\n`;
-  gen.forBlock['input']          = (b,g)=> `input(${v(g,b,'TEXT')});\n`;
+  // Value block: returns the entered value from the prompt (new type)
+  gen.forBlock['inputprompt']    = (b,g)=> [ `inputPrompt(${v(g,b,'TEXT')})`, (Order ? Order.NONE : gen.ORDER_NONE) ];
 
 
   // p5: structure

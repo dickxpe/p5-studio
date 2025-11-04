@@ -38,3 +38,13 @@ declare function output(...args: any[]): void;
  */
 declare function oscArgsToArray(args: any[] | any): any[];
 
+/**
+ * Request a value from the user with an optional default.
+ * This is recognized at the top of your sketch by the extension, which
+ * replaces the call with a literal value (numbers/booleans are coerced from strings).
+ * @param label Message displayed to the user
+ * @param defaultValue Optional default value shown in the prompt
+ * @returns The entered value; type depends on what the user enters (string, number, boolean)
+ */
+declare function inputPrompt(label: string, defaultValue?: any): any;
+

@@ -131,6 +131,54 @@ body.light-theme #pageContainer {
   scrollbar-color: rgba(0,0,0,0.35) transparent !important;
 }
 
+/* --- Simple modal for Blockly dialogs (prompt/confirm/alert) --- */
+.blk-modal-overlay {
+  position: fixed;
+  inset: 0;
+  display: none; /* toggled to flex when visible */
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.5);
+  z-index: 9999; /* above blockly */
+}
+.blk-modal {
+  min-width: 320px;
+  max-width: 90vw;
+  background: #1f1f1f;
+  color: #fff;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.blk-modal-message { margin-bottom: 12px; line-height: 1.4; }
+.blk-modal-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.2);
+  background: #2a2a2a;
+  color: #fff;
+}
+.blk-modal-buttons { display: flex; gap: 8px; justify-content: flex-end; }
+.blk-modal-buttons button {
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.2);
+  background: #3a3a3a;
+  color: #fff;
+  cursor: pointer;
+}
+.blk-modal-buttons button:hover { background: #4a4a4a; }
+
+/* Light theme variant */
+body.light-theme .blk-modal { background: #fff; color: #000; border: 1px solid rgba(0,0,0,0.15); }
+body.light-theme .blk-modal-input { background: #f8f8f8; color: #000; border: 1px solid rgba(0,0,0,0.2); }
+body.light-theme .blk-modal-buttons button { background: #f0f0f0; color: #000; border: 1px solid rgba(0,0,0,0.2); }
+body.light-theme .blk-modal-buttons button:hover { background: #e6e6e6; }
+
 /* Dark-theme scrollbar styling to keep widths consistent with categories slider */
 body.dark-theme .blocklyToolboxDiv,
 body.dark-theme .blocklyTreeDiv,

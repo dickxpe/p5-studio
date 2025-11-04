@@ -133,6 +133,123 @@
     theme: chosenTheme,
   });
 
+  // Provide custom dialogs to avoid window.prompt/alert/confirm (blocked in sandbox)
+  (function installCustomDialogs(){
+    function ensureHost(){
+      let overlay = document.getElementById('blk-modal-overlay');
+      if (overlay) return overlay;
+      overlay = document.createElement('div');
+      overlay.id = 'blk-modal-overlay';
+      overlay.className = 'blk-modal-overlay';
+      const modal = document.createElement('div');
+      modal.className = 'blk-modal';
+      const msg = document.createElement('div');
+      msg.className = 'blk-modal-message';
+      const input = document.createElement('input');
+      input.className = 'blk-modal-input';
+      input.type = 'text';
+      input.style.display = 'none';
+      const buttons = document.createElement('div');
+      buttons.className = 'blk-modal-buttons';
+      const okBtn = document.createElement('button'); okBtn.className = 'blk-modal-ok'; okBtn.textContent = 'OK';
+      const cancelBtn = document.createElement('button'); cancelBtn.className = 'blk-modal-cancel'; cancelBtn.textContent = 'Cancel';
+      buttons.appendChild(okBtn); buttons.appendChild(cancelBtn);
+      modal.appendChild(msg);
+      modal.appendChild(input);
+      modal.appendChild(buttons);
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+      return overlay;
+    }
+
+    function showAlert(message, callback){
+      const overlay = ensureHost();
+      const msg = overlay.querySelector('.blk-modal-message');
+      const input = overlay.querySelector('.blk-modal-input');
+      const ok = overlay.querySelector('.blk-modal-ok');
+      const cancel = overlay.querySelector('.blk-modal-cancel');
+      input.style.display = 'none';
+      msg.textContent = String(message || '');
+      cancel.style.display = 'none';
+      overlay.style.display = 'flex';
+      function done(){
+        overlay.style.display = 'none';
+        cancel.style.display = '';
+        ok.removeEventListener('click', onOk);
+        document.removeEventListener('keydown', onKey);
+        try { if (callback) callback(); } catch(e) {}
+      }
+      function onOk(){ done(); }
+      function onKey(e){ if (e.key === 'Enter' || e.key === 'Escape') done(); }
+      ok.addEventListener('click', onOk);
+      document.addEventListener('keydown', onKey);
+    }
+
+    function showConfirm(message, callback){
+      const overlay = ensureHost();
+      const msg = overlay.querySelector('.blk-modal-message');
+      const input = overlay.querySelector('.blk-modal-input');
+      const ok = overlay.querySelector('.blk-modal-ok');
+      const cancel = overlay.querySelector('.blk-modal-cancel');
+      input.style.display = 'none';
+      msg.textContent = String(message || '');
+      cancel.style.display = '';
+      overlay.style.display = 'flex';
+      function finish(result){
+        overlay.style.display = 'none';
+        ok.removeEventListener('click', onOk);
+        cancel.removeEventListener('click', onCancel);
+        document.removeEventListener('keydown', onKey);
+        try { if (callback) callback(!!result); } catch(e) {}
+      }
+      function onOk(){ finish(true); }
+      function onCancel(){ finish(false); }
+      function onKey(e){ if (e.key === 'Enter') finish(true); else if (e.key === 'Escape') finish(false); }
+      ok.addEventListener('click', onOk);
+      cancel.addEventListener('click', onCancel);
+      document.addEventListener('keydown', onKey);
+    }
+
+    function showPrompt(message, defaultValue, callback){
+      const overlay = ensureHost();
+      const msg = overlay.querySelector('.blk-modal-message');
+      const input = overlay.querySelector('.blk-modal-input');
+      const ok = overlay.querySelector('.blk-modal-ok');
+      const cancel = overlay.querySelector('.blk-modal-cancel');
+      msg.textContent = String(message || '');
+      input.style.display = '';
+      input.value = defaultValue != null ? String(defaultValue) : '';
+      overlay.style.display = 'flex';
+      input.focus(); input.select();
+      function finish(result){
+        overlay.style.display = 'none';
+        ok.removeEventListener('click', onOk);
+        cancel.removeEventListener('click', onCancel);
+        document.removeEventListener('keydown', onKey);
+        try { if (callback) callback(result); } catch(e) {}
+      }
+      function onOk(){ finish(input.value); }
+      function onCancel(){ finish(null); }
+      function onKey(e){ if (e.key === 'Enter') finish(input.value); else if (e.key === 'Escape') finish(null); }
+      ok.addEventListener('click', onOk);
+      cancel.addEventListener('click', onCancel);
+      document.addEventListener('keydown', onKey);
+    }
+
+    try {
+      if (Blockly.dialog && Blockly.dialog.setPrompt) {
+        Blockly.dialog.setAlert(showAlert);
+        Blockly.dialog.setConfirm(showConfirm);
+        Blockly.dialog.setPrompt(showPrompt);
+      } else {
+        // Fallback for older Blockly builds
+        Blockly.alert = showAlert;
+        Blockly.confirm = showConfirm;
+        Blockly.prompt = showPrompt;
+      }
+    } catch (e) { /* ignore */ }
+  })();
+
   // Use the storage key provided by the extension for this panel
   const storageKey = window.BLOCKLY_STORAGE_KEY || 'mainWorkspace_v2';
   // Persisting workspace to localStorage has been disabled; the extension now embeds
@@ -202,6 +319,86 @@
       }
     }
     code = outLines.join('\n');
+  // Post-process: convert separate var declarations + first assignment into inline init.
+  // And use 'let' instead of 'var' for declarations.
+  // Example: "var x;" somewhere and later "x = 0;" -> become "let x = 0;" (and remove that first assignment)
+    try {
+      // Collect all var declaration lines and their variables
+  const declRe = /^\s*var\s+([^;]+);\s*$/gm;
+      const decls = [];
+      let m;
+      while ((m = declRe.exec(code)) !== null) {
+        const full = m[0];
+        const list = m[1] || '';
+        const names = list.split(',').map(s => s.trim()).filter(Boolean);
+        decls.push({ index: m.index, length: full.length, names });
+      }
+      // Track which names we inlined and the positions of their first assignment
+      const inlined = new Map(); // name -> { start, end, value }
+      decls.forEach(d => {
+        d.names.forEach(name => {
+          if (!/^[$A-Za-z_][\w$]*$/.test(name)) return;
+          if (inlined.has(name)) return;
+          // Find first assignment not already declaring (avoid 'var name =')
+          const assignRe = new RegExp('(^|\\n)([\\t ]*)' + name.replace(/[$]/g, '\\$&') + '\\s*=\\s*([^;]+);');
+          const mm = assignRe.exec(code);
+          if (mm && mm[0]) {
+            // Ensure it's not a 'var name =' occurrence
+            const before = code.slice(Math.max(0, (mm.index - 5)), mm.index);
+            if (!/var\s+$/.test(before)) {
+              const start = mm.index + mm[1].length; // after line break if any
+              const indent = mm[2] || '';
+              const value = (mm[3] || '').trim();
+              const end = mm.index + mm[0].length;
+              inlined.set(name, { start, end, indent, value });
+            }
+          }
+        });
+      });
+      if (inlined.size) {
+        // Rebuild code by:
+        // 1) Removing/reducing var declaration lines to exclude inlined names
+        // 2) Replacing the first assignment with inline 'var name = value;'
+        // Step 2 first (adjust indices by building a new string)
+        let rebuilt = '';
+        let cursor = 0;
+        const replacements = Array.from(inlined.entries()).map(([name, info]) => ({
+          start: info.start, end: info.end, text: info.indent + 'let ' + name + ' = ' + info.value + ';'
+        })).sort((a,b)=> a.start - b.start);
+        replacements.forEach(r => {
+          if (r.start < cursor) return; // overlap safety
+          rebuilt += code.slice(cursor, r.start) + r.text;
+          cursor = r.end;
+        });
+        rebuilt += code.slice(cursor);
+        code = rebuilt;
+        // Step 1: update var declaration lines
+        code = code.replace(declRe, (full, list) => {
+          const names = (list || '').split(',').map(s => s.trim()).filter(Boolean);
+          const kept = names.filter(n => !inlined.has(n));
+          if (!kept.length) return '';
+          return 'let ' + kept.join(', ') + ';';
+        });
+      }
+    } catch (e) { /* ignore post-process errors */ }
+    // If post-processing created leading blank lines (e.g., removed a first-line var decl),
+    // trim them and shift the lineMap accordingly to keep highlights aligned.
+    try {
+      const parts = code.split(/\r?\n/);
+      let leadEmpty = 0;
+      for (let i = 0; i < parts.length; i++) {
+        if ((parts[i] || '').trim().length === 0) leadEmpty++;
+        else break;
+      }
+      if (leadEmpty > 0) {
+        code = parts.slice(leadEmpty).join('\n');
+        if (Array.isArray(lineMap) && lineMap.length) {
+          for (let i = 0; i < lineMap.length; i++) {
+            lineMap[i].line = Math.max(1, lineMap[i].line - leadEmpty);
+          }
+        }
+      }
+    } catch (e) { /* ignore */ }
     // Restore previous prefix
     gen.STATEMENT_PREFIX = prevPrefix;
     return { code, lineMap };
@@ -257,6 +454,118 @@
     } catch (e) { /* ignore */ }
   }
 
+  // --- Default shadows: fill required slots with typed defaults ---
+  function getOptionalArrayForBlock(block) {
+    try {
+      if (!block || !block.type || !window.P5_PARAM_OPTIONAL) return [];
+      if (typeof block.type === 'string' && block.type.startsWith('p5_auto_')) {
+        const fn = block.type.slice('p5_auto_'.length);
+        const arr = window.P5_PARAM_OPTIONAL[fn];
+        return Array.isArray(arr) ? arr : [];
+      }
+    } catch (e) {}
+    return [];
+  }
+
+  function getTypeArrayForBlock(block) {
+    try {
+      if (!block || !block.type || !window.P5_PARAM_TYPE) return [];
+      if (typeof block.type === 'string' && block.type.startsWith('p5_auto_')) {
+        const fn = block.type.slice('p5_auto_'.length);
+        const arr = window.P5_PARAM_TYPE[fn];
+        return Array.isArray(arr) ? arr : [];
+      }
+    } catch (e) {}
+    return [];
+  }
+
+  function ensureDefaultTypedShadows(block) {
+    try {
+      if (!block || typeof block.getInput !== 'function') return;
+      if (!(typeof block.type === 'string' && block.type.startsWith('p5_auto_'))) return;
+      const optArr = getOptionalArrayForBlock(block);
+      const typeArr = getTypeArrayForBlock(block);
+      for (let i = 0; i < 64; i++) {
+        const inpName = 'ARG' + i;
+        const inp = block.getInput(inpName);
+        if (!inp) break;
+        const isOptional = !!optArr[i];
+        if (isOptional) continue;
+        try {
+          const conn = inp.connection;
+          if (!conn) continue;
+          if (conn.targetConnection) continue; // already connected
+          const kind = (typeArr[i] || 'other');
+          let shadow = null;
+          if (kind === 'number') {
+            shadow = ws.newBlock('math_number');
+            try { shadow.setFieldValue('0', 'NUM'); } catch (e) {}
+          } else if (kind === 'string') {
+            shadow = ws.newBlock('text');
+            try { shadow.setFieldValue('abc', 'TEXT'); } catch (e) {}
+          } else if (kind === 'boolean') {
+            shadow = ws.newBlock('logic_boolean');
+            try { shadow.setFieldValue('TRUE', 'BOOL'); } catch (e) {}
+          } else {
+            continue; // unknown type, skip default
+          }
+          // Ensure default blocks are movable (not shadow)
+          try { if (typeof shadow.setShadow === 'function') shadow.setShadow(false); } catch (e) {}
+          try { shadow.initSvg && shadow.initSvg(); } catch (e) {}
+          try { shadow.render && shadow.render(); } catch (e) {}
+          try { conn.connect(shadow.outputConnection); } catch (e) {}
+        } catch (e) { /* ignore each input errors */ }
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  // Ensure repeat blocks have a default of 10 for the times input
+  function ensureRepeatDefaults(block) {
+    try {
+      if (!block || !block.type) return;
+      if (block.type === 'controls_repeat_ext') {
+        const inp = block.getInput && block.getInput('TIMES');
+        try {
+          const conn = inp && inp.connection;
+          if (conn && !conn.targetConnection) {
+            const nb = ws.newBlock('math_number');
+            try { nb.setFieldValue('10', 'NUM'); } catch (e) {}
+            try { if (typeof nb.setShadow === 'function') nb.setShadow(false); } catch (e) {}
+            try { nb.initSvg && nb.initSvg(); } catch (e) {}
+            try { nb.render && nb.render(); } catch (e) {}
+            try { conn.connect(nb.outputConnection); } catch (e) {}
+          }
+        } catch (e) {}
+      } else if (block.type === 'controls_repeat') {
+        try { if (typeof block.setFieldValue === 'function') block.setFieldValue('10', 'TIMES'); } catch (e) {}
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  // Ensure 'for' blocks have defaults: FROM=0, TO=1, BY=1 when empty
+  function ensureForDefaults(block) {
+    try {
+      if (!block || block.type !== 'controls_for') return;
+      function ensureNumInput(name, value) {
+        try {
+          const inp = block.getInput && block.getInput(name);
+          const conn = inp && inp.connection;
+          if (conn && !conn.targetConnection) {
+            const nb = ws.newBlock('math_number');
+            try { nb.setFieldValue(String(value), 'NUM'); } catch (e) {}
+            try { if (typeof nb.setShadow === 'function') nb.setShadow(false); } catch (e) {}
+            try { nb.initSvg && nb.initSvg(); } catch (e) {}
+            try { nb.render && nb.render(); } catch (e) {}
+            try { conn.connect(nb.outputConnection); } catch (e) {}
+          }
+        } catch (e) { /* ignore */ }
+      }
+      ensureNumInput('FROM', 0);
+      ensureNumInput('TO', 1);
+      ensureNumInput('BY', 1);
+    } catch (e) { /* ignore */ }
+  }
+
   function recolorFlyoutVisuals() {
     try {
       // Find selected category name in the toolbox
@@ -296,6 +605,12 @@
               applyBlockColorIfMapped(b);
               // Also sanitize away any 'do'/'then' label fields on this block
               try { sanitizeBlockDoThenLabels(b); } catch (e) {}
+              // Fill required slots with typed default shadows
+              try { ensureDefaultTypedShadows(b); } catch (e) {}
+              // Ensure repeat blocks default to 10 times
+              try { ensureRepeatDefaults(b); } catch (e) {}
+              // Ensure for blocks default to from 0 to 1 by 1
+              try { ensureForDefaults(b); } catch (e) {}
             }
           } catch (err) { /* ignore */ }
         });
@@ -311,6 +626,10 @@
     recolorWorkspaceValueBlocks();
     recolorFlyoutVisuals();
     try { sanitizeWorkspaceDoThenLabels(); } catch (e) {}
+    try {
+      const all = ws.getAllBlocks(false);
+      all.forEach(b => { try { ensureDefaultTypedShadows(b); ensureRepeatDefaults(b); ensureForDefaults(b); } catch (e) {} });
+    } catch (e) {}
   }, 200);
 
   // --- Label sanitizers: remove 'do'/'then' labels from existing blocks ---
@@ -440,6 +759,11 @@
         } catch (e) {}
         // Remove any 'do'/'then' labels from blocks after load
         try { sanitizeWorkspaceDoThenLabels(); } catch (e) {}
+        // Ensure default typed values on required slots after load
+        try {
+          const all = ws.getAllBlocks(false);
+          all.forEach(b => { try { ensureDefaultTypedShadows(b); ensureRepeatDefaults(b); ensureForDefaults(b); } catch (e) {} });
+        } catch (e) {}
           // After loading the workspace from the extension sidecar, send the generated
           // code + serialized workspace back to the extension so it can persist any
           // changes or keep sidecar/file in sync. This avoids an initial empty write.
