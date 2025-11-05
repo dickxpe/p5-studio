@@ -6,8 +6,14 @@
       "blocks": [
         "p5_setup",
         "p5_draw",
+        "p5_auto_line",
         "p5_auto_circle",
-        "p5_auto_rect"
+        "p5_auto_rect",
+        "p5_auto_fill",
+        "p5_auto_stroke",
+        "p5_auto_noFill",
+        "p5_auto_noStroke",
+        "p5_auto_strokeWeight"
       ]
     },
      {
@@ -30,7 +36,7 @@
     },
     {
       "name": "Logic",
-  "colour": "#0000FF",
+  "colour": "#5b80a5",
       "blocks": [
         "controls_if",
         "logic_compare",
@@ -41,7 +47,7 @@
     },
     {
       "name": "Loops",
-     "colour": "#0000FF",
+     "colour": "#5ba55b",
       "blocks": [
         "controls_repeat_ext",
         "controls_whileUntil",
@@ -52,7 +58,7 @@
     },
     {
       "name": "Math",
-     "colour": "#0000FF",
+     "colour": "#5b67a5",
       "blocks": [
         "math_arithmetic",
         "math_single",
@@ -70,7 +76,7 @@
     },
     {
       "name": "Text",
-    "colour": "#0000FF",
+    "colour": "#5ba58c",
       "blocks": [
         "text_join",
         "text_append",
@@ -88,7 +94,7 @@
     },
     {
       "name": "Lists",
-      "colour": "#0000FF",
+      "colour": "#745ba5",
       "blocks": [
         "lists_create_with",
         "lists_create_with",
@@ -106,7 +112,7 @@
     },
     {
       "name": "Values",
-"colour": "#0000FF",
+"colour": "#5ec453",
       "blocks": [
         "math_number",
         "text",
@@ -115,19 +121,19 @@
     },
     {
       "name": "Variables",
-     "colour": "#0000FF",
+     "colour": "#a55b80",
       "custom": "VARIABLE",
       "blocks": []
     },
     {
       "name": "Functions",
-  "colour": "#0000FF",
+  "colour": "#995ba5",
       "custom": "PROCEDURE",
       "blocks": []
     },
     {
       "name": "Debug",
-      "colour": "#0000FF",
+      "colour": "#ec43f5",
       "blocks": [
         "output",
         "inputprompt"

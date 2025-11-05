@@ -4,7 +4,7 @@
  */
 
 
-(function(){
+(function () {
   // Remove default 'do'/'then' labels from standard blocks by overriding Blockly messages early
   function overrideDoThenMessages() {
     try {
@@ -16,7 +16,7 @@
         'CONTROLS_FOREACH_INPUT_DO',
         'CONTROLS_IF_MSG_THEN'
       ];
-      keys.forEach(k => { try { Blockly.Msg[k] = ''; } catch (e) {} });
+      keys.forEach(k => { try { Blockly.Msg[k] = ''; } catch (e) { } });
     } catch (e) { /* ignore */ }
   }
   overrideDoThenMessages();
@@ -34,11 +34,11 @@
             Blockly.ScrollbarSvg.scrollbarThickness = thickness;
           }
         }
-      } catch (e) {}
+      } catch (e) { }
       // Flyout-specific prototypes across versions
-      try { if (Blockly.Flyout && Blockly.Flyout.prototype && 'scrollbarThickness_' in Blockly.Flyout.prototype) Blockly.Flyout.prototype.scrollbarThickness_ = thickness; } catch (e) {}
-      try { if (Blockly.VerticalFlyout && Blockly.VerticalFlyout.prototype) Blockly.VerticalFlyout.prototype.scrollbarThickness_ = thickness; } catch (e) {}
-      try { if (Blockly.HorizontalFlyout && Blockly.HorizontalFlyout.prototype) Blockly.HorizontalFlyout.prototype.scrollbarThickness_ = thickness; } catch (e) {}
+      try { if (Blockly.Flyout && Blockly.Flyout.prototype && 'scrollbarThickness_' in Blockly.Flyout.prototype) Blockly.Flyout.prototype.scrollbarThickness_ = thickness; } catch (e) { }
+      try { if (Blockly.VerticalFlyout && Blockly.VerticalFlyout.prototype) Blockly.VerticalFlyout.prototype.scrollbarThickness_ = thickness; } catch (e) { }
+      try { if (Blockly.HorizontalFlyout && Blockly.HorizontalFlyout.prototype) Blockly.HorizontalFlyout.prototype.scrollbarThickness_ = thickness; } catch (e) { }
     } catch (e) { /* ignore */ }
   }
   // Match the categories (toolbox) scrollbar width (CSS now uses ~12px)
@@ -134,8 +134,8 @@
   });
 
   // Provide custom dialogs to avoid window.prompt/alert/confirm (blocked in sandbox)
-  (function installCustomDialogs(){
-    function ensureHost(){
+  (function installCustomDialogs() {
+    function ensureHost() {
       let overlay = document.getElementById('blk-modal-overlay');
       if (overlay) return overlay;
       overlay = document.createElement('div');
@@ -162,7 +162,7 @@
       return overlay;
     }
 
-    function showAlert(message, callback){
+    function showAlert(message, callback) {
       const overlay = ensureHost();
       const msg = overlay.querySelector('.blk-modal-message');
       const input = overlay.querySelector('.blk-modal-input');
@@ -172,20 +172,20 @@
       msg.textContent = String(message || '');
       cancel.style.display = 'none';
       overlay.style.display = 'flex';
-      function done(){
+      function done() {
         overlay.style.display = 'none';
         cancel.style.display = '';
         ok.removeEventListener('click', onOk);
         document.removeEventListener('keydown', onKey);
-        try { if (callback) callback(); } catch(e) {}
+        try { if (callback) callback(); } catch (e) { }
       }
-      function onOk(){ done(); }
-      function onKey(e){ if (e.key === 'Enter' || e.key === 'Escape') done(); }
+      function onOk() { done(); }
+      function onKey(e) { if (e.key === 'Enter' || e.key === 'Escape') done(); }
       ok.addEventListener('click', onOk);
       document.addEventListener('keydown', onKey);
     }
 
-    function showConfirm(message, callback){
+    function showConfirm(message, callback) {
       const overlay = ensureHost();
       const msg = overlay.querySelector('.blk-modal-message');
       const input = overlay.querySelector('.blk-modal-input');
@@ -195,22 +195,22 @@
       msg.textContent = String(message || '');
       cancel.style.display = '';
       overlay.style.display = 'flex';
-      function finish(result){
+      function finish(result) {
         overlay.style.display = 'none';
         ok.removeEventListener('click', onOk);
         cancel.removeEventListener('click', onCancel);
         document.removeEventListener('keydown', onKey);
-        try { if (callback) callback(!!result); } catch(e) {}
+        try { if (callback) callback(!!result); } catch (e) { }
       }
-      function onOk(){ finish(true); }
-      function onCancel(){ finish(false); }
-      function onKey(e){ if (e.key === 'Enter') finish(true); else if (e.key === 'Escape') finish(false); }
+      function onOk() { finish(true); }
+      function onCancel() { finish(false); }
+      function onKey(e) { if (e.key === 'Enter') finish(true); else if (e.key === 'Escape') finish(false); }
       ok.addEventListener('click', onOk);
       cancel.addEventListener('click', onCancel);
       document.addEventListener('keydown', onKey);
     }
 
-    function showPrompt(message, defaultValue, callback){
+    function showPrompt(message, defaultValue, callback) {
       const overlay = ensureHost();
       const msg = overlay.querySelector('.blk-modal-message');
       const input = overlay.querySelector('.blk-modal-input');
@@ -221,16 +221,16 @@
       input.value = defaultValue != null ? String(defaultValue) : '';
       overlay.style.display = 'flex';
       input.focus(); input.select();
-      function finish(result){
+      function finish(result) {
         overlay.style.display = 'none';
         ok.removeEventListener('click', onOk);
         cancel.removeEventListener('click', onCancel);
         document.removeEventListener('keydown', onKey);
-        try { if (callback) callback(result); } catch(e) {}
+        try { if (callback) callback(result); } catch (e) { }
       }
-      function onOk(){ finish(input.value); }
-      function onCancel(){ finish(null); }
-      function onKey(e){ if (e.key === 'Enter') finish(input.value); else if (e.key === 'Escape') finish(null); }
+      function onOk() { finish(input.value); }
+      function onCancel() { finish(null); }
+      function onKey(e) { if (e.key === 'Enter') finish(input.value); else if (e.key === 'Escape') finish(null); }
       ok.addEventListener('click', onOk);
       cancel.addEventListener('click', onCancel);
       document.addEventListener('keydown', onKey);
@@ -319,12 +319,12 @@
       }
     }
     code = outLines.join('\n');
-  // Post-process: convert separate var declarations + first assignment into inline init.
-  // And use 'let' instead of 'var' for declarations.
-  // Example: "var x;" somewhere and later "x = 0;" -> become "let x = 0;" (and remove that first assignment)
+    // Post-process: convert separate var declarations + first assignment into inline init.
+    // And use 'let' instead of 'var' for declarations.
+    // Example: "var x;" somewhere and later "x = 0;" -> become "let x = 0;" (and remove that first assignment)
     try {
       // Collect all var declaration lines and their variables
-  const declRe = /^\s*var\s+([^;]+);\s*$/gm;
+      const declRe = /^\s*var\s+([^;]+);\s*$/gm;
       const decls = [];
       let m;
       while ((m = declRe.exec(code)) !== null) {
@@ -364,7 +364,7 @@
         let cursor = 0;
         const replacements = Array.from(inlined.entries()).map(([name, info]) => ({
           start: info.start, end: info.end, text: info.indent + 'let ' + name + ' = ' + info.value + ';'
-        })).sort((a,b)=> a.start - b.start);
+        })).sort((a, b) => a.start - b.start);
         replacements.forEach(r => {
           if (r.start < cursor) return; // overlap safety
           rebuilt += code.slice(cursor, r.start) + r.text;
@@ -393,7 +393,7 @@
     try {
       code = code.replace(
         /(^|\n)([\t ]*)let\s+([A-Za-z_$][\w$]*)\s*;\s*\n([\t ]*)for\s*\(\s*\3\s*=\s*([^;]+);\s*([^;]*);\s*([^\)]*)\)/g,
-        function(_m, p1, indentDecl, varName, indentFor, initExpr, condExpr, incrExpr){
+        function (_m, p1, indentDecl, varName, indentFor, initExpr, condExpr, incrExpr) {
           const indent = indentFor || indentDecl || '';
           return `${p1}${indent}for (let ${varName} = ${initExpr}; ${condExpr}; ${incrExpr})`;
         }
@@ -456,10 +456,10 @@
     try {
       if (!block || !block.type) return;
       const type = block.type;
-      const col = JSON_BLOCK_COLOUR.get(type);
-      if (col) {
-        block.setColour(col);
-      } else if (VALUE_TYPES.indexOf(type) >= 0) {
+      // Only apply a consistent color to primitive value blocks as a UX aid.
+      // Do NOT override colors of other blocks (e.g., p5_setup/p5_draw)
+      // with the category color from JSON; preserve the block's own color.
+      if (VALUE_TYPES.indexOf(type) >= 0) {
         block.setColour(VALUES_COLOR);
       }
     } catch (e) { /* ignore */ }
@@ -481,7 +481,7 @@
         const arr = window.P5_PARAM_OPTIONAL[fn];
         return Array.isArray(arr) ? arr : [];
       }
-    } catch (e) {}
+    } catch (e) { }
     return [];
   }
 
@@ -493,7 +493,7 @@
         const arr = window.P5_PARAM_TYPE[fn];
         return Array.isArray(arr) ? arr : [];
       }
-    } catch (e) {}
+    } catch (e) { }
     return [];
   }
 
@@ -517,21 +517,21 @@
           let shadow = null;
           if (kind === 'number') {
             shadow = ws.newBlock('math_number');
-            try { shadow.setFieldValue('0', 'NUM'); } catch (e) {}
+            try { shadow.setFieldValue('0', 'NUM'); } catch (e) { }
           } else if (kind === 'string') {
             shadow = ws.newBlock('text');
-            try { shadow.setFieldValue('abc', 'TEXT'); } catch (e) {}
+            try { shadow.setFieldValue('abc', 'TEXT'); } catch (e) { }
           } else if (kind === 'boolean') {
             shadow = ws.newBlock('logic_boolean');
-            try { shadow.setFieldValue('TRUE', 'BOOL'); } catch (e) {}
+            try { shadow.setFieldValue('TRUE', 'BOOL'); } catch (e) { }
           } else {
             continue; // unknown type, skip default
           }
           // Ensure default blocks are movable (not shadow)
-          try { if (typeof shadow.setShadow === 'function') shadow.setShadow(false); } catch (e) {}
-          try { shadow.initSvg && shadow.initSvg(); } catch (e) {}
-          try { shadow.render && shadow.render(); } catch (e) {}
-          try { conn.connect(shadow.outputConnection); } catch (e) {}
+          try { if (typeof shadow.setShadow === 'function') shadow.setShadow(false); } catch (e) { }
+          try { shadow.initSvg && shadow.initSvg(); } catch (e) { }
+          try { shadow.render && shadow.render(); } catch (e) { }
+          try { conn.connect(shadow.outputConnection); } catch (e) { }
         } catch (e) { /* ignore each input errors */ }
       }
     } catch (e) { /* ignore */ }
@@ -547,15 +547,15 @@
           const conn = inp && inp.connection;
           if (conn && !conn.targetConnection) {
             const nb = ws.newBlock('math_number');
-            try { nb.setFieldValue('10', 'NUM'); } catch (e) {}
-            try { if (typeof nb.setShadow === 'function') nb.setShadow(false); } catch (e) {}
-            try { nb.initSvg && nb.initSvg(); } catch (e) {}
-            try { nb.render && nb.render(); } catch (e) {}
-            try { conn.connect(nb.outputConnection); } catch (e) {}
+            try { nb.setFieldValue('10', 'NUM'); } catch (e) { }
+            try { if (typeof nb.setShadow === 'function') nb.setShadow(false); } catch (e) { }
+            try { nb.initSvg && nb.initSvg(); } catch (e) { }
+            try { nb.render && nb.render(); } catch (e) { }
+            try { conn.connect(nb.outputConnection); } catch (e) { }
           }
-        } catch (e) {}
+        } catch (e) { }
       } else if (block.type === 'controls_repeat') {
-        try { if (typeof block.setFieldValue === 'function') block.setFieldValue('10', 'TIMES'); } catch (e) {}
+        try { if (typeof block.setFieldValue === 'function') block.setFieldValue('10', 'TIMES'); } catch (e) { }
       }
     } catch (e) { /* ignore */ }
   }
@@ -570,11 +570,11 @@
           const conn = inp && inp.connection;
           if (conn && !conn.targetConnection) {
             const nb = ws.newBlock('math_number');
-            try { nb.setFieldValue(String(value), 'NUM'); } catch (e) {}
-            try { if (typeof nb.setShadow === 'function') nb.setShadow(false); } catch (e) {}
-            try { nb.initSvg && nb.initSvg(); } catch (e) {}
-            try { nb.render && nb.render(); } catch (e) {}
-            try { conn.connect(nb.outputConnection); } catch (e) {}
+            try { nb.setFieldValue(String(value), 'NUM'); } catch (e) { }
+            try { if (typeof nb.setShadow === 'function') nb.setShadow(false); } catch (e) { }
+            try { nb.initSvg && nb.initSvg(); } catch (e) { }
+            try { nb.render && nb.render(); } catch (e) { }
+            try { conn.connect(nb.outputConnection); } catch (e) { }
           }
         } catch (e) { /* ignore */ }
       }
@@ -591,11 +591,11 @@
       try {
         const selected = document.querySelector('.blocklyTreeRow.blocklyTreeSelected .blocklyTreeLabel');
         if (selected && selected.textContent) selectedName = selected.textContent.trim();
-      } catch (e) {}
+      } catch (e) { }
       const fillColor = (selectedName && JSON_NAME_COLOUR.get(selectedName)) || VALUES_COLOR;
       // Color any SVG paths in the flyout that represent block backgrounds
       const paths = document.querySelectorAll('.blocklyFlyout .blocklyPath, .blocklyFlyout .blocklyBlockBackground');
-      paths.forEach(p => { try { if (p.setAttribute) p.setAttribute('fill', fillColor); } catch (e) {} });
+      paths.forEach(p => { try { if (p.setAttribute) p.setAttribute('fill', fillColor); } catch (e) { } });
       // Ensure flyout text is readable
       const texts = document.querySelectorAll('.blocklyFlyout .blocklyText');
       texts.forEach(t => {
@@ -606,13 +606,13 @@
             t.textContent = '';
           }
           t.setAttribute('fill', '#000');
-        } catch (e) {}
+        } catch (e) { }
       });
     } catch (e) { /* ignore */ }
   }
 
   // Recolor newly created blocks in the main workspace
-  ws.addChangeListener(function(e) {
+  ws.addChangeListener(function (e) {
     try {
       if (e.type === Blockly.Events.BLOCK_CREATE || e.type === Blockly.Events.BLOCK_CHANGE) {
         const ids = e.ids || (e.blockId ? [e.blockId] : []);
@@ -622,13 +622,13 @@
             if (b) {
               applyBlockColorIfMapped(b);
               // Also sanitize away any 'do'/'then' label fields on this block
-              try { sanitizeBlockDoThenLabels(b); } catch (e) {}
+              try { sanitizeBlockDoThenLabels(b); } catch (e) { }
               // Fill required slots with typed default shadows
-              try { ensureDefaultTypedShadows(b); } catch (e) {}
+              try { ensureDefaultTypedShadows(b); } catch (e) { }
               // Ensure repeat blocks default to 10 times
-              try { ensureRepeatDefaults(b); } catch (e) {}
+              try { ensureRepeatDefaults(b); } catch (e) { }
               // Ensure for blocks default to from 0 to 1 by 1
-              try { ensureForDefaults(b); } catch (e) {}
+              try { ensureForDefaults(b); } catch (e) { }
             }
           } catch (err) { /* ignore */ }
         });
@@ -643,11 +643,11 @@
   setTimeout(() => {
     recolorWorkspaceValueBlocks();
     recolorFlyoutVisuals();
-    try { sanitizeWorkspaceDoThenLabels(); } catch (e) {}
+    try { sanitizeWorkspaceDoThenLabels(); } catch (e) { }
     try {
       const all = ws.getAllBlocks(false);
-      all.forEach(b => { try { ensureDefaultTypedShadows(b); ensureRepeatDefaults(b); ensureForDefaults(b); } catch (e) {} });
-    } catch (e) {}
+      all.forEach(b => { try { ensureDefaultTypedShadows(b); ensureRepeatDefaults(b); ensureForDefaults(b); } catch (e) { } });
+    } catch (e) { }
   }, 200);
 
   // --- Label sanitizers: remove 'do'/'then' labels from existing blocks ---
@@ -670,14 +670,14 @@
           });
         } catch (e) { /* ignore input errors */ }
       });
-      try { if (typeof block.render === 'function') block.render(); } catch (e) {}
+      try { if (typeof block.render === 'function') block.render(); } catch (e) { }
     } catch (e) { /* ignore */ }
   }
 
   function sanitizeWorkspaceDoThenLabels() {
     try {
       const all = ws.getAllBlocks(false);
-      all.forEach(b => { try { sanitizeBlockDoThenLabels(b); } catch (e) {} });
+      all.forEach(b => { try { sanitizeBlockDoThenLabels(b); } catch (e) { } });
     } catch (e) { /* ignore */ }
   }
 
@@ -688,7 +688,7 @@
         const def = Blockly.Blocks && Blockly.Blocks[type];
         if (def && typeof def.init === 'function') {
           const orig = def.init;
-          def.init = function() {
+          def.init = function () {
             try { orig.call(this); } catch (e) { /* ignore */ }
             try { applyBlockColorIfMapped(this); } catch (e) { /* ignore */ }
           };
@@ -746,7 +746,7 @@
   }
 
   function onMqChange(e) {
-  try { applyThemeByName(e.matches ? 'dark' : 'light'); } catch (e) { }
+    try { applyThemeByName(e.matches ? 'dark' : 'light'); } catch (e) { }
   }
 
   // Listen for messages from the extension (e.g., loadWorkspace)
@@ -773,30 +773,30 @@
         // Ensure any lingering outline strokes from previous sessions are cleared
         try {
           const paths = document.querySelectorAll('.blocklyWorkspace .blocklyPath, .blocklyWorkspace .blocklyBlockBackground');
-          paths.forEach(p => { try { p.removeAttribute('stroke'); p.removeAttribute('stroke-width'); } catch (e) {} });
-        } catch (e) {}
+          paths.forEach(p => { try { p.removeAttribute('stroke'); p.removeAttribute('stroke-width'); } catch (e) { } });
+        } catch (e) { }
         // Remove any 'do'/'then' labels from blocks after load
-        try { sanitizeWorkspaceDoThenLabels(); } catch (e) {}
+        try { sanitizeWorkspaceDoThenLabels(); } catch (e) { }
         // Ensure default typed values on required slots after load
         try {
           const all = ws.getAllBlocks(false);
-          all.forEach(b => { try { ensureDefaultTypedShadows(b); ensureRepeatDefaults(b); ensureForDefaults(b); } catch (e) {} });
-        } catch (e) {}
-          // After loading the workspace from the extension sidecar, send the generated
-          // code + serialized workspace back to the extension so it can persist any
-          // changes or keep sidecar/file in sync. This avoids an initial empty write.
-          try {
-            const res = getGeneratedCode();
-            const code = res && res.code != null ? res.code : '';
-            // Mark this export as the initial load so the extension can ignore it
-            // and avoid overwriting the user's file when the workspace is first loaded.
-            if (window.vscode && typeof window.vscode.postMessage === 'function') {
-              let workspaceObj = null;
-              try { workspaceObj = Blockly.serialization.workspaces.save(ws); } catch (e) { workspaceObj = null; }
-              const workspaceJson = workspaceObj ? JSON.stringify(workspaceObj) : null;
-              window.vscode.postMessage({ type: 'blocklyGeneratedCode', code: code, workspace: workspaceJson, lineMap: (res && res.lineMap) || null, initialLoad: true });
-            }
-          } catch (e) { /* ignore */ }
+          all.forEach(b => { try { ensureDefaultTypedShadows(b); ensureRepeatDefaults(b); ensureForDefaults(b); } catch (e) { } });
+        } catch (e) { }
+        // After loading the workspace from the extension sidecar, send the generated
+        // code + serialized workspace back to the extension so it can persist any
+        // changes or keep sidecar/file in sync. This avoids an initial empty write.
+        try {
+          const res = getGeneratedCode();
+          const code = res && res.code != null ? res.code : '';
+          // Mark this export as the initial load so the extension can ignore it
+          // and avoid overwriting the user's file when the workspace is first loaded.
+          if (window.vscode && typeof window.vscode.postMessage === 'function') {
+            let workspaceObj = null;
+            try { workspaceObj = Blockly.serialization.workspaces.save(ws); } catch (e) { workspaceObj = null; }
+            const workspaceJson = workspaceObj ? JSON.stringify(workspaceObj) : null;
+            window.vscode.postMessage({ type: 'blocklyGeneratedCode', code: code, workspace: workspaceJson, lineMap: (res && res.lineMap) || null, initialLoad: true });
+          }
+        } catch (e) { /* ignore */ }
         // Do not persist to localStorage; persistence is handled by the extension via
         // the embedded /*@BlocklyWorkspace ... */ JSON in the file.
       } catch (e) {
@@ -824,13 +824,13 @@
           // Clear highlight from all blocks first to ensure a single active highlight
           try {
             const all = ws.getAllBlocks(false);
-            all.forEach(bl => { try { if (typeof bl.setHighlighted === 'function') bl.setHighlighted(false); } catch (e) {} });
-          } catch (e) {}
+            all.forEach(bl => { try { if (typeof bl.setHighlighted === 'function') bl.setHighlighted(false); } catch (e) { } });
+          } catch (e) { }
           if (b) {
             // Highlight current block without relying on selection state
-            try { if (typeof b.setHighlighted === 'function') b.setHighlighted(true); } catch (e) {}
+            try { if (typeof b.setHighlighted === 'function') b.setHighlighted(true); } catch (e) { }
             // Scroll into view
-            try { b.workspace.centerOnBlock(b.id); } catch (e) {}
+            try { b.workspace.centerOnBlock(b.id); } catch (e) { }
           }
         } catch (e) { /* ignore */ }
       } else if (msg.type === 'highlightAllBlocks') {
@@ -867,14 +867,14 @@
           // Turn off highlight from all blocks and clear selection
           try {
             const all = ws.getAllBlocks(false);
-            all.forEach(bl => { try { if (typeof bl.setHighlighted === 'function') bl.setHighlighted(false); } catch (e) {} });
-          } catch (e) {}
-          try { if (Blockly && Blockly.common && typeof Blockly.common.setSelected === 'function') Blockly.common.setSelected(null); } catch (e) {}
+            all.forEach(bl => { try { if (typeof bl.setHighlighted === 'function') bl.setHighlighted(false); } catch (e) { } });
+          } catch (e) { }
+          try { if (Blockly && Blockly.common && typeof Blockly.common.setSelected === 'function') Blockly.common.setSelected(null); } catch (e) { }
           // Also clear any visual stroke outlines that may remain from earlier tests
           try {
             const paths = document.querySelectorAll('.blocklyWorkspace .blocklyPath, .blocklyWorkspace .blocklyBlockBackground');
-            paths.forEach(p => { try { p.removeAttribute('stroke'); p.removeAttribute('stroke-width'); } catch (e) {} });
-          } catch (e) {}
+            paths.forEach(p => { try { p.removeAttribute('stroke'); p.removeAttribute('stroke-width'); } catch (e) { } });
+          } catch (e) { }
         } catch (e) { /* ignore */ }
       }
     });

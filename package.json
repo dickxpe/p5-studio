@@ -73,7 +73,7 @@
         "title": "📕Search in P5.js Reference"
       },
       {
-        "command": "liveP5.toggleReloadWhileTypingOn",
+        "command": "P5Studio.toggleReloadWhileTypingOn",
         "title": "Disable Reload on Typing",
         "icon": {
           "light": "images/keyboard_off.svg",
@@ -82,7 +82,7 @@
         "category": "P5 Studio"
       },
       {
-        "command": "liveP5.toggleReloadWhileTypingOff",
+        "command": "P5Studio.toggleReloadWhileTypingOff",
         "title": "Enable Reload on Typing",
         "icon": {
           "light": "images/keyboard.svg",
@@ -91,7 +91,7 @@
         "category": "P5 Studio"
       },
       {
-        "command": "liveP5.scrollOutputToEnd",
+        "command": "P5Studio.scrollOutputToEnd",
         "title": "Scroll Output to End",
         "category": "P5 Studio"
       },
@@ -117,7 +117,7 @@
         {
           "command": "extension.open-blockly",
           "group": "navigation",
-          "when": "config.liveP5.enableBlockly == true && isP5js && (editorLangId == javascript || editorLangId == typescript)"
+          "when": "config.P5Studio.enableBlockly == true && isP5js && (editorLangId == javascript || editorLangId == typescript)"
         },
         {
           "command": "extension.reload-p5-sketch",
@@ -125,12 +125,12 @@
           "when": "isP5js && hasP5Webview && (editorLangId == javascript || editorLangId == typescript)"
         },
         {
-          "command": "liveP5.toggleReloadWhileTypingOn",
+          "command": "P5Studio.toggleReloadWhileTypingOn",
           "group": "navigation@2",
           "when": "isP5js && liveP5ReloadWhileTypingEnabled == true && (editorLangId == javascript || editorLangId == typescript)"
         },
         {
-          "command": "liveP5.toggleReloadWhileTypingOff",
+          "command": "P5Studio.toggleReloadWhileTypingOff",
           "group": "navigation@2",
           "when": "isP5js && liveP5ReloadWhileTypingEnabled != true && (editorLangId == javascript || editorLangId == typescript)"
         }
@@ -138,7 +138,7 @@
       "explorer/context": [
         {
           "command": "extension.decouple-blockly",
-          "when": "config.liveP5.enableBlockly == true && (resourceExtname == .js || resourceExtname == .ts)",
+          "when": "config.P5Studio.enableBlockly == true && (resourceExtname == .js || resourceExtname == .ts)",
           "group": "5_decouple@99"
         },
         {
@@ -153,17 +153,13 @@
           "group": "navigation@0"
         },
         {
-          "command": "liveP5.scrollOutputToEnd",
+          "command": "P5Studio.scrollOutputToEnd",
           "when": "resourceScheme == output"
         }
       ],
       "commandPalette": [
         {
-          "command": "liveP5.scrollOutputToEnd",
-          "when": "true"
-        },
-        {
-          "command": "extension.open-blockly-json",
+          "command": "P5Studio.scrollOutputToEnd",
           "when": "true"
         }
       ]
@@ -172,38 +168,38 @@
       "type": "object",
       "title": "P5 Studio Settings",
       "properties": {
-        "liveP5.reloadWhileTyping": {
+        "P5Studio.reloadWhileTyping": {
           "type": "boolean",
           "default": true,
           "description": "Determines if the P5 webpanel automatically reloads while typing.",
           "order": 1
         },
-        "liveP5.reloadOnSave": {
+        "P5Studio.reloadOnSave": {
           "type": "boolean",
           "default": true,
           "description": "Determines if the P5 webpanel automatically reloads when saving the file.",
           "order": 0
         },
-        "liveP5.showReloadButton": {
+        "P5Studio.showReloadButton": {
           "type": "boolean",
           "default": true,
           "description": "Show the reload button in the webview toolbar.",
           "order": 6
         },
-        "liveP5.showRecordButton": {
+        "P5Studio.showRecordButton": {
           "type": "boolean",
           "default": false,
           "description": "Show the record (capture) button in the webview toolbar.",
           "order": 7
         },
-        "liveP5.debounceDelay": {
+        "P5Studio.debounceDelay": {
           "type": "number",
           "default": 300,
           "minimum": 100,
           "description": "Debounce delay in milliseconds for live reload while typing.",
           "order": 3
         },
-        "liveP5.varDrawerDefaultState": {
+        "P5Studio.varDrawerDefaultState": {
           "type": "string",
           "enum": [
             "open",
@@ -214,64 +210,64 @@
           "description": "Default state of the global variable drawer in the P5 panel. 'open' shows the drawer by, 'collapsed' shows only the tab, 'hidden' hides the drawer completely.",
           "order": 4
         },
-        "liveP5.showSetupNotification": {
+        "P5Studio.showSetupNotification": {
           "type": "boolean",
           "default": true,
           "description": "Show a setup prompt when the workspace has no P5 marker (.p5). Choose 'Don't show again' to turn this off.",
           "order": 9
         },
-        "liveP5.oscRemoteAddress": {
+        "P5Studio.oscRemoteAddress": {
           "type": "string",
           "default": "127.0.0.1",
           "description": "OSC remote address (host to send OSC messages to).",
           "order": 10
         },
-        "liveP5.oscLocalAddress": {
+        "P5Studio.oscLocalAddress": {
           "type": "string",
           "default": "127.0.0.1",
           "description": "OSC local bind address for receiving (e.g. '127.0.0.1' for localhost only, or '0.0.0.0' to accept from the network).",
           "order": 10.5
         },
-        "liveP5.oscRemotePort": {
+        "P5Studio.oscRemotePort": {
           "type": "number",
           "default": 57120,
           "description": "OSC remote port (port to send OSC messages to).",
           "order": 11
         },
-        "liveP5.oscLocalPort": {
+        "P5Studio.oscLocalPort": {
           "type": "number",
           "default": 57121,
           "description": "OSC local port (port to listen for incoming OSC messages).",
           "order": 12
         },
-        "liveP5.varControlDebounceDelay": {
+        "P5Studio.varControlDebounceDelay": {
           "type": "number",
           "default": 500,
           "minimum": 0,
           "description": "Debounce delay (ms) for global variable drawer input changes before applying them to the sketch. Independent from reloadWhileTyping debounce.",
           "order": 5
         },
-        "liveP5.BlockSketchOnWarning": {
+        "P5Studio.BlockSketchOnWarning": {
           "type": "boolean",
           "default": true,
           "description": "Block running the sketch and show a yellow overlay when semicolon warnings exist. When false, do not show the overlay and run the sketch, but still log the warning to the Output channel.",
           "order": 13
         },
-        "liveP5.SingleP5Panel": {
+        "P5Studio.SingleP5Panel": {
           "type": "boolean",
           "default": true,
           "description": "If enabled, only one P5 webpanel can be open at a time. Opening a new panel closes all others.",
           "order": 8
         }
         ,
-        "liveP5.enableBlockly": {
+        "P5Studio.enableBlockly": {
           "type": "boolean",
           "default": true,
           "description": "Enable Blockly integration: shows the Blockly button and the Decouple Blockly context menu entry.",
           "order": 14
         }
         ,
-        "liveP5.blocklyTheme": {
+        "P5Studio.blocklyTheme": {
           "type": "string",
           "enum": ["dark", "light", "auto"],
           "default": "dark",
@@ -279,7 +275,7 @@
           "order": 15
         }
         ,
-        "liveP5.stepRunDelayMs": {
+        "P5Studio.stepRunDelayMs": {
           "type": "number",
           "default": 250,
           "minimum": 0,

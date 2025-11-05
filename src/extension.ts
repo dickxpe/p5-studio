@@ -20,6 +20,11 @@ let lastActiveOutputChannel: vscode.OutputChannel | null = null; // <--- NEW
 // Global OSC diagnostics output channel
 const oscOutputChannel: vscode.OutputChannel = vscode.window.createOutputChannel('LIVE P5: OSC');
 
+// Internal: mark when we're restoring panels on activation to tweak layout behavior
+let _restoringPanels = false;
+// During restore, remember the intended top-row right-hand target column for LIVE P5 panels
+let _restoreP5TargetColumn: vscode.ViewColumn | undefined;
+
 // Single-step highlight decoration (one at a time per editor)
 let stepHighlightDecoration: vscode.TextEditorDecorationType | null = null;
 function ensureStepHighlightDecoration() {
@@ -85,7 +90,7 @@ function getTime(): string {
 
 // Read debounce delay from user config
 function getDebounceDelay() {
-  return vscode.workspace.getConfiguration('liveP5').get<number>('debounceDelay', 500);
+  return vscode.workspace.getConfiguration('P5Studio').get<number>('debounceDelay', 500);
 }
 
 // Recursively list .js/.ts files in a folder (for script imports)
@@ -803,23 +808,21 @@ async function createHtml(
   const stepIconUri = panel.webview.asWebviewUri(stepIconPath);
   const delayIconPath = vscode.Uri.file(path.join(extensionPath, 'images', 'play.svg'));
   const delayIconUri = panel.webview.asWebviewUri(delayIconPath);
-  const stepRunDelayMs = vscode.workspace.getConfiguration('liveP5').get<number>('stepRunDelayMs', 500);
+  const stepRunDelayMs = vscode.workspace.getConfiguration('P5Studio').get<number>('stepRunDelayMs', 500);
 
   const showReloadButton = vscode.workspace
-    .getConfiguration('liveP5')
+    .getConfiguration('P5Studio')
     .get<boolean>('showReloadButton', true);
 
   // Add: showRecordButton setting
   // const showRecordButton = vscode.workspace
-  //   .getConfiguration('liveP5')
+  //   .getConfiguration('P5Studio')
   //   .get<boolean>('showRecordButton', true);
 
-  // Only show if config is true AND code contains draw function
-  const showRecordButtonConfig = vscode.workspace
-    .getConfiguration('liveP5')
+  // Show record button based on setting only (no longer require draw())
+  const showRecordButton = vscode.workspace
+    .getConfiguration('P5Studio')
     .get<boolean>('showRecordButton', true);
-  const hasDrawFunction = /\bfunction\s+draw\s*\(/.test(userCode);
-  const showRecordButton = showRecordButtonConfig && hasDrawFunction;
 
   function escapeBackticks(str: string) {
     return str.replace(/`/g, '\`');
@@ -871,10 +874,10 @@ async function createHtml(
   } catch (e) { /* ignore */ }
 
   // In createHtml, get debounceDelay from config and pass to webview
-  const debounceDelay = vscode.workspace.getConfiguration('liveP5').get<number>('debounceDelay', 500);
-  const varControlDebounceDelay = vscode.workspace.getConfiguration('liveP5').get<number>('varControlDebounceDelay', 300);
+  const debounceDelay = vscode.workspace.getConfiguration('P5Studio').get<number>('debounceDelay', 500);
+  const varControlDebounceDelay = vscode.workspace.getConfiguration('P5Studio').get<number>('varControlDebounceDelay', 300);
   // Get varDrawerDefaultState from config
-  const varDrawerDefaultState = vscode.workspace.getConfiguration('liveP5').get<string>('varDrawerDefaultState', 'open');
+  const varDrawerDefaultState = vscode.workspace.getConfiguration('P5Studio').get<string>('varDrawerDefaultState', 'open');
 
   // Get the webview URI for the media folder (if it exists)
   let mediaWebviewUriPrefix = '';
@@ -1081,7 +1084,7 @@ window.addEventListener("message", function(e) {
 })();
 </script>
 <style>
-:root { --overlay-font-size: ${editorFontSize}px; }
+:root { --overlay-font-size: ${editorFontSize}px; --toolbar-scale: 1.5; }
 html,body{margin:0;padding:0;overflow:hidden;width:100%;height:100%;background:transparent;}
 canvas.p5Canvas{
   display:block;
@@ -1134,43 +1137,43 @@ canvas.p5Canvas{
   right: 10px;
   display: flex;
   flex-direction: row;
-  gap: 10px;
+  gap: calc(10px * var(--toolbar-scale));
   /* Keep toolbar above overlays so buttons remain clickable even when an overlay is visible */
   z-index: 10003;
 }
 #reload-button {
-  width: 16px; height: 16px;
-  background: white; border-radius: 4px; display: flex;
+  width: calc(16px * var(--toolbar-scale)); height: calc(16px * var(--toolbar-scale));
+  background: white; border-radius: calc(4px * var(--toolbar-scale)); display: flex;
   align-items: center; justify-content: center; cursor: pointer;
   box-shadow: 0 2px 5px rgba(0,0,0,0.2);
 }
-#reload-button img { width: 12px; height: 12px; }
+#reload-button img { width: calc(12px * var(--toolbar-scale)); height: calc(12px * var(--toolbar-scale)); }
 #reload-button[style*="display: none"] { display: none !important; }
 #step-run-button {
-  width: 16px; height: 16px;
-  background: white; border-radius: 4px; display: flex;
+  width: calc(16px * var(--toolbar-scale)); height: calc(16px * var(--toolbar-scale));
+  background: white; border-radius: calc(4px * var(--toolbar-scale)); display: flex;
   align-items: center; justify-content: center; cursor: pointer;
   box-shadow: 0 2px 5px rgba(0,0,0,0.2);
 }
-#step-run-button img { width: 12px; height: 12px; }
+#step-run-button img { width: calc(12px * var(--toolbar-scale)); height: calc(12px * var(--toolbar-scale)); }
 #step-run-button[style*="display: none"] { display: none !important; }
 #single-step-button {
-  width: 16px; height: 16px;
-  background: white; border-radius: 4px; display: flex;
+  width: calc(16px * var(--toolbar-scale)); height: calc(16px * var(--toolbar-scale));
+  background: white; border-radius: calc(4px * var(--toolbar-scale)); display: flex;
   align-items: center; justify-content: center; cursor: pointer;
   box-shadow: 0 2px 5px rgba(0,0,0,0.2);
 }
-#single-step-button img { width: 12px; height: 12px; }
+#single-step-button img { width: calc(12px * var(--toolbar-scale)); height: calc(12px * var(--toolbar-scale)); }
 #single-step-button[style*="display: none"] { display: none !important; }
 #capture-toggle-button {
-  width: 16px; height: 16px;
-  background: white; border-radius: 4px; display: flex;
+  width: calc(16px * var(--toolbar-scale)); height: calc(16px * var(--toolbar-scale));
+  background: white; border-radius: calc(4px * var(--toolbar-scale)); display: flex;
   align-items: center; justify-content: center; cursor: pointer;
   box-shadow: 0 2px 5px rgba(0,0,0,0.2);
   /* Add display:none if hidden by setting */
   ${showRecordButton ? '' : 'display:none !important;'}
 }
-#capture-toggle-button svg { width: 12px; height: 12px; display: block; }
+#capture-toggle-button svg { width: calc(12px * var(--toolbar-scale)); height: calc(12px * var(--toolbar-scale)); display: block; }
 #p5-var-controls {
   position: fixed;
   left: 0; right: 0; bottom: 0;
@@ -2097,6 +2100,49 @@ function instrumentSetupForSingleStep(code: string, lineOffset: number): string 
     const b = recast.types.builders;
     let changed = false;
 
+    // Collect top-level statements (non-function) to highlight before entering setup()
+    // We don't re-execute them (they already ran on load); we only highlight + await
+    const topLevelPreSteps: any[] = [];
+    try {
+      const programBody: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
+      for (const stmt of programBody) {
+        if (!stmt || typeof stmt.type !== 'string') continue;
+        // Skip function declarations (including setup/draw and helpers)
+        if (stmt.type === 'FunctionDeclaration') continue;
+        // Skip empty statements
+        if (stmt.type === 'EmptyStatement') continue;
+        // Include directives (e.g., 'use strict') as a single highlight step
+        const hi = ((): any => {
+          const loc = stmt && (stmt as any).loc ? (stmt as any).loc : null;
+          if (!loc) return null;
+          const start = loc.start || { line: 1, column: 0 };
+          const end = loc.end || start;
+          return b.expressionStatement(
+            b.callExpression(b.identifier('__highlight'), [
+              b.literal(start.line),
+              b.literal(start.column + 1),
+              b.literal(end.line),
+              b.literal(end.column + 1)
+            ])
+          );
+        })();
+        if (hi) {
+          topLevelPreSteps.push(hi);
+          // await gate to advance to next top-level statement
+          topLevelPreSteps.push(
+            b.expressionStatement(b.awaitExpression(b.callExpression(b.identifier('__waitStep'), [])))
+          );
+        }
+      }
+    } catch { /* ignore */ }
+
+    // Determine whether a setup() function exists
+    let hasSetupFunction = false;
+    try {
+      const body: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
+      hasSetupFunction = body.some(n => n && n.type === 'FunctionDeclaration' && n.id && n.id.name === 'setup');
+    } catch { hasSetupFunction = false; }
+
     const makeHighlightFor = (node: any) => {
       const loc = node && node.loc ? node.loc : null;
       if (!loc) return null;
@@ -2298,11 +2344,9 @@ function instrumentSetupForSingleStep(code: string, lineOffset: number): string 
               b.literal(null)
             )
           );
+          // If any gate is set (e.g., top-level stepping or setup stepping), skip draw() this frame
           const drawGateGuard = b.ifStatement(
-            b.binaryExpression('===',
-              b.memberExpression(b.identifier('window'), b.identifier('__liveP5Gate')),
-              b.literal('setup')
-            ),
+            b.memberExpression(b.identifier('window'), b.identifier('__liveP5Gate')),
             b.blockStatement([b.returnStatement(null)])
           );
           const drawBusyGuard = b.ifStatement(
@@ -2354,11 +2398,29 @@ function instrumentSetupForSingleStep(code: string, lineOffset: number): string 
           // Append a final clear highlight call when function finishes (setup or draw)
           const callClear = b.expressionStatement(b.callExpression(b.identifier('__clearHighlight'), []));
           if (node.id && node.id.name === 'setup') {
-            // setup(): set gate before any stepping, then clear gate at the very end
-            node.body.body = [...prelude, initFrameCounter, setGateSetup, ...entryStep, ...instrumentedBlock.body, clearGate, callClear];
+            // setup(): set gate before any stepping, show top-level highlights first, then clear gate at the very end
+            node.body.body = [...prelude, initFrameCounter, setGateSetup, ...topLevelPreSteps, ...entryStep, ...instrumentedBlock.body, clearGate, callClear];
           } else {
-            // draw(): skip if gate indicates setup not finished yet; guard against re-entrancy across frames while stepping
-            node.body.body = [...prelude, drawGateGuard, drawBusyGuard, setDrawBusy, incFrameCounter, ...entryStep, ...instrumentedBlock.body, clearDrawBusy];
+            // draw(): optionally show top-level highlights once when no setup() exists; otherwise honor setup gate
+            const topOnceGuard = b.ifStatement(
+              b.unaryExpression('!',
+                b.memberExpression(b.identifier('window'), b.identifier('__liveP5TopPreDone'))
+              ),
+              b.blockStatement([
+                ...topLevelPreSteps,
+                b.expressionStatement(
+                  b.assignmentExpression('=',
+                    b.memberExpression(b.identifier('window'), b.identifier('__liveP5TopPreDone')),
+                    b.literal(true)
+                  )
+                )
+              ])
+            );
+            node.body.body = hasSetupFunction
+              // With setup(): rely on gate; no top-level pre-steps here
+              ? [...prelude, drawGateGuard, drawBusyGuard, setDrawBusy, incFrameCounter, ...entryStep, ...instrumentedBlock.body, clearDrawBusy]
+              // No setup(): run top-level pre-steps once at the start of draw
+              : [...prelude, topOnceGuard, drawBusyGuard, setDrawBusy, incFrameCounter, ...entryStep, ...instrumentedBlock.body, clearDrawBusy];
           }
           changed = true;
           return false;
@@ -2377,7 +2439,7 @@ function instrumentSetupForSingleStep(code: string, lineOffset: number): string 
 // --- OSC SETUP ---
 // Read from config, fallback to defaults if not set
 function getOscConfig() {
-  const config = vscode.workspace.getConfiguration('liveP5');
+  const config = vscode.workspace.getConfiguration('P5Studio');
   return {
     localAddress: config.get<string>('oscLocalAddress', '127.0.0.1'),
     remoteAddress: config.get<string>('oscRemoteAddress', '127.0.0.1'),
@@ -2437,26 +2499,82 @@ setupOscPort();
 // Activate
 // ----------------------------
 export function activate(context: vscode.ExtensionContext) {
-  // --- Ensure restored LIVE/Blockly webviews are closed on VS Code reopen ---
-  try {
-    const liveSerializer = vscode.window.registerWebviewPanelSerializer('extension.live-p5', {
-      async deserializeWebviewPanel(panel: vscode.WebviewPanel, _state: any) {
-        // Close any restored LIVE P5 panels so empty tabs don't linger after restart
-        try { panel.dispose(); } catch { }
-      }
-    });
-    context.subscriptions.push(liveSerializer);
-  } catch { }
+  // Previously, we closed restored LIVE/Blockly webviews on reopen to avoid empty tabs.
+  // That behavior is now disabled per request; let VS Code handle restoration normally.
 
+  // --- Lightweight restore: reopen relevant webviews on activation without serialization ---
+  // We remember which documents had a LIVE P5 webview or a Blockly webview open
+  // and simply re-run the corresponding open command for those files on startup.
+  const RESTORE_LIVE_KEY = 'P5Studio.restoreLiveDocs';
+  const RESTORE_LIVE_ORDER_KEY = 'P5Studio.restoreLiveDocsOrder';
+  const RESTORE_BLOCKLY_KEY = 'P5Studio.restoreBlocklyDocs';
+
+  // Workspace-aware helpers (avoid cross-project restore)
+  function workspaceRoots(): string[] {
+    try { return (vscode.workspace.workspaceFolders || []).map(f => f.uri.fsPath); } catch { return []; }
+  }
+  function isInWorkspace(fsPath: string): boolean {
+    try {
+      if (!fsPath) return false;
+      const roots = workspaceRoots();
+      if (!roots.length) return false;
+      const norm = fsPath.replace(/\\/g, '/').toLowerCase();
+      return roots.some(r => norm.startsWith(r.replace(/\\/g, '/').toLowerCase() + '/'));
+    } catch { return false; }
+  }
+  function getRestoreList(key: string): string[] {
+    try { return context.workspaceState.get<string[]>(key, []) || []; } catch { return []; }
+  }
+  async function setRestoreList(key: string, list: string[]) {
+    try { await context.workspaceState.update(key, Array.from(new Set(list))); } catch { /* ignore */ }
+  }
+  async function addToRestore(key: string, fsPath: string) {
+    if (!isInWorkspace(fsPath)) return;
+    const list = getRestoreList(key);
+    if (!list.includes(fsPath)) list.push(fsPath);
+    await setRestoreList(key, list);
+  }
+  async function removeFromRestore(key: string, fsPath: string) {
+    const list = getRestoreList(key).filter(p => p !== fsPath);
+    await setRestoreList(key, list);
+  }
+  async function moveToOrderEnd(fsPath: string) {
+    try {
+      if (!isInWorkspace(fsPath)) return;
+      const curr = getRestoreList(RESTORE_LIVE_ORDER_KEY);
+      const filtered = curr.filter(p => p !== fsPath);
+      filtered.push(fsPath);
+      await setRestoreList(RESTORE_LIVE_ORDER_KEY, filtered);
+    } catch { }
+  }
+  async function removeFromOrder(fsPath: string) {
+    try {
+      const curr = getRestoreList(RESTORE_LIVE_ORDER_KEY).filter(p => p !== fsPath);
+      await setRestoreList(RESTORE_LIVE_ORDER_KEY, curr);
+    } catch { }
+  }
+
+  // One-time migration: move any previous globalState restore lists into workspaceState (filtered to current workspace)
   try {
-    const blocklySerializer = vscode.window.registerWebviewPanelSerializer('blocklyPanel', {
-      async deserializeWebviewPanel(panel: vscode.WebviewPanel, _state: any) {
-        // Close any restored Blockly panels on restart
-        try { panel.dispose(); } catch { }
-      }
-    });
-    context.subscriptions.push(blocklySerializer);
-  } catch { }
+    const migrateKey = 'P5Studio.restoreMigratedToWorkspace';
+    const already = context.workspaceState.get<boolean>(migrateKey, false);
+    if (!already) {
+      const roots = workspaceRoots();
+      const inWs = (p: string) => !!p && fs.existsSync(p) && isInWorkspace(p);
+      const fromGlobal = (k: string) => (context.globalState.get<string[]>(k, []) || []).filter(inWs);
+      const live = fromGlobal(RESTORE_LIVE_KEY);
+      const liveOrder = fromGlobal(RESTORE_LIVE_ORDER_KEY);
+      const blk = fromGlobal(RESTORE_BLOCKLY_KEY);
+      if (live.length) context.workspaceState.update(RESTORE_LIVE_KEY, Array.from(new Set(live)));
+      if (liveOrder.length) context.workspaceState.update(RESTORE_LIVE_ORDER_KEY, Array.from(new Set(liveOrder)));
+      if (blk.length) context.workspaceState.update(RESTORE_BLOCKLY_KEY, Array.from(new Set(blk)));
+      // Clear global to prevent cross-project bleed in future
+      context.globalState.update(RESTORE_LIVE_KEY, []);
+      context.globalState.update(RESTORE_LIVE_ORDER_KEY, []);
+      context.globalState.update(RESTORE_BLOCKLY_KEY, []);
+      context.workspaceState.update(migrateKey, true);
+    }
+  } catch { /* ignore migration issues */ }
   // Create output channel and register with context to ensure it appears in Output panel
   // --- Simple Semicolon Linter (Problems panel) ---
   const semicolonDiagnostics = vscode.languages.createDiagnosticCollection('semicolon-linter');
@@ -2610,7 +2728,7 @@ export function activate(context: vscode.ExtensionContext) {
     outputChannel.appendLine(`${getTime()} ${fullWarning}`);
     // Also show the warning overlay in the corresponding webview (no timestamp)
     const panel = webviewPanelMap.get(docUri);
-    const blockOnWarning = vscode.workspace.getConfiguration('liveP5').get<boolean>('BlockSketchOnWarning', true);
+    const blockOnWarning = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
     if (panel && blockOnWarning) {
       panel.webview.postMessage({ type: 'showWarning', message: fullWarning });
     }
@@ -2658,6 +2776,67 @@ export function activate(context: vscode.ExtensionContext) {
       }
     })
   );
+
+  // Track all open panels to robustly close them on document close (even if untracked)
+  const allP5Panels = new Set<vscode.WebviewPanel>();
+  const allBlocklyPanels = new Set<vscode.WebviewPanel>();
+  const p5PanelsByPath = new Map<string, Set<vscode.WebviewPanel>>();
+  const blocklyPanelsByPath = new Map<string, Set<vscode.WebviewPanel>>();
+
+  // Normalize filesystem paths for use as map keys (fix Windows drive-letter/case issues)
+  function normalizeFsPath(p: string | undefined | null): string {
+    try {
+      if (!p) return '';
+      let n = path.normalize(p);
+      if (process.platform === 'win32') n = n.toLowerCase();
+      return n;
+    } catch {
+      return String(p || '');
+    }
+  }
+
+  // Dispose all panels bound to a normalized fsPath (map + fallback scan)
+  function disposePanelsForPath(fsPathNormalized: string) {
+    try {
+      const p5Set = p5PanelsByPath.get(fsPathNormalized);
+      if (p5Set) { for (const p of Array.from(p5Set)) { try { p.dispose(); } catch { } } }
+      const blkSet = blocklyPanelsByPath.get(fsPathNormalized);
+      if (blkSet) { for (const p of Array.from(blkSet)) { try { p.dispose(); } catch { } } }
+      // Fallback: scan all tracked panels and dispose any tagged with this path
+      for (const p of Array.from(allP5Panels)) {
+        try { const tag = normalizeFsPath((p as any)._sketchFilePath || ''); if (tag && tag === fsPathNormalized) { p.dispose(); } } catch { }
+      }
+      for (const p of Array.from(allBlocklyPanels)) {
+        try { const tag = normalizeFsPath((p as any)._sketchFilePath || ''); if (tag && tag === fsPathNormalized) { p.dispose(); } } catch { }
+      }
+    } catch { }
+  }
+
+  // Extract a file fsPath from a Tab (only for text tabs). Returns normalized path or ''
+  function fsPathFromTab(tab: vscode.Tab): string {
+    try {
+      const input: any = (tab as any).input;
+      // TabInputText has .uri
+      if (input && input.uri && input.uri.scheme === 'file') {
+        return normalizeFsPath(input.uri.fsPath);
+      }
+      // Ignore diffs and others for now
+    } catch { }
+    return '';
+  }
+
+  function addPanelForPath(map: Map<string, Set<vscode.WebviewPanel>>, fsPath: string, panel: vscode.WebviewPanel) {
+    const key = normalizeFsPath(fsPath);
+    if (!map.has(key)) map.set(key, new Set());
+    map.get(key)!.add(panel);
+  }
+  function removePanelForPath(map: Map<string, Set<vscode.WebviewPanel>>, fsPath: string, panel: vscode.WebviewPanel) {
+    const key = normalizeFsPath(fsPath);
+    if (!map.has(key)) return;
+    const set = map.get(key)!;
+    set.delete(panel);
+    if (set.size === 0) map.delete(key);
+  }
 
   // Blockly Webview: command and panel
   // Track which document opened which blockly panel (for multi-panel support)
@@ -2992,7 +3171,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Read the user's configured blockly theme and pass it into the webview
     let configuredBlocklyTheme = 'dark';
     try {
-      const cfg = vscode.workspace.getConfiguration('liveP5');
+      const cfg = vscode.workspace.getConfiguration('P5Studio');
       const t = cfg.get<string>('blocklyTheme');
       if (t) configuredBlocklyTheme = t;
     } catch (e) { /* ignore */ }
@@ -3133,10 +3312,30 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       const scriptName = path.basename(doc.fileName);
+      // Determine target column: always place Blockly in a bottom-row group.
+      let blocklyTargetColumn: vscode.ViewColumn = vscode.ViewColumn.Active;
+      try {
+        // Anchor to top-left, then go below; create bottom group if missing
+        await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup');
+        const before = vscode.window.tabGroups.activeTabGroup;
+        await vscode.commands.executeCommand('workbench.action.focusBelowGroup');
+        let after = vscode.window.tabGroups.activeTabGroup;
+        if (!after || (before && after.viewColumn === before.viewColumn)) {
+          try { await vscode.commands.executeCommand('workbench.action.newGroupBelow'); }
+          catch { /* older VS Code */ }
+          await vscode.commands.executeCommand('workbench.action.focusBelowGroup');
+          await new Promise(r => setTimeout(r, 100));
+          after = vscode.window.tabGroups.activeTabGroup;
+        }
+        if (after && typeof after.viewColumn === 'number') {
+          blocklyTargetColumn = after.viewColumn as vscode.ViewColumn;
+        }
+      } catch { /* keep default */ }
+
       const blocklyPanel = vscode.window.createWebviewPanel(
         'blocklyPanel',
         `BLOCKLY: ${scriptName}`,
-        { viewColumn: vscode.ViewColumn.Active, preserveFocus: true },
+        { viewColumn: blocklyTargetColumn, preserveFocus: true },
         {
           enableScripts: true,
           retainContextWhenHidden: true,
@@ -3147,18 +3346,25 @@ export function activate(context: vscode.ExtensionContext) {
           ]
         }
       );
-      blocklyPanelForDocument.set(docUri, blocklyPanel);
+  blocklyPanelForDocument.set(docUri, blocklyPanel);
+  (blocklyPanel as any)._sketchFilePath = normalizeFsPath(doc.fileName);
+  allBlocklyPanels.add(blocklyPanel);
+  addPanelForPath(blocklyPanelsByPath, doc.fileName, blocklyPanel);
+      try { await addToRestore(RESTORE_BLOCKLY_KEY, doc.fileName); } catch { }
       // No longer block edits. Instead, we'll listen for document changes and, if the file
       // contains an embedded workspace, forward it to the Blockly webview so the workspace
       // can be restored/updated. See listener registration below.
-      blocklyPanel.onDidDispose(() => {
+      blocklyPanel.onDidDispose(async () => {
         blocklyPanelForDocument.delete(docUri);
+  allBlocklyPanels.delete(blocklyPanel);
+  try { removePanelForPath(blocklyPanelsByPath, (blocklyPanel as any)._sketchFilePath || doc.fileName, blocklyPanel); } catch { }
         // nothing else to cleanup here
+        try { await removeFromRestore(RESTORE_BLOCKLY_KEY, doc.fileName); } catch { }
       });
       blocklyPanel.webview.html = getBlocklyHtml(blocklyPanel);
       // After setting HTML, send the resolved theme to the webview so it can apply
       try {
-        const cfg = vscode.workspace.getConfiguration('liveP5');
+        const cfg = vscode.workspace.getConfiguration('P5Studio');
         const t = cfg.get<string>('blocklyTheme', 'dark');
         let resolved = t;
         if (t === 'auto') {
@@ -3166,9 +3372,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
         try { blocklyPanel.webview.postMessage({ type: 'setBlocklyTheme', theme: resolved }); } catch (e) { }
       } catch (e) { }
-      setTimeout(() => {
-        vscode.commands.executeCommand('workbench.action.moveEditorToBelowGroup');
-      }, 200);
+      // Panel is created directly in the target bottom group, no need to move it.
 
       // After the webview is ready, prefer loading workspace from a sibling .blockly sidecar.
       // If no sidecar exists, fall back to embedded workspace and migrate it to sidecar.
@@ -3302,6 +3506,105 @@ export function activate(context: vscode.ExtensionContext) {
   updateJsOrTsContext();
   // Run initial semicolon lint on the active editor
   lintActiveEditor();
+
+  // Attempt to restore previously open webviews (without using webview serialization)
+  (async () => {
+    try {
+      // Pre-sweep: close any auto-restored P5/Blockly tabs so we fully control restore and tracking
+      try {
+        const groups: readonly vscode.TabGroup[] = (vscode.window.tabGroups as any).all || [vscode.window.tabGroups.activeTabGroup];
+        const toClose: vscode.Tab[] = [] as any;
+        for (const g of groups || []) {
+          for (const t of (g?.tabs || [])) {
+            try {
+              const input: any = (t as any).input;
+              const vt = input && typeof input.viewType === 'string' ? String(input.viewType) : '';
+              if (vt === 'extension.live-p5' || vt === 'blocklyPanel') {
+                toClose.push(t as any);
+              }
+            } catch { }
+          }
+        }
+        if (toClose.length) {
+          try { await (vscode.window.tabGroups as any).close(toClose, true); } catch { /* ignore */ }
+        }
+      } catch { /* ignore */ }
+      _restoringPanels = true;
+      // Restore LIVE P5 panels
+      const liveDocs = getRestoreList(RESTORE_LIVE_KEY)
+        .filter(p => typeof p === 'string' && p)
+        .filter(p => fs.existsSync(p) && isInWorkspace(p));
+      const uniqueLive = Array.from(new Set(liveDocs));
+      if (uniqueLive.length) {
+        // Reorder by saved order (preserve any unknowns at the end in original order)
+  const savedOrder = getRestoreList(RESTORE_LIVE_ORDER_KEY).filter(p => fs.existsSync(p) && isInWorkspace(p));
+        const orderIndex = new Map<string, number>();
+        savedOrder.forEach((p, i) => orderIndex.set(p, i));
+        uniqueLive.sort((a, b) => {
+          const ia = orderIndex.has(a) ? (orderIndex.get(a) as number) : Number.MAX_SAFE_INTEGER;
+          const ib = orderIndex.has(b) ? (orderIndex.get(b) as number) : Number.MAX_SAFE_INTEGER;
+          if (ia !== ib) return ia - ib;
+          return 0;
+        });
+        // Prepare a stable top-row right-hand group anchor for P5 restore
+        await (async function prepareP5RestoreTargetGroup() {
+          try {
+            // Start from the top-left group
+            await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup');
+            // Try to move right once; if there's no group, create one and focus it
+            const before = vscode.window.tabGroups.activeTabGroup;
+            await vscode.commands.executeCommand('workbench.action.focusRightGroup');
+            let after = vscode.window.tabGroups.activeTabGroup;
+            // If we couldn't move right (no change), create a right group in the top row
+            if (!after || (before && after.viewColumn === before.viewColumn)) {
+              try { await vscode.commands.executeCommand('workbench.action.newGroupRight'); }
+              catch {
+                try { await vscode.commands.executeCommand('workbench.action.splitEditorRight'); } catch { }
+              }
+              await vscode.commands.executeCommand('workbench.action.focusRightGroup');
+              await new Promise(r => setTimeout(r, 100));
+              after = vscode.window.tabGroups.activeTabGroup;
+            }
+            if (after && typeof after.viewColumn === 'number') {
+              _restoreP5TargetColumn = after.viewColumn as vscode.ViewColumn;
+            }
+          } catch {
+            _restoreP5TargetColumn = vscode.ViewColumn.Beside;
+          }
+        })();
+        const single = isSingleP5PanelEnabled();
+        const targets = single ? [uniqueLive[uniqueLive.length - 1]] : uniqueLive;
+        for (const fsPath of targets) {
+          try {
+            if (!fs.existsSync(fsPath)) continue;
+            const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(fsPath));
+            await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: false, viewColumn: vscode.ViewColumn.One });
+            await vscode.commands.executeCommand('extension.live-p5');
+            // Small delay between openings to reduce focus thrash
+            await new Promise(r => setTimeout(r, 150));
+          } catch { /* ignore per-doc errors */ }
+        }
+      }
+
+      // Restore Blockly panels
+      const blkDocs = getRestoreList(RESTORE_BLOCKLY_KEY)
+        .filter(p => typeof p === 'string' && p)
+        .filter(p => fs.existsSync(p) && isInWorkspace(p));
+      const uniqueBlk = Array.from(new Set(blkDocs));
+      for (const fsPath of uniqueBlk) {
+        try {
+          if (!fs.existsSync(fsPath)) continue;
+          const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(fsPath));
+          await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: false, viewColumn: vscode.ViewColumn.One });
+          await vscode.commands.executeCommand('extension.open-blockly');
+          await new Promise(r => setTimeout(r, 150));
+        } catch { /* ignore per-doc errors */ }
+      }
+    } catch { /* ignore restore errors */ }
+    finally {
+      _restoringPanels = false;
+    }
+  })();
 
   vscode.window.onDidChangeActiveTextEditor(editor => {
     updateP5Context(editor);
@@ -3464,13 +3767,55 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.workspace.onDidCloseTextDocument(doc => {
+    vscode.workspace.onDidCloseTextDocument(async doc => {
       semicolonDiagnostics.delete(doc.uri);
       // If the closed document is the one that opened the blocklyPanel, close the panel
       // If a blockly panel was opened for this document, close it
       const panel = blocklyPanelForDocument.get(doc.uri.toString());
       if (panel) {
         panel.dispose();
+      }
+      // Also close the corresponding LIVE P5 panel for this document, if present
+      try {
+        const p5Panel = webviewPanelMap.get(doc.uri.toString());
+        if (p5Panel) {
+          p5Panel.dispose();
+        }
+      } catch { /* ignore */ }
+      // Deterministic cleanup: close all P5/Blockly panels bound to this exact file path
+      try { disposePanelsForPath(normalizeFsPath(doc.fileName)); } catch { /* ignore */ }
+    })
+  );
+
+  // Also watch tab closures: when the last tab of a script is closed (even if the
+  // TextDocument hasn't emitted close yet due to other editors), dispose its panels.
+  context.subscriptions.push(
+    vscode.window.tabGroups.onDidChangeTabs(ev => {
+      // Collect candidate file paths from closed tabs
+      const candidates = new Set<string>();
+      for (const t of ev.closed || []) {
+        const fp = fsPathFromTab(t);
+        if (fp) candidates.add(fp);
+      }
+      if (!candidates.size) return;
+      // Helper: check if any tab remains for a given fsPath
+      const anyTabFor = (fsPathNorm: string) => {
+        try {
+          const groups: readonly vscode.TabGroup[] = (vscode.window.tabGroups as any).all || [vscode.window.tabGroups.activeTabGroup];
+          for (const g of groups || []) {
+            for (const tab of (g?.tabs || [])) {
+              const fp2 = fsPathFromTab(tab);
+              if (fp2 && fp2 === fsPathNorm) return true;
+            }
+          }
+        } catch { }
+        return false;
+      };
+      for (const p of candidates) {
+        if (!anyTabFor(p)) {
+          // No more editor tabs for this file: dispose panels
+          disposePanelsForPath(p);
+        }
       }
     })
   );
@@ -3569,7 +3914,7 @@ export function activate(context: vscode.ExtensionContext) {
         code = `function setup() {\n${code}\n}`;
       }
       // Block sketch when configured and warnings exist; otherwise run as usual
-      const blockOnWarning_UD = vscode.workspace.getConfiguration('liveP5').get<boolean>('BlockSketchOnWarning', true);
+      const blockOnWarning_UD = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
       const warn_UD = hasSemicolonWarnings(document);
       if (blockOnWarning_UD && warn_UD.has) {
         panel.webview.html = await createHtml('', panel, context.extensionPath);
@@ -3650,14 +3995,14 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   // Track reloadWhileTyping and reloadOnSave settings
-  let reloadWhileTyping = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadWhileTyping', true);
-  let reloadOnSave = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadOnSave', true);
+  let reloadWhileTyping = vscode.workspace.getConfiguration('P5Studio').get<boolean>('reloadWhileTyping', true);
+  let reloadOnSave = vscode.workspace.getConfiguration('P5Studio').get<boolean>('reloadOnSave', true);
 
   // Update reloadWhileTyping/reloadOnSave variables and context key
 
   async function updateReloadWhileTypingVarsAndContext() {
-    reloadWhileTyping = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadWhileTyping', true);
-    reloadOnSave = vscode.workspace.getConfiguration('liveP5').get<boolean>('reloadOnSave', true);
+    reloadWhileTyping = vscode.workspace.getConfiguration('P5Studio').get<boolean>('reloadWhileTyping', true);
+    reloadOnSave = vscode.workspace.getConfiguration('P5Studio').get<boolean>('reloadOnSave', true);
     await vscode.commands.executeCommand('setContext', 'liveP5ReloadWhileTypingEnabled', reloadWhileTyping);
   }
 
@@ -3782,35 +4127,61 @@ export function activate(context: vscode.ExtensionContext) {
           await vscode.window.showTextDocument(editor.document, editor.viewColumn || vscode.ViewColumn.One, false);
         } catch (e) { /* ignore */ }
 
-        // Explicitly create a new editor group to the right. Prefer the
-        // dedicated command, fall back to split editor if it's not available.
-        try {
-          await vscode.commands.executeCommand('workbench.action.newGroupRight');
-        } catch (e) {
-          try {
-            await vscode.commands.executeCommand('workbench.action.splitEditorRight');
-          } catch (e) { /* ignore */ }
-        }
-        // Give VS Code a moment to create and focus the new group, then ensure
-        // focus is in the right-hand group before creating the webview. This
-        // helps avoid the panel opening in the wrong group when other webviews
-        // are present in the workspace (observed behavior on some layouts).
-        try {
-          await vscode.commands.executeCommand('workbench.action.focusRightGroup');
-          // Small delay to allow the focus change to settle
-          await new Promise(resolve => setTimeout(resolve, 120));
-        } catch (e) { /* ignore */ }
-
-        // Compute target column: prefer a numeric column to ensure it opens to the right
-        // of the originating editor. If we have the original column, use original+1.
         let targetColumn: vscode.ViewColumn = vscode.ViewColumn.Beside;
-        try {
-          if (typeof originalColumn === 'number') {
-            const numeric = originalColumn + 1;
-            const capped = Math.min(Math.max(1, numeric), 9);
-            targetColumn = capped as vscode.ViewColumn;
+        if (!_restoringPanels) {
+          // Manual open: anchor to the top row by starting from the first editor group,
+          // then move right (create one if needed) and target that column.
+          try {
+            await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup');
+            const before = vscode.window.tabGroups.activeTabGroup;
+            await vscode.commands.executeCommand('workbench.action.focusRightGroup');
+            let after = vscode.window.tabGroups.activeTabGroup;
+            if (!after || (before && after.viewColumn === before.viewColumn)) {
+              // No right group on the top row; create one and focus it
+              try { await vscode.commands.executeCommand('workbench.action.newGroupRight'); }
+              catch { try { await vscode.commands.executeCommand('workbench.action.splitEditorRight'); } catch { /* ignore */ } }
+              await vscode.commands.executeCommand('workbench.action.focusRightGroup');
+              await new Promise(r => setTimeout(r, 100));
+              after = vscode.window.tabGroups.activeTabGroup;
+            }
+            if (after && typeof after.viewColumn === 'number') {
+              targetColumn = after.viewColumn as vscode.ViewColumn;
+            }
+          } catch { /* ignore; keep default Beside */ }
+        } else {
+          // During restore, place panels in the top-row right-hand group we prepared earlier.
+          try {
+            const col = _restoreP5TargetColumn;
+            if (typeof col === 'number') {
+              // Start from the top-left group and move right (col - 1) times
+              await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup');
+              let steps = Math.max(0, (col as number) - 1);
+              while (steps-- > 0) {
+                await vscode.commands.executeCommand('workbench.action.focusRightGroup');
+              }
+              targetColumn = col as vscode.ViewColumn;
+            } else {
+              // Fallback: create/focus a right-hand group from the top-left anchor
+              await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup');
+              const before = vscode.window.tabGroups.activeTabGroup;
+              await vscode.commands.executeCommand('workbench.action.focusRightGroup');
+              let after = vscode.window.tabGroups.activeTabGroup;
+              if (!after || (before && after.viewColumn === before.viewColumn)) {
+                try { await vscode.commands.executeCommand('workbench.action.newGroupRight'); }
+                catch {
+                  try { await vscode.commands.executeCommand('workbench.action.splitEditorRight'); } catch { }
+                }
+                await vscode.commands.executeCommand('workbench.action.focusRightGroup');
+                await new Promise(r => setTimeout(r, 100));
+                after = vscode.window.tabGroups.activeTabGroup;
+              }
+              targetColumn = (after && (after.viewColumn as vscode.ViewColumn)) || vscode.ViewColumn.Beside;
+              _restoreP5TargetColumn = targetColumn;
+            }
+          } catch {
+            targetColumn = vscode.ViewColumn.Active;
           }
-        } catch (e) { /* ignore and use Beside */ }
+        }
 
         panel = vscode.window.createWebviewPanel(
           'extension.live-p5',
@@ -3824,7 +4195,9 @@ export function activate(context: vscode.ExtensionContext) {
         );
 
         // --- Pass the sketch file path to the panel for include folder lookup ---
-        (panel as any)._sketchFilePath = editor.document.fileName;
+  (panel as any)._sketchFilePath = normalizeFsPath(editor.document.fileName);
+        allP5Panels.add(panel);
+  addPanelForPath(p5PanelsByPath, editor.document.fileName, panel);
 
 
         // Focus the output channel for the new sketch immediately
@@ -3834,6 +4207,10 @@ export function activate(context: vscode.ExtensionContext) {
         showAndTrackOutputChannel(outputChannel); // <--- replaced direct show
 
         webviewPanelMap.set(docUri, panel);
+        try {
+          await addToRestore(RESTORE_LIVE_KEY, editor.document.fileName);
+          await moveToOrderEnd(editor.document.fileName);
+        } catch { }
         activeP5Panel = panel;
         vscode.commands.executeCommand('setContext', 'hasP5Webview', true);
 
@@ -4004,7 +4381,7 @@ export function activate(context: vscode.ExtensionContext) {
             logSemicolonWarningsForDocument(editor.document);
             // Optionally block sketch on warning
             {
-              const blockOnWarning = vscode.workspace.getConfiguration('liveP5').get<boolean>('BlockSketchOnWarning', true);
+              const blockOnWarning = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
               const warn = hasSemicolonWarnings(editor.document);
               if (blockOnWarning && warn.has) {
                 panel.webview.html = await createHtml('', panel, context.extensionPath);
@@ -4118,7 +4495,7 @@ export function activate(context: vscode.ExtensionContext) {
             const docUri = editor.document.uri.toString();
             const fileName = path.basename(editor.document.fileName);
             const rawCode = editor.document.getText();
-            const delayMs = vscode.workspace.getConfiguration('liveP5').get<number>('stepRunDelayMs', 500);
+            const delayMs = vscode.workspace.getConfiguration('P5Studio').get<number>('stepRunDelayMs', 500);
             // If already stepping, just enable auto-advance from current position
             if ((panel as any)._steppingActive) {
               // If switching from single-step to step-run, log the transition
@@ -4154,7 +4531,7 @@ export function activate(context: vscode.ExtensionContext) {
             logSemicolonWarningsForDocument(editor.document);
             // Optionally block sketch on warning
             {
-              const blockOnWarning = vscode.workspace.getConfiguration('liveP5').get<boolean>('BlockSketchOnWarning', true);
+              const blockOnWarning = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
               const warn = hasSemicolonWarnings(editor.document);
               if (blockOnWarning && warn.has) {
                 panel.webview.html = await createHtml('', panel, context.extensionPath);
@@ -4197,8 +4574,11 @@ export function activate(context: vscode.ExtensionContext) {
             // Replace p5 frameCount references with custom counter for stable stepping
             wrapped = rewriteFrameCountRefs(wrapped);
             const didWrap = wrapped !== codeForRun;
-            let instrumented = instrumentSetupForSingleStep(wrapped, didWrap ? 1 : 0);
-            const globals = extractGlobalVariables(instrumented);
+            // Compute global variables BEFORE instrumentation for accurate offset and rewrite
+            const preGlobals = extractGlobalVariables(wrapped);
+            const lineOffsetTotal = (didWrap ? 1 : 0) + (preGlobals ? preGlobals.length : 0);
+            let instrumented = instrumentSetupForSingleStep(wrapped, lineOffsetTotal);
+            const globals = preGlobals;
             let rewrittenCode = rewriteUserCodeWithWindowGlobals(instrumented, globals);
             const hasDraw = /\bfunction\s+draw\s*\(/.test(wrapped);
             try {
@@ -4290,7 +4670,7 @@ export function activate(context: vscode.ExtensionContext) {
             // Semicolon warnings on explicit action
             logSemicolonWarningsForDocument(editor.document);
             {
-              const blockOnWarning = vscode.workspace.getConfiguration('liveP5').get<boolean>('BlockSketchOnWarning', true);
+              const blockOnWarning = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
               const warn = hasSemicolonWarnings(editor.document);
               if (blockOnWarning && warn.has) {
                 panel.webview.html = await createHtml('', panel, context.extensionPath);
@@ -4332,8 +4712,11 @@ export function activate(context: vscode.ExtensionContext) {
             // Replace p5 frameCount references with custom counter for stable stepping
             wrapped = rewriteFrameCountRefs(wrapped);
             const didWrap = wrapped !== codeForRun;
-            let instrumented = instrumentSetupForSingleStep(wrapped, didWrap ? 1 : 0);
-            const globals = extractGlobalVariables(instrumented);
+            // Compute global variables BEFORE instrumentation for accurate offset and rewrite
+            const preGlobals = extractGlobalVariables(wrapped);
+            const lineOffsetTotal = (didWrap ? 1 : 0) + (preGlobals ? preGlobals.length : 0);
+            let instrumented = instrumentSetupForSingleStep(wrapped, lineOffsetTotal);
+            const globals = preGlobals;
             let rewrittenCode = rewriteUserCodeWithWindowGlobals(instrumented, globals);
             const hasDraw = /\bfunction\s+draw\s*\(/.test(wrapped);
             if (!hasDraw) {
@@ -4519,7 +4902,7 @@ export function activate(context: vscode.ExtensionContext) {
           }
         });
 
-        panel.onDidDispose(() => {
+        panel.onDidDispose(async () => {
           webviewPanelMap.delete(docUri);
           if (activeP5Panel === panel) activeP5Panel = null;
           vscode.commands.executeCommand('setContext', 'hasP5Webview', false);
@@ -4527,6 +4910,12 @@ export function activate(context: vscode.ExtensionContext) {
           listeners?.changeListener?.dispose();
           listeners?.saveListener?.dispose();
           autoReloadListenersMap.delete(docUri);
+          allP5Panels.delete(panel);
+          try { removePanelForPath(p5PanelsByPath, (panel as any)._sketchFilePath || editor.document.fileName, panel); } catch { }
+          try {
+            await removeFromRestore(RESTORE_LIVE_KEY, editor.document.fileName);
+            await removeFromOrder(editor.document.fileName);
+          } catch { }
           // Clear any step highlight when panel is closed
           try {
             const edToClear = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === docUri);
@@ -4547,10 +4936,12 @@ export function activate(context: vscode.ExtensionContext) {
           }
         });
 
-        panel.onDidChangeViewState(e => {
+        panel.onDidChangeViewState(async e => {
           if (e.webviewPanel.active) {
             const channel = outputChannelMap.get(docUri);
             if (channel) showAndTrackOutputChannel(channel); // <--- in panel.onDidChangeViewState
+            // Update restore order to reflect recent activation
+            try { await moveToOrderEnd(editor.document.fileName); } catch { }
           }
         });
 
@@ -4576,7 +4967,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         // Only set HTML on first open, but optionally block on warnings
-        const blockOnWarning_IO = vscode.workspace.getConfiguration('liveP5').get<boolean>('BlockSketchOnWarning', true);
+        const blockOnWarning_IO = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
         const warn_IO = hasSemicolonWarnings(editor.document);
         if (blockOnWarning_IO && warn_IO.has) {
           panel.webview.html = await createHtml('', panel, context.extensionPath);
@@ -4617,7 +5008,7 @@ export function activate(context: vscode.ExtensionContext) {
             new Function(codeToSend);
             codeToSend = wrapInSetupIfNeeded(codeToSend);
             // Optionally block on semicolon warnings
-            const blockOnWarning_RO = vscode.workspace.getConfiguration('liveP5').get<boolean>('BlockSketchOnWarning', true);
+            const blockOnWarning_RO = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
             const warn_RO = hasSemicolonWarnings(editor.document);
             if (blockOnWarning_RO && warn_RO.has) {
               (async () => {
@@ -4675,8 +5066,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Command to disable reload while typing
   context.subscriptions.push(
-    vscode.commands.registerCommand('liveP5.toggleReloadWhileTypingOn', async () => {
-      const config = vscode.workspace.getConfiguration('liveP5');
+    vscode.commands.registerCommand('P5Studio.toggleReloadWhileTypingOn', async () => {
+      const config = vscode.workspace.getConfiguration('P5Studio');
       await config.update('reloadWhileTyping', false, vscode.ConfigurationTarget.Global);
       await updateReloadWhileTypingVarsAndContext();
       const editor = vscode.window.activeTextEditor;
@@ -4686,8 +5077,8 @@ export function activate(context: vscode.ExtensionContext) {
   );
   // Command to enable reload while typing
   context.subscriptions.push(
-    vscode.commands.registerCommand('liveP5.toggleReloadWhileTypingOff', async () => {
-      const config = vscode.workspace.getConfiguration('liveP5');
+    vscode.commands.registerCommand('P5Studio.toggleReloadWhileTypingOff', async () => {
+      const config = vscode.workspace.getConfiguration('P5Studio');
       await config.update('reloadWhileTyping', true, vscode.ConfigurationTarget.Global);
       await updateReloadWhileTypingVarsAndContext();
       const editor = vscode.window.activeTextEditor;
@@ -4820,10 +5211,10 @@ text("P5", 50, 52);`;
   // Listen for OSC config changes and re-create port if needed
   vscode.workspace.onDidChangeConfiguration(e => {
     if (
-      e.affectsConfiguration('liveP5.oscLocalAddress') ||
-      e.affectsConfiguration('liveP5.oscRemoteAddress') ||
-      e.affectsConfiguration('liveP5.oscRemotePort') ||
-      e.affectsConfiguration('liveP5.oscLocalPort')
+      e.affectsConfiguration('P5Studio.oscLocalAddress') ||
+      e.affectsConfiguration('P5Studio.oscRemoteAddress') ||
+      e.affectsConfiguration('P5Studio.oscRemotePort') ||
+      e.affectsConfiguration('P5Studio.oscLocalPort')
     ) {
       setupOscPort();
     }
@@ -4831,34 +5222,34 @@ text("P5", 50, 52);`;
 
   // Listen for debounceDelay config changes and update debounce logic
   vscode.workspace.onDidChangeConfiguration(e => {
-    if (e.affectsConfiguration('liveP5.debounceDelay')) {
+    if (e.affectsConfiguration('P5Studio.debounceDelay')) {
       debounceMap.clear();
     }
-    if (e.affectsConfiguration('liveP5.varControlDebounceDelay')) {
-      const newDelay = vscode.workspace.getConfiguration('liveP5').get<number>('varControlDebounceDelay', 300);
+    if (e.affectsConfiguration('P5Studio.varControlDebounceDelay')) {
+      const newDelay = vscode.workspace.getConfiguration('P5Studio').get<number>('varControlDebounceDelay', 300);
       for (const [, panel] of webviewPanelMap.entries()) {
         panel.webview.postMessage({ type: 'updateVarDebounceDelay', value: newDelay });
       }
     }
     // --- Sync reloadWhileTyping context key and button icon if setting changed via settings UI ---
-    if (e.affectsConfiguration('liveP5.reloadWhileTyping')) {
+    if (e.affectsConfiguration('P5Studio.reloadWhileTyping')) {
       updateReloadWhileTypingVarsAndContext();
       const editor = vscode.window.activeTextEditor;
       if (editor) updateAutoReloadListeners(editor);
     }
     // --- Immediately apply showReloadButton/showRecordButton changes in all open panels ---
     if (
-      e.affectsConfiguration('liveP5.showReloadButton') ||
+      e.affectsConfiguration('P5Studio.showReloadButton') ||
 
-      e.affectsConfiguration('liveP5.showRecordButton')
+      e.affectsConfiguration('P5Studio.showRecordButton')
     ) {
       for (const [docUri, panel] of webviewPanelMap.entries()) {
         // Update reload button
-        const showReload = vscode.workspace.getConfiguration('liveP5').get<boolean>('showReloadButton', true);
+        const showReload = vscode.workspace.getConfiguration('P5Studio').get<boolean>('showReloadButton', true);
         panel.webview.postMessage({ type: 'toggleReloadButton', show: showReload });
         // Update record button (show/hide and remove capture panel if needed)
         // Only show if config is true AND the code has a draw function
-        const showRecordConfig = vscode.workspace.getConfiguration('liveP5').get<boolean>('showRecordButton', true);
+        const showRecordConfig = vscode.workspace.getConfiguration('P5Studio').get<boolean>('showRecordButton', true);
         let code = '';
         const editor = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === docUri);
         if (editor) code = editor.document.getText();
@@ -4877,9 +5268,9 @@ text("P5", 50, 52);`;
     }
 
     // Update Blockly theme when setting changes
-    if (e.affectsConfiguration('liveP5.blocklyTheme')) {
+    if (e.affectsConfiguration('P5Studio.blocklyTheme')) {
       try {
-        const cfg = vscode.workspace.getConfiguration('liveP5');
+        const cfg = vscode.workspace.getConfiguration('P5Studio');
         const t = cfg.get<string>('blocklyTheme', 'dark');
         let resolved = t;
         if (t === 'auto') {
@@ -4896,7 +5287,7 @@ text("P5", 50, 52);`;
   // is 'auto', update Blockly panels to match.
   context.subscriptions.push(vscode.window.onDidChangeActiveColorTheme(theme => {
     try {
-      const cfg = vscode.workspace.getConfiguration('liveP5');
+      const cfg = vscode.workspace.getConfiguration('P5Studio');
       const t = cfg.get<string>('blocklyTheme', 'dark');
       if (t === 'auto') {
         const resolved = theme.kind === vscode.ColorThemeKind.Dark ? 'dark' : 'light';
@@ -4907,13 +5298,7 @@ text("P5", 50, 52);`;
     } catch (e) { }
   }));
 
-  vscode.workspace.onDidCloseTextDocument(doc => {
-    const docUri = doc.uri.toString();
-    const panel = webviewPanelMap.get(docUri);
-    if (panel) {
-      panel.dispose();
-    }
-  });
+  // (Removed duplicate close handler; unified logic exists earlier with per-path disposal)
 
   // --- On activation: if .p5 exists, refresh jsconfig.json (delete and recreate) ---
   (async function refreshJsconfigIfMarkerPresent() {
@@ -4974,7 +5359,7 @@ text("P5", 50, 52);`;
     if (!workspaceFolder) return;
 
     // NEW: read setting to allow disabling the notification
-    const config = vscode.workspace.getConfiguration('liveP5');
+    const config = vscode.workspace.getConfiguration('P5Studio');
     const showSetupNotification = config.get<boolean>('showSetupNotification', true);
     if (!showSetupNotification) return;
 
@@ -4995,7 +5380,7 @@ text("P5", 50, 52);`;
 
   // --- NEW: Scroll LIVE P5 output to end command ---
   context.subscriptions.push(
-    vscode.commands.registerCommand('liveP5.scrollOutputToEnd', async () => {
+    vscode.commands.registerCommand('P5Studio.scrollOutputToEnd', async () => {
       if (!lastActiveOutputChannel) {
         vscode.window.showInformationMessage('No LIVE P5 output channel active.');
         return;
@@ -5205,7 +5590,7 @@ function stripLeadingTimestamp(msg: string): string {
 
 // Helper to check SingleP5Panel setting
 function isSingleP5PanelEnabled() {
-  return vscode.workspace.getConfiguration('liveP5').get<boolean>('SingleP5Panel', false);
+  return vscode.workspace.getConfiguration('P5Studio').get<boolean>('SingleP5Panel', false);
 }
 
 // NEW: helper to detect whether the user's code defines only a single top-level `setup` function
