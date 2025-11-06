@@ -20,6 +20,9 @@ let lastActiveOutputChannel: vscode.OutputChannel | null = null; // <--- NEW
 // Global OSC diagnostics output channel
 const oscOutputChannel: vscode.OutputChannel = vscode.window.createOutputChannel('LIVE P5: OSC');
 
+// Project marker: whether the workspace has a .p5 file at its root
+let hasP5Project: boolean = false;
+
 // Internal: mark when we're restoring panels on activation to tweak layout behavior
 let _restoringPanels = false;
 // During restore, remember the intended top-row right-hand target column for LIVE P5 panels
@@ -139,6 +142,8 @@ const RESERVED_GLOBALS = new Set([
   // p5.js math
   "abs", "ceil", "constrain", "dist", "exp", "floor", "lerp", "log", "mag", "map", "max", "min", "norm", "pow", "round",
   "sq", "sqrt", "createVector", "noise", "noiseDetail", "noiseSeed", "randomSeed", "random", "randomGaussian",
+  // p5.js conversion / formatting helpers
+  "int", "float", "str", "boolean", "byte", "char", "unchar", "hex", "unhex", "nf", "nfc", "nfp", "nfs",
   // p5.js trigonometry
   "degrees", "radians", "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
   // p5.js time & date
@@ -172,7 +177,33 @@ const RESERVED_GLOBALS = new Set([
   "ArrayBuffer", "SharedArrayBuffer", "Atomics", "BigInt", "BigInt64Array", "BigUint64Array", "Float32Array",
   "Float64Array", "Int8Array", "Int16Array", "Int32Array", "Uint8Array", "Uint8ClampedArray", "Uint16Array", "Uint32Array",
   // VS Code injected
-  "acquireVsCodeApi"
+  "acquireVsCodeApi",
+  // p5.js constants (alignment, modes, keys, mouse, etc.)
+  // Angle modes
+  "DEGREES", "RADIANS",
+  // Color modes
+  "RGB", "HSB", "HSL",
+  // Geometry modes
+  "CENTER", "CORNER", "CORNERS", "RADIUS",
+  // Text alignment and vertical alignment
+  "LEFT", "RIGHT", "TOP", "BOTTOM", "BASELINE",
+  // Stroke caps and joins
+  "ROUND", "SQUARE", "PROJECT", "MITER", "BEVEL",
+  // Image/rectangle modes reuse CENTER/CORNER/CORNERS/RADIUS
+  // Blend modes
+  "BLEND", "ADD", "DARKEST", "LIGHTEST", "DIFFERENCE", "EXCLUSION", "MULTIPLY", "SCREEN", "REPLACE", "OVERLAY", "HARD_LIGHT", "SOFT_LIGHT",
+  // Cursor constants
+  "ARROW", "CROSS", "HAND", "MOVE", "TEXT", "WAIT",
+  // Renderer constant
+  "WEBGL",
+  // Angle constants
+  "PI", "HALF_PI", "QUARTER_PI", "TWO_PI",
+  // Key constants
+  "BACKSPACE", "DELETE", "ENTER", "RETURN", "TAB", "ESCAPE",
+  // Arrow keys
+  "UP_ARROW", "DOWN_ARROW", "LEFT_ARROW", "RIGHT_ARROW",
+  // Modifier keys
+  "ALT", "CONTROL", "SHIFT"
 ]);
 
 // Add a set of known p5 numeric properties
@@ -2154,7 +2185,38 @@ function instrumentSetupForSingleStep(code: string, lineOffset: number): string 
         ])
       );
     };
+    // Global helper calls guarded by stepping flag
+    const makeGlobalHighlightFor = (node: any) => {
+      const loc = node && node.loc ? node.loc : null;
+      if (!loc) return null;
+      const start = loc.start || { line: 1, column: 0 };
+      const end = loc.end || start;
+      return b.ifStatement(
+        b.memberExpression(b.identifier('window'), b.identifier('__liveP5StepResolve')),
+        b.blockStatement([
+          b.expressionStatement(
+            b.callExpression(
+              b.memberExpression(b.identifier('window'), b.identifier('__liveP5Highlight')),
+              [b.literal(start.line), b.literal(start.column + 1), b.literal(end.line), b.literal(end.column + 1)]
+            )
+          )
+        ])
+      );
+    };
     const makeAwaitStep = () => b.expressionStatement(b.awaitExpression(b.callExpression(b.identifier('__waitStep'), [])));
+    const makeGlobalAwaitStep = () => b.ifStatement(
+      b.memberExpression(b.identifier('window'), b.identifier('__liveP5StepResolve')),
+      b.blockStatement([
+        b.expressionStatement(
+          b.awaitExpression(
+            b.callExpression(
+              b.memberExpression(b.identifier('window'), b.identifier('__liveP5WaitStep')),
+              []
+            )
+          )
+        )
+      ])
+    );
 
     function instrumentBlock(block: any): any {
       if (!block || block.type !== 'BlockStatement' || !Array.isArray(block.body)) return block;
@@ -2172,6 +2234,76 @@ function instrumentSetupForSingleStep(code: string, lineOffset: number): string 
       }
       block.body = newBody;
       return block;
+    }
+    function instrumentBlockGlobal(block: any): any {
+      if (!block || block.type !== 'BlockStatement' || !Array.isArray(block.body)) return block;
+      const newBody: any[] = [];
+      for (const stmt of block.body) {
+        if (stmt && (stmt.type === 'FunctionDeclaration' || stmt.type === 'FunctionExpression')) {
+          newBody.push(stmt);
+          continue;
+        }
+        const hi = makeGlobalHighlightFor(stmt);
+        if (hi) newBody.push(hi);
+        newBody.push(makeGlobalAwaitStep());
+        newBody.push(instrumentNodeGlobal(stmt));
+      }
+      block.body = newBody;
+      return block;
+    }
+
+    function ensureBlockGlobal(node: any, prop: string) {
+      if (!node[prop]) return;
+      if (node[prop].type !== 'BlockStatement') {
+        node[prop] = b.blockStatement([node[prop]]);
+      }
+      node[prop] = instrumentBlockGlobal(node[prop]);
+    }
+
+    function instrumentNodeGlobal(node: any): any {
+      if (!node || typeof node.type !== 'string') return node;
+      switch (node.type) {
+        case 'BlockStatement':
+          return instrumentBlockGlobal(node);
+        case 'IfStatement':
+          if (node.consequent) {
+            if (node.consequent.type !== 'BlockStatement') node.consequent = b.blockStatement([node.consequent]);
+            node.consequent = instrumentBlockGlobal(node.consequent);
+          }
+          if (node.alternate) {
+            if (node.alternate.type !== 'BlockStatement' && node.alternate.type !== 'IfStatement') {
+              node.alternate = b.blockStatement([node.alternate]);
+            }
+            if (node.alternate.type === 'BlockStatement') node.alternate = instrumentBlockGlobal(node.alternate);
+            else node.alternate = instrumentNodeGlobal(node.alternate);
+          }
+          return node;
+        case 'ForStatement':
+        case 'WhileStatement':
+        case 'DoWhileStatement':
+        case 'ForInStatement':
+        case 'ForOfStatement':
+          ensureBlockGlobal(node, 'body');
+          return node;
+        case 'SwitchStatement':
+          if (Array.isArray(node.cases)) {
+            for (const c of node.cases) {
+              if (Array.isArray(c.consequent)) {
+                const newCons: any[] = [];
+                for (const s of c.consequent) {
+                  const hi = makeGlobalHighlightFor(s);
+                  if (hi) newCons.push(hi);
+                  newCons.push(makeGlobalAwaitStep());
+                  newCons.push(instrumentNodeGlobal(s));
+                }
+                c.consequent = newCons;
+              }
+            }
+          }
+          return node;
+        default:
+          return node;
+      }
     }
 
     function ensureBlock(node: any, prop: string) {
@@ -2233,7 +2365,7 @@ function instrumentSetupForSingleStep(code: string, lineOffset: number): string 
         const node: any = path.value;
         if (node.id && (node.id.name === 'setup' || node.id.name === 'draw') && node.body && Array.isArray(node.body.body)) {
           node.async = true;
-          // Controller helpers at the top of setup
+          // Controller helpers at the top of setup/draw
           const highlightDecl = b.variableDeclaration('const', [
             b.variableDeclarator(
               b.identifier('__highlight'),
@@ -2331,6 +2463,31 @@ function instrumentSetupForSingleStep(code: string, lineOffset: number): string 
 
           const original = node.body.body.slice();
           const prelude = [highlightDecl, clearDecl, waitDecl, advanceDecl];
+          // Export helpers on window so other functions can use them during stepping
+          prelude.push(
+            b.expressionStatement(
+              b.assignmentExpression('=',
+                b.memberExpression(b.identifier('window'), b.identifier('__liveP5Highlight')),
+                b.identifier('__highlight')
+              )
+            )
+          );
+          prelude.push(
+            b.expressionStatement(
+              b.assignmentExpression('=',
+                b.memberExpression(b.identifier('window'), b.identifier('__liveP5ClearHighlight')),
+                b.identifier('__clearHighlight')
+              )
+            )
+          );
+          prelude.push(
+            b.expressionStatement(
+              b.assignmentExpression('=',
+                b.memberExpression(b.identifier('window'), b.identifier('__liveP5WaitStep')),
+                b.identifier('__waitStep')
+              )
+            )
+          );
           // Gate: prevent draw() from running before setup() has fully finished stepping
           const setGateSetup = b.expressionStatement(
             b.assignmentExpression('=',
@@ -2417,14 +2574,54 @@ function instrumentSetupForSingleStep(code: string, lineOffset: number): string 
               ])
             );
             node.body.body = hasSetupFunction
-              // With setup(): rely on gate; no top-level pre-steps here
               ? [...prelude, drawGateGuard, drawBusyGuard, setDrawBusy, incFrameCounter, ...entryStep, ...instrumentedBlock.body, clearDrawBusy]
-              // No setup(): run top-level pre-steps once at the start of draw
               : [...prelude, topOnceGuard, drawBusyGuard, setDrawBusy, incFrameCounter, ...entryStep, ...instrumentedBlock.body, clearDrawBusy];
           }
           changed = true;
           return false;
         }
+        // Instrument user-defined functions (non-setup/draw) to enable stepping into them
+        try {
+          if (node.body && Array.isArray(node.body.body)) {
+            node.async = true;
+            node.body = instrumentBlockGlobal(node.body);
+            changed = true;
+            return false;
+          }
+        } catch { }
+        this.traverse(path);
+      }
+      ,
+      visitFunctionExpression(path) {
+        const node: any = path.value;
+        try {
+          if (node.body) {
+            // Ensure block body for consistent instrumentation
+            if (node.body.type !== 'BlockStatement') {
+              node.body = b.blockStatement([b.returnStatement(node.body)]);
+            }
+            node.async = true;
+            node.body = instrumentBlockGlobal(node.body);
+            changed = true;
+            return false;
+          }
+        } catch { }
+        this.traverse(path);
+      }
+      ,
+      visitArrowFunctionExpression(path) {
+        const node: any = path.value;
+        try {
+          if (node.body) {
+            if (node.body.type !== 'BlockStatement') {
+              node.body = b.blockStatement([b.returnStatement(node.body)]);
+            }
+            node.async = true;
+            node.body = instrumentBlockGlobal(node.body);
+            changed = true;
+            return false;
+          }
+        } catch { }
         this.traverse(path);
       }
     });
@@ -2578,7 +2775,13 @@ export function activate(context: vscode.ExtensionContext) {
   // Create output channel and register with context to ensure it appears in Output panel
   // --- Simple Semicolon Linter (Problems panel) ---
   const semicolonDiagnostics = vscode.languages.createDiagnosticCollection('semicolon-linter');
+  const undeclaredDiagnostics = vscode.languages.createDiagnosticCollection('undeclared-variable');
+  const noVarDiagnostics = vscode.languages.createDiagnosticCollection('no-var');
+  const equalityDiagnostics = vscode.languages.createDiagnosticCollection('loose-equality');
   context.subscriptions.push(semicolonDiagnostics);
+  context.subscriptions.push(undeclaredDiagnostics);
+  context.subscriptions.push(noVarDiagnostics);
+  context.subscriptions.push(equalityDiagnostics);
   // NOTE: We'll log semicolon warnings to the per-sketch output channel on run/reload only.
 
   function lintSemicolons(document: vscode.TextDocument) {
@@ -2591,59 +2794,83 @@ export function activate(context: vscode.ExtensionContext) {
       semicolonDiagnostics.delete(document.uri);
       return;
     }
+    // Honor setting toggle
+    const enable = vscode.workspace.getConfiguration('P5Studio').get<boolean>('enableSemicolonWarning', true);
+    if (!enable) { semicolonDiagnostics.delete(document.uri); return; }
 
     const text = document.getText();
     const diagnostics: vscode.Diagnostic[] = [];
 
-    // Try an AST-based pass for JavaScript (more accurate, still simple)
+    // Prefer a TypeScript AST for both TS and JS (handles JSX/TSX and multi-line chains)
     let usedAst = false;
-    if (lang === 'javascript' || lang === 'javascriptreact') {
+    try {
+      const ts = require('typescript');
+      const scriptKind = ((): any => {
+        if (lang === 'typescript') return ts.ScriptKind.TS;
+        if (lang === 'typescriptreact') return ts.ScriptKind.TSX;
+        if (lang === 'javascriptreact') return ts.ScriptKind.JSX;
+        return ts.ScriptKind.JS;
+      })();
+      const sf = ts.createSourceFile(document.fileName, text, ts.ScriptTarget.Latest, true, scriptKind);
+      usedAst = true;
+      const wants = new Set<number>([
+        ts.SyntaxKind.ExpressionStatement,
+        ts.SyntaxKind.VariableStatement,
+        ts.SyntaxKind.ReturnStatement,
+        ts.SyntaxKind.ThrowStatement,
+        ts.SyntaxKind.BreakStatement,
+        ts.SyntaxKind.ContinueStatement
+      ]);
+      function addDiagAt(endIndex: number) {
+        if (endIndex > 0 && text[endIndex - 1] === ';') return;
+        const endPos = document.positionAt(endIndex);
+        const range = new vscode.Range(endPos, endPos);
+        const diag = new vscode.Diagnostic(range, 'Missing semicolon.', vscode.DiagnosticSeverity.Warning);
+        diag.source = 'Semicolon Linter';
+        diagnostics.push(diag);
+      }
+      function walk(node: any, parent: any = null) {
+        try {
+          if (!node) return;
+          const kind = node.kind;
+          if (wants.has(kind)) {
+            // Variable statements inside for-header appear as VariableDeclarationList, not VariableStatement
+            // So no special-case needed here.
+            const end = node.getEnd();
+            addDiagAt(end);
+          }
+        } catch { }
+        try { node.forEachChild((c: any) => walk(c, node)); } catch { }
+      }
+      walk(sf, null);
+    } catch {
+      usedAst = false;
+    }
+
+    // If TS failed and this is plain JS, try Acorn AST before heuristic fallback
+    if (!usedAst && (lang === 'javascript' || lang === 'javascriptreact')) {
       try {
         const acorn = require('acorn');
-        let ast: any;
-        try {
-          ast = acorn.parse(text, { ecmaVersion: 2020, sourceType: 'module', ranges: true });
-        } catch {
-          ast = acorn.parse(text, { ecmaVersion: 2020, sourceType: 'script', ranges: true });
-        }
+        const ast: any = acorn.parse(text, { ecmaVersion: 2020, sourceType: 'script', ranges: true });
         usedAst = true;
-        const wantsSemicolon = new Set([
-          'ExpressionStatement',
-          'VariableDeclaration',
-          'ReturnStatement',
-          'ThrowStatement',
-          'BreakStatement',
-          'ContinueStatement'
-        ]);
-
+        const wantsSemicolon = new Set(['ExpressionStatement', 'VariableDeclaration', 'ReturnStatement', 'ThrowStatement', 'BreakStatement', 'ContinueStatement']);
         function addDiagAt(endIndex: number) {
-          // If last char is already ';', nothing to report
           if (endIndex > 0 && text[endIndex - 1] === ';') return;
-          // Position at the end of the statement
           const endPos = document.positionAt(endIndex);
-          // Highlight a zero-width range at end of the statement line
           const range = new vscode.Range(endPos, endPos);
-          const diag = new vscode.Diagnostic(
-            range,
-            'Missing semicolon.',
-            vscode.DiagnosticSeverity.Warning
-          );
+          const diag = new vscode.Diagnostic(range, 'Missing semicolon.', vscode.DiagnosticSeverity.Warning);
           diag.source = 'Semicolon Linter';
           diagnostics.push(diag);
         }
-
         function visit(node: any, parent: any = null) {
           if (!node || typeof node.type !== 'string') return;
           if (wantsSemicolon.has(node.type) && typeof node.end === 'number') {
-            // Skip variable declarations that are part of a for-header (no trailing semicolon for the decl itself)
-            if (
-              node.type === 'VariableDeclaration' && parent && (
-                (parent.type === 'ForStatement' && parent.init === node) ||
-                (parent.type === 'ForInStatement' && parent.left === node) ||
-                (parent.type === 'ForOfStatement' && parent.left === node)
-              )
-            ) {
-              // no-op
+            if (node.type === 'VariableDeclaration' && parent && (
+              (parent.type === 'ForStatement' && parent.init === node) ||
+              (parent.type === 'ForInStatement' && parent.left === node) ||
+              (parent.type === 'ForOfStatement' && parent.left === node)
+            )) {
+              // skip
             } else {
               addDiagAt(node.end);
             }
@@ -2659,42 +2886,41 @@ export function activate(context: vscode.ExtensionContext) {
           }
         }
         visit(ast, null);
-      } catch {
-        // Fallback to heuristic line-based linter below
-        usedAst = false;
-      }
+      } catch { usedAst = false; }
     }
 
     // Heuristic fallback (works for TS/JS and when parse fails)
     if (!usedAst) {
+      // Heuristic fallback: track open brackets/parentheses to avoid flagging continued lines
       const lines = text.split(/\r?\n/);
+      let paren = 0, bracket = 0, brace = 0, inTemplate = false;
+      const isEscaped = (s: string, i: number) => i > 0 && s[i - 1] === '\\' && !isEscaped(s, i - 1);
       for (let i = 0; i < lines.length; i++) {
         let line = lines[i];
-        // Strip single-line comments
+        // Remove single-line comments
         const slIdx = line.indexOf('//');
         if (slIdx >= 0) line = line.slice(0, slIdx);
+        // Track brackets roughly
+        for (let j = 0; j < line.length; j++) {
+          const ch = line[j];
+          if (ch === '`' && !isEscaped(line, j)) inTemplate = !inTemplate;
+          if (inTemplate) continue;
+          if (ch === '(') paren++; else if (ch === ')') paren = Math.max(0, paren - 1);
+          else if (ch === '[') bracket++; else if (ch === ']') bracket = Math.max(0, bracket - 1);
+          else if (ch === '{') brace++; else if (ch === '}') brace = Math.max(0, brace - 1);
+        }
         const trimmed = line.trimEnd();
         if (trimmed.length === 0) continue;
-        // Quick skip: lines that clearly shouldn't end with semicolon
         const lower = trimmed.toLowerCase();
         const endsWith = (s: string) => trimmed.endsWith(s);
         const skipEndChars = [';', '{', '}', ',', ':', '(', ')', '[', ']', '`'];
-        const skipEndings = ['=>', '++', '--', '.', '?', '??'];
+        const skipEndings = ['=>', '++', '--', '.', '?', '?.', '??', '||', '&&', '+', '-', '*', '/', '%', '=', '+=', '-=', '*=', '/=', '%=', '?:', ','];
         const startsWithKeywords = ['if', 'for', 'while', 'switch', 'else', 'do', 'try', 'catch', 'finally', 'class', 'interface', 'enum'];
         const startsWithTsTypes = ['type '];
-        if (
-          skipEndChars.some(c => endsWith(c)) ||
-          skipEndings.some(s => endsWith(s)) ||
-          startsWithKeywords.some(k => lower.startsWith(k + ' ')) ||
-          startsWithTsTypes.some(k => lower.startsWith(k))
-        ) {
+        const continued = (paren + bracket) > 0 || skipEndChars.some(c => endsWith(c)) || skipEndings.some(s => endsWith(s));
+        if (continued || startsWithKeywords.some(k => lower.startsWith(k + ' ')) || startsWithTsTypes.some(k => lower.startsWith(k))) {
           continue;
         }
-        // Allow function declarations without semicolon (end with ")" and not a call-chain)
-        if ((/\bfunction\b/.test(trimmed) || /^(async\s+)?\w+\s*\([^)]*\)\s*$/.test(trimmed)) && endsWith(')')) {
-          continue;
-        }
-        // If not ending with semicolon: warn
         if (!endsWith(';')) {
           const eolPos = new vscode.Position(i, lines[i].length);
           const range = new vscode.Range(eolPos, eolPos);
@@ -2711,7 +2937,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   function lintActiveEditor() {
     const ed = vscode.window.activeTextEditor;
-    if (ed) lintSemicolons(ed.document);
+    if (ed) { lintSemicolons(ed.document); lintUndeclaredVariables(ed.document); lintNoVar(ed.document); lintLooseEquality(ed.document); }
   }
 
   function logSemicolonWarningsForDocument(document: vscode.TextDocument) {
@@ -2728,7 +2954,8 @@ export function activate(context: vscode.ExtensionContext) {
     outputChannel.appendLine(`${getTime()} ${fullWarning}`);
     // Also show the warning overlay in the corresponding webview (no timestamp)
     const panel = webviewPanelMap.get(docUri);
-    const blockOnWarning = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
+    const cfg = vscode.workspace.getConfiguration('P5Studio');
+    const blockOnWarning = cfg.get<boolean>('BlockSketchOnWarning', true) && cfg.get<boolean>('BlockOnSemicolon', true);
     if (panel && blockOnWarning) {
       panel.webview.postMessage({ type: 'showWarning', message: fullWarning });
     }
@@ -2739,6 +2966,408 @@ export function activate(context: vscode.ExtensionContext) {
     const diags = semicolonDiagnostics.get(document.uri) || [];
     const lines = Array.from(new Set(diags.map(d => d.range.start.line + 1))).sort((a, b) => a - b);
     return { has: diags.length > 0, lines };
+  }
+
+  // Undeclared variable helpers
+  function hasUndeclaredWarnings(document: vscode.TextDocument): { has: boolean; items: Array<{ name: string; line: number }> } {
+    lintUndeclaredVariables(document);
+    const diags = undeclaredDiagnostics.get(document.uri) || [];
+    const items: Array<{ name: string; line: number }> = [];
+    for (const d of diags) {
+      try {
+        const msg = String(d.message || '');
+        const m = msg.match(/Undeclared variable:\s*(.+)$/i);
+        const name = m && m[1] ? m[1].trim() : '';
+        items.push({ name, line: (d.range?.start?.line ?? 0) + 1 });
+      } catch { }
+    }
+    return { has: items.length > 0, items };
+  }
+
+  function logUndeclaredWarningsForDocument(document: vscode.TextDocument) {
+    lintUndeclaredVariables(document);
+    const diags = undeclaredDiagnostics.get(document.uri) || [];
+    if (diags.length === 0) return;
+    const docUri = document.uri.toString();
+    const fileName = path.basename(document.fileName);
+    const outputChannel = getOrCreateOutputChannel(docUri, fileName);
+    // Group by name -> lines
+    const map = new Map<string, number[]>();
+    for (const d of diags) {
+      try {
+        const msg = String(d.message || '');
+        const m = msg.match(/Undeclared variable:\s*(.+)$/i);
+        const name = m && m[1] ? m[1].trim() : '';
+        const line = (d.range?.start?.line ?? 0) + 1;
+        if (!map.has(name)) map.set(name, []);
+        map.get(name)!.push(line);
+      } catch { }
+    }
+    const parts: string[] = [];
+    for (const [name, lines] of map.entries()) {
+      const uniq = Array.from(new Set(lines)).sort((a, b) => a - b);
+      if (name) parts.push(`${name} (line${uniq.length > 1 ? 's' : ''}: ${uniq.join(', ')})`);
+    }
+    const warningText = parts.length > 0
+      ? `Undeclared variable(s): ${parts.join(', ')}`
+      : `Undeclared variable(s) detected.`;
+    const fullWarning = `[⚠️WARNING in ${fileName}] ${warningText}`;
+    outputChannel.appendLine(`${getTime()} ${fullWarning}`);
+    const panel = webviewPanelMap.get(docUri);
+    const cfg = vscode.workspace.getConfiguration('P5Studio');
+    const blockOnWarning = cfg.get<boolean>('BlockSketchOnWarning', true) && cfg.get<boolean>('BlockOnUndeclared', true);
+    if (panel && blockOnWarning) {
+      panel.webview.postMessage({ type: 'showWarning', message: fullWarning });
+    }
+  }
+
+  // No-var helpers
+  function hasVarWarnings(document: vscode.TextDocument): { has: boolean; lines: number[] } {
+    lintNoVar(document);
+    const diags = noVarDiagnostics.get(document.uri) || [];
+    const lines = Array.from(new Set(diags.map(d => (d.range?.start?.line ?? 0) + 1))).sort((a, b) => a - b);
+    return { has: diags.length > 0, lines };
+  }
+
+  function logVarWarningsForDocument(document: vscode.TextDocument) {
+    lintNoVar(document);
+    const diags = noVarDiagnostics.get(document.uri) || [];
+    if (diags.length === 0) return;
+    const docUri = document.uri.toString();
+    const fileName = path.basename(document.fileName);
+    const outputChannel = getOrCreateOutputChannel(docUri, fileName);
+    const uniqLines = Array.from(new Set(diags.map(d => (d.range?.start?.line ?? 0) + 1))).sort((a, b) => a - b);
+    const warningText = `Avoid var; use let instead on line(s): ${uniqLines.join(', ')}`;
+    const fullWarning = `[⚠️WARNING in ${fileName}] ${warningText}`;
+    outputChannel.appendLine(`${getTime()} ${fullWarning}`);
+    const panel = webviewPanelMap.get(docUri);
+    const cfg = vscode.workspace.getConfiguration('P5Studio');
+    const blockOnWarning = cfg.get<boolean>('BlockSketchOnWarning', true) && cfg.get<boolean>('BlockOnNoVar', true);
+    if (panel && blockOnWarning) {
+      panel.webview.postMessage({ type: 'showWarning', message: fullWarning });
+    }
+  }
+
+  // Loose equality helpers (non-blocking)
+  function hasEqualityWarnings(document: vscode.TextDocument): { has: boolean; eqLines: number[]; neqLines: number[] } {
+    lintLooseEquality(document);
+    const diags = equalityDiagnostics.get(document.uri) || [];
+    const eqLines: number[] = [];
+    const neqLines: number[] = [];
+    for (const d of diags) {
+      const line = (d.range?.start?.line ?? 0) + 1;
+      if (/!==/.test(d.message)) neqLines.push(line);
+      else if (/===/.test(d.message)) eqLines.push(line);
+    }
+    return { has: diags.length > 0, eqLines: Array.from(new Set(eqLines)).sort((a, b) => a - b), neqLines: Array.from(new Set(neqLines)).sort((a, b) => a - b) };
+  }
+
+  function logEqualityWarningsForDocument(document: vscode.TextDocument) {
+    lintLooseEquality(document);
+    const diags = equalityDiagnostics.get(document.uri) || [];
+    if (diags.length === 0) return;
+    const docUri = document.uri.toString();
+    const fileName = path.basename(document.fileName);
+    const outputChannel = getOrCreateOutputChannel(docUri, fileName);
+    const { eqLines, neqLines } = hasEqualityWarnings(document);
+    if (eqLines.length) outputChannel.appendLine(`${getTime()} [⚠️WARNING in ${fileName}] Use '===' instead of '==' on line(s): ${eqLines.join(', ')}`);
+    if (neqLines.length) outputChannel.appendLine(`${getTime()} [⚠️WARNING in ${fileName}] Use '!==' instead of '!=' on line(s): ${neqLines.join(', ')}`);
+  }
+
+  // Combined logger for blocking scenarios: compose both warnings into a single overlay message
+  function logBlockingWarningsForDocument(document: vscode.TextDocument) {
+    const docUri = document.uri.toString();
+    const fileName = path.basename(document.fileName);
+    const outputChannel = getOrCreateOutputChannel(docUri, fileName);
+    const semi = hasSemicolonWarnings(document);
+    const und = hasUndeclaredWarnings(document);
+    const nov = hasVarWarnings(document);
+    const lines = semi.lines;
+    const semiMsg = semi.has ? `[⚠️WARNING in ${fileName}] Missing semicolon on line(s): ${lines.join(', ')}` : '';
+    // Build undeclared text
+    const undParts: string[] = [];
+    for (const it of und.items) {
+      if (!it.name) continue;
+      undParts.push(`${it.name} (line ${it.line})`);
+    }
+    const undMsg = und.has ? `[⚠️WARNING in ${fileName}] Undeclared variable(s): ${undParts.join(', ')}` : '';
+    const novMsg = nov.has ? `[⚠️WARNING in ${fileName}] Avoid var; use let instead on line(s): ${nov.lines.join(', ')}` : '';
+    // Equality (non-blocking): compute but don't include in overlay
+    const eq = hasEqualityWarnings(document);
+    const eqMsgEq = eq.eqLines.length ? `[⚠️WARNING in ${fileName}] Use '===' instead of '==' on line(s): ${eq.eqLines.join(', ')}` : '';
+    const eqMsgNeq = eq.neqLines.length ? `[⚠️WARNING in ${fileName}] Use '!==' instead of '!=' on line(s): ${eq.neqLines.join(', ')}` : '';
+
+    // Output channel: write each non-empty message with timestamp
+    if (semiMsg) outputChannel.appendLine(`${getTime()} ${semiMsg}`);
+    if (undMsg) outputChannel.appendLine(`${getTime()} ${undMsg}`);
+    if (novMsg) outputChannel.appendLine(`${getTime()} ${novMsg}`);
+    if (eqMsgEq) outputChannel.appendLine(`${getTime()} ${eqMsgEq}`);
+    if (eqMsgNeq) outputChannel.appendLine(`${getTime()} ${eqMsgNeq}`);
+    // Overlay: combine into one message without timestamps
+    const panel = webviewPanelMap.get(docUri);
+    const blockOnWarning = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
+    const overlay = [semiMsg, undMsg, novMsg, eqMsgEq, eqMsgNeq].filter(Boolean).join('\n');
+    if (panel && blockOnWarning && overlay) {
+      panel.webview.postMessage({ type: 'showWarning', message: overlay });
+    }
+  }
+
+  // --- Undeclared variable linter ---
+  function lintUndeclaredVariables(document: vscode.TextDocument) {
+    try {
+      if (document.uri.scheme !== 'file') return;
+      const lang = document.languageId;
+      const isJsLike = lang === 'javascript' || lang === 'typescript' || lang === 'javascriptreact' || lang === 'typescriptreact';
+      if (!isJsLike) { undeclaredDiagnostics.delete(document.uri); return; }
+      const enable = vscode.workspace.getConfiguration('P5Studio').get<boolean>('enableUndeclaredWarning', true);
+      if (!enable) { undeclaredDiagnostics.delete(document.uri); return; }
+      const text = document.getText();
+      const diagnostics: vscode.Diagnostic[] = [];
+      // Parse with TS to get a robust AST
+      const ts = require('typescript');
+      const scriptKind = ((): any => {
+        if (lang === 'typescript') return ts.ScriptKind.TS;
+        if (lang === 'typescriptreact') return ts.ScriptKind.TSX;
+        if (lang === 'javascriptreact') return ts.ScriptKind.JSX;
+        return ts.ScriptKind.JS;
+      })();
+      const sf = ts.createSourceFile(document.fileName, text, ts.ScriptTarget.Latest, true, scriptKind);
+      // Collect declared identifiers (file-wide union to avoid false positives)
+      const declared = new Set<string>();
+      const addName = (id: any) => { try { if (id && id.escapedText) declared.add(String(id.escapedText)); } catch { } };
+      function addFromBindingName(name: any) {
+        try {
+          if (!name) return;
+          if (ts.isIdentifier(name)) addName(name);
+          else if (ts.isArrayBindingPattern(name)) name.elements.forEach((e: any) => addFromBindingName(e.name));
+          else if (ts.isObjectBindingPattern(name)) name.elements.forEach((e: any) => addFromBindingName(e.name));
+        } catch { }
+      }
+      function collect(node: any) {
+        try {
+          if (!node) return;
+          switch (node.kind) {
+            case ts.SyntaxKind.VariableDeclarationList: {
+              // Covers declarations in for (let i = 0; ...) headers and similar
+              node.declarations?.forEach((d: any) => addFromBindingName(d.name));
+              break;
+            }
+            case ts.SyntaxKind.VariableStatement: {
+              node.declarationList?.declarations?.forEach((d: any) => addFromBindingName(d.name));
+              break;
+            }
+            case ts.SyntaxKind.FunctionDeclaration: {
+              if (node.name) addName(node.name);
+              node.parameters?.forEach((p: any) => addFromBindingName(p.name));
+              break;
+            }
+            case ts.SyntaxKind.FunctionExpression:
+            case ts.SyntaxKind.ArrowFunction: {
+              node.parameters?.forEach((p: any) => addFromBindingName(p.name));
+              break;
+            }
+            case ts.SyntaxKind.ClassDeclaration:
+            case ts.SyntaxKind.EnumDeclaration:
+            case ts.SyntaxKind.InterfaceDeclaration:
+            case ts.SyntaxKind.TypeAliasDeclaration:
+            case ts.SyntaxKind.ModuleDeclaration: {
+              if (node.name) addName(node.name);
+              break;
+            }
+            case ts.SyntaxKind.ImportDeclaration: {
+              try {
+                const clause = node.importClause;
+                if (clause) {
+                  if (clause.name) addName(clause.name);
+                  const ns = clause.namedBindings;
+                  if (ns && ts.isNamespaceImport(ns) && ns.name) addName(ns.name);
+                  if (ns && ts.isNamedImports(ns)) ns.elements?.forEach((el: any) => addName(el.name));
+                }
+              } catch { }
+              break;
+            }
+            case ts.SyntaxKind.CatchClause: {
+              try { if (node.variableDeclaration?.name) addFromBindingName(node.variableDeclaration.name); } catch { }
+              break;
+            }
+          }
+        } catch { }
+        try { node.forEachChild(collect); } catch { }
+      }
+      collect(sf);
+      // Additional ignores
+      const IGNORE_NAMES = new Set(['this', 'super', 'arguments']);
+      // Heuristic: skip identifiers in non-value positions
+      const skipParentKinds = new Set<number>([
+        ts.SyntaxKind.PropertyDeclaration,
+        ts.SyntaxKind.PropertySignature,
+        ts.SyntaxKind.MethodDeclaration,
+        ts.SyntaxKind.MethodSignature,
+        ts.SyntaxKind.PropertyAssignment, // key of { foo: bar }
+        ts.SyntaxKind.GetAccessor,
+        ts.SyntaxKind.SetAccessor,
+        ts.SyntaxKind.ImportSpecifier,
+        ts.SyntaxKind.ExportSpecifier,
+        ts.SyntaxKind.ShorthandPropertyAssignment, // handled separately (should be a reference)
+        ts.SyntaxKind.BindingElement,
+        ts.SyntaxKind.Parameter,
+        ts.SyntaxKind.TypeReference,
+        ts.SyntaxKind.TypeAliasDeclaration,
+        ts.SyntaxKind.InterfaceDeclaration,
+        ts.SyntaxKind.TypeLiteral,
+        ts.SyntaxKind.QualifiedName,
+        ts.SyntaxKind.EnumMember,
+        ts.SyntaxKind.ModuleDeclaration,
+        ts.SyntaxKind.LabeledStatement,
+      ]);
+      const reported = new Set<string>();
+      function maybeReport(id: any) {
+        try {
+          const name = String(id.escapedText || '');
+          if (!name) return;
+          if (IGNORE_NAMES.has(name)) return;
+          if (RESERVED_GLOBALS.has(name)) return;
+          const parent = id.parent;
+          // Ignore identifiers used as a callee in function calls or constructions
+          if (parent && (
+            (ts.isCallExpression(parent) && parent.expression === id) ||
+            (ts.isNewExpression(parent) && parent.expression === id) ||
+            (ts.isTaggedTemplateExpression(parent) && parent.tag === id)
+          )) { return; }
+          // Ignore property accesses obj.foo (foo part)
+          if (parent && ts.isPropertyAccessExpression(parent) && parent.name === id) return;
+          // Ignore property keys in assignment { foo: ... }
+          if (parent && parent.kind === ts.SyntaxKind.PropertyAssignment && parent.name === id) return;
+          // Ignore declaration positions and type positions
+          if (parent && skipParentKinds.has(parent.kind)) return;
+          // Shorthand {foo} is a usage
+          // If not declared: warn
+          if (!declared.has(name)) {
+            const start = id.getStart(sf);
+            const end = id.getEnd();
+            const key = `${start}:${end}:${name}`;
+            if (reported.has(key)) return;
+            reported.add(key);
+            const startPos = document.positionAt(start);
+            const endPos = document.positionAt(end);
+            const range = new vscode.Range(startPos, endPos);
+            const diag = new vscode.Diagnostic(range, `Undeclared variable: ${name}`, vscode.DiagnosticSeverity.Warning);
+            diag.source = 'Undeclared Variable';
+            diagnostics.push(diag);
+          }
+        } catch { }
+      }
+      function walkRefs(node: any) {
+        try {
+          if (ts.isIdentifier(node)) maybeReport(node);
+        } catch { }
+        try { node.forEachChild(walkRefs); } catch { }
+      }
+      walkRefs(sf);
+      undeclaredDiagnostics.set(document.uri, diagnostics);
+    } catch {
+      // On failure, clear diagnostics for this doc to avoid stale warnings
+      try { undeclaredDiagnostics.delete(document.uri); } catch { }
+    }
+  }
+
+  // --- No-var linter ---
+  function lintNoVar(document: vscode.TextDocument) {
+    try {
+      if (document.uri.scheme !== 'file') return;
+      const lang = document.languageId;
+      const isJsLike = lang === 'javascript' || lang === 'typescript' || lang === 'javascriptreact' || lang === 'typescriptreact';
+      if (!isJsLike) { noVarDiagnostics.delete(document.uri); return; }
+      const enable = vscode.workspace.getConfiguration('P5Studio').get<boolean>('enableNoVarWarning', true);
+      if (!enable) { noVarDiagnostics.delete(document.uri); return; }
+      const text = document.getText();
+      const diagnostics: vscode.Diagnostic[] = [];
+      const ts = require('typescript');
+      const scriptKind = ((): any => {
+        if (lang === 'typescript') return ts.ScriptKind.TS;
+        if (lang === 'typescriptreact') return ts.ScriptKind.TSX;
+        if (lang === 'javascriptreact') return ts.ScriptKind.JSX;
+        return ts.ScriptKind.JS;
+      })();
+      const sf = ts.createSourceFile(document.fileName, text, ts.ScriptTarget.Latest, true, scriptKind);
+      function maybeReportList(list: any) {
+        try {
+          if (!list) return;
+          // In TS AST, "var" is represented by the absence of Let/Const flags on the VariableDeclarationList
+          const isVar = (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0;
+          if (isVar) {
+            const start = list.getStart(sf);
+            const end = start + 3; // length of 'var'
+            const startPos = document.positionAt(start);
+            const endPos = document.positionAt(Math.min(end, text.length));
+            const range = new vscode.Range(startPos, endPos);
+            const diag = new vscode.Diagnostic(range, 'Avoid var; use let instead.', vscode.DiagnosticSeverity.Warning);
+            diag.source = 'No-var Linter';
+            diagnostics.push(diag);
+          }
+        } catch { }
+      }
+
+      function visit(node: any) {
+        try {
+          if (ts.isVariableStatement(node) && node.declarationList) {
+            maybeReportList(node.declarationList);
+          } else if (ts.isVariableDeclarationList(node)) {
+            maybeReportList(node);
+          }
+        } catch { }
+        try { node.forEachChild(visit); } catch { }
+      }
+      visit(sf);
+      noVarDiagnostics.set(document.uri, diagnostics);
+    } catch {
+      try { noVarDiagnostics.delete(document.uri); } catch { }
+    }
+  }
+
+  // --- Loose equality (==/!=) linter (non-blocking) ---
+  function lintLooseEquality(document: vscode.TextDocument) {
+    try {
+      if (document.uri.scheme !== 'file') return;
+      const lang = document.languageId;
+      const isJsLike = lang === 'javascript' || lang === 'typescript' || lang === 'javascriptreact' || lang === 'typescriptreact';
+      if (!isJsLike) { equalityDiagnostics.delete(document.uri); return; }
+      const enable = vscode.workspace.getConfiguration('P5Studio').get<boolean>('enableLooseEqualityWarning', true);
+      if (!enable) { equalityDiagnostics.delete(document.uri); return; }
+      const text = document.getText();
+      const diagnostics: vscode.Diagnostic[] = [];
+      const ts = require('typescript');
+      const scriptKind = ((): any => {
+        if (lang === 'typescript') return ts.ScriptKind.TS;
+        if (lang === 'typescriptreact') return ts.ScriptKind.TSX;
+        if (lang === 'javascriptreact') return ts.ScriptKind.JSX;
+        return ts.ScriptKind.JS;
+      })();
+      const sf = ts.createSourceFile(document.fileName, text, ts.ScriptTarget.Latest, true, scriptKind);
+      function visit(node: any) {
+        try {
+          if (ts.isBinaryExpression(node)) {
+            const op = node.operatorToken?.kind;
+            if (op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken) {
+              const start = node.operatorToken.getStart(sf);
+              const end = node.operatorToken.getEnd();
+              const startPos = document.positionAt(start);
+              const endPos = document.positionAt(end);
+              const range = new vscode.Range(startPos, endPos);
+              const msg = op === ts.SyntaxKind.EqualsEqualsToken ? "Use '===' instead of '=='" : "Use '!==' instead of '!='";
+              const diag = new vscode.Diagnostic(range, msg, vscode.DiagnosticSeverity.Warning);
+              diag.source = 'Equality Linter';
+              diagnostics.push(diag);
+            }
+          }
+        } catch { }
+        try { node.forEachChild(visit); } catch { }
+      }
+      visit(sf);
+      equalityDiagnostics.set(document.uri, diagnostics);
+    } catch {
+      try { equalityDiagnostics.delete(document.uri); } catch { }
+    }
   }
 
   // Helper to update context key for p5.js file detection
@@ -3287,6 +3916,10 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.open-blockly', async () => {
+      if (!hasP5Project) {
+        vscode.window.showInformationMessage('This feature is available in P5 projects. Create a project (adds .p5) via "P5 Studio Setup new project".');
+        return;
+      }
       const originatingEditor = vscode.window.activeTextEditor;
       if (!originatingEditor) {
         vscode.window.showWarningMessage('No active editor to open Blockly for.');
@@ -3346,18 +3979,18 @@ export function activate(context: vscode.ExtensionContext) {
           ]
         }
       );
-  blocklyPanelForDocument.set(docUri, blocklyPanel);
-  (blocklyPanel as any)._sketchFilePath = normalizeFsPath(doc.fileName);
-  allBlocklyPanels.add(blocklyPanel);
-  addPanelForPath(blocklyPanelsByPath, doc.fileName, blocklyPanel);
+      blocklyPanelForDocument.set(docUri, blocklyPanel);
+      (blocklyPanel as any)._sketchFilePath = normalizeFsPath(doc.fileName);
+      allBlocklyPanels.add(blocklyPanel);
+      addPanelForPath(blocklyPanelsByPath, doc.fileName, blocklyPanel);
       try { await addToRestore(RESTORE_BLOCKLY_KEY, doc.fileName); } catch { }
       // No longer block edits. Instead, we'll listen for document changes and, if the file
       // contains an embedded workspace, forward it to the Blockly webview so the workspace
       // can be restored/updated. See listener registration below.
       blocklyPanel.onDidDispose(async () => {
         blocklyPanelForDocument.delete(docUri);
-  allBlocklyPanels.delete(blocklyPanel);
-  try { removePanelForPath(blocklyPanelsByPath, (blocklyPanel as any)._sketchFilePath || doc.fileName, blocklyPanel); } catch { }
+        allBlocklyPanels.delete(blocklyPanel);
+        try { removePanelForPath(blocklyPanelsByPath, (blocklyPanel as any)._sketchFilePath || doc.fileName, blocklyPanel); } catch { }
         // nothing else to cleanup here
         try { await removeFromRestore(RESTORE_BLOCKLY_KEY, doc.fileName); } catch { }
       });
@@ -3495,17 +4128,42 @@ export function activate(context: vscode.ExtensionContext) {
     editor = editor || vscode.window.activeTextEditor;
     const isJsOrTs = !!editor && ['javascript', 'typescript'].includes(editor.document.languageId);
     vscode.commands.executeCommand('setContext', 'isJsOrTs', isJsOrTs);
-    if (isJsOrTs) {
-      p5RefStatusBar.show();
-    } else {
-      p5RefStatusBar.hide();
-    }
+    // Show status bar only when in JS/TS AND the workspace is a P5 project (.p5 exists)
+    if (isJsOrTs && hasP5Project) p5RefStatusBar.show(); else p5RefStatusBar.hide();
   }
 
   updateP5Context();
   updateJsOrTsContext();
   // Run initial semicolon lint on the active editor
   lintActiveEditor();
+
+  // Detect whether the workspace has a .p5 marker and set context
+  function updateP5ProjectContext() {
+    try {
+      let found = false;
+      const folders = vscode.workspace.workspaceFolders || [];
+      for (const f of folders) {
+        const markerPath = path.join(f.uri.fsPath, '.p5');
+        if (fs.existsSync(markerPath)) { found = true; break; }
+      }
+      hasP5Project = found;
+      vscode.commands.executeCommand('setContext', 'hasP5Project', hasP5Project);
+      // Re-evaluate status bar visibility
+      updateJsOrTsContext();
+    } catch { /* ignore */ }
+  }
+  updateP5ProjectContext();
+  // Watch for .p5 creation/deletion and workspace folder changes
+  try {
+    const watcher = vscode.workspace.createFileSystemWatcher('**/.p5');
+    context.subscriptions.push(
+      watcher.onDidCreate(() => updateP5ProjectContext()),
+      watcher.onDidDelete(() => updateP5ProjectContext()),
+      watcher.onDidChange(() => updateP5ProjectContext()),
+      watcher
+    );
+  } catch { /* ignore */ }
+  context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => updateP5ProjectContext()));
 
   // Attempt to restore previously open webviews (without using webview serialization)
   (async () => {
@@ -3537,7 +4195,7 @@ export function activate(context: vscode.ExtensionContext) {
       const uniqueLive = Array.from(new Set(liveDocs));
       if (uniqueLive.length) {
         // Reorder by saved order (preserve any unknowns at the end in original order)
-  const savedOrder = getRestoreList(RESTORE_LIVE_ORDER_KEY).filter(p => fs.existsSync(p) && isInWorkspace(p));
+        const savedOrder = getRestoreList(RESTORE_LIVE_ORDER_KEY).filter(p => fs.existsSync(p) && isInWorkspace(p));
         const orderIndex = new Map<string, number>();
         savedOrder.forEach((p, i) => orderIndex.set(p, i));
         uniqueLive.sort((a, b) => {
@@ -3671,6 +4329,9 @@ export function activate(context: vscode.ExtensionContext) {
     }
     // Lint on text change
     lintSemicolons(e.document);
+    lintUndeclaredVariables(e.document);
+    lintNoVar(e.document);
+    lintLooseEquality(e.document);
     // If this document has a Blockly panel open, forward any embedded workspace to the webview
     try {
       const docUri = e.document.uri.toString();
@@ -3763,12 +4424,15 @@ export function activate(context: vscode.ExtensionContext) {
   });
   // Lint when a document is opened/closed
   context.subscriptions.push(
-    vscode.workspace.onDidOpenTextDocument(doc => lintSemicolons(doc))
+    vscode.workspace.onDidOpenTextDocument(doc => { lintSemicolons(doc); lintUndeclaredVariables(doc); lintNoVar(doc); lintLooseEquality(doc); })
   );
 
   context.subscriptions.push(
     vscode.workspace.onDidCloseTextDocument(async doc => {
       semicolonDiagnostics.delete(doc.uri);
+      undeclaredDiagnostics.delete(doc.uri);
+      noVarDiagnostics.delete(doc.uri);
+      equalityDiagnostics.delete(doc.uri);
       // If the closed document is the one that opened the blocklyPanel, close the panel
       // If a blockly panel was opened for this document, close it
       const panel = blocklyPanelForDocument.get(doc.uri.toString());
@@ -3915,11 +4579,26 @@ export function activate(context: vscode.ExtensionContext) {
       }
       // Block sketch when configured and warnings exist; otherwise run as usual
       const blockOnWarning_UD = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
-      const warn_UD = hasSemicolonWarnings(document);
-      if (blockOnWarning_UD && warn_UD.has) {
-        panel.webview.html = await createHtml('', panel, context.extensionPath);
-        logSemicolonWarningsForDocument(document);
-        return;
+      const warnSemi_UD = hasSemicolonWarnings(document);
+      const warnUnd_UD = hasUndeclaredWarnings(document);
+      const warnVar_UD = hasVarWarnings(document);
+      const warnEq_UD = hasEqualityWarnings(document);
+      if (blockOnWarning_UD && (warnSemi_UD.has || warnUnd_UD.has || warnVar_UD.has || warnEq_UD.has)) {
+        // Suppress overlay during live typing; only show on explicit reload/save/command
+        if (reason === 'typing') {
+          // Still log warnings to the Output channel if requested
+          if (forceLog) {
+            try { logSemicolonWarningsForDocument(document); } catch { }
+            try { logUndeclaredWarningsForDocument(document); } catch { }
+            try { logVarWarningsForDocument(document); } catch { }
+            try { logEqualityWarningsForDocument(document); } catch { }
+          }
+          return;
+        } else {
+          panel.webview.html = await createHtml('', panel, context.extensionPath);
+          logBlockingWarningsForDocument(document);
+          return;
+        }
       } else {
         // Before reloading HTML, if inputs exist but are unresolved, block and ask user to Reload
         const docKey = (panel && (panel as any)._sketchFilePath) ? String((panel as any)._sketchFilePath) : document.fileName;
@@ -3991,6 +4670,9 @@ export function activate(context: vscode.ExtensionContext) {
     // If requested, log semicolon warnings when the panel reloads (typing/save debounce path)
     if (forceLog) {
       try { logSemicolonWarningsForDocument(document); } catch { }
+      try { logUndeclaredWarningsForDocument(document); } catch { }
+      try { logVarWarningsForDocument(document); } catch { }
+      try { logEqualityWarningsForDocument(document); } catch { }
     }
   }
 
@@ -4004,6 +4686,28 @@ export function activate(context: vscode.ExtensionContext) {
     reloadWhileTyping = vscode.workspace.getConfiguration('P5Studio').get<boolean>('reloadWhileTyping', true);
     reloadOnSave = vscode.workspace.getConfiguration('P5Studio').get<boolean>('reloadOnSave', true);
     await vscode.commands.executeCommand('setContext', 'liveP5ReloadWhileTypingEnabled', reloadWhileTyping);
+  }
+
+  // Re-apply auto-reload listeners for all open editors/panels
+  function refreshAutoReloadListenersForAllOpenEditors() {
+    try {
+      const editors = vscode.window.visibleTextEditors || [];
+      const seen = new Set<string>();
+      for (const ed of editors) {
+        if (!ed || !ed.document) continue;
+        const uri = ed.document.uri.toString();
+        seen.add(uri);
+        updateAutoReloadListeners(ed);
+      }
+      // Dispose listeners for any document that no longer has a visible editor
+      for (const [docUri, listeners] of autoReloadListenersMap.entries()) {
+        if (!seen.has(docUri)) {
+          try { listeners.changeListener?.dispose(); } catch { }
+          try { listeners.saveListener?.dispose(); } catch { }
+          autoReloadListenersMap.delete(docUri);
+        }
+      }
+    } catch { /* ignore */ }
   }
 
   // --- Ensure context key is set on activation ---
@@ -4044,6 +4748,10 @@ export function activate(context: vscode.ExtensionContext) {
   // ----------------------------
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.live-p5', async () => {
+      if (!hasP5Project) {
+        vscode.window.showInformationMessage('This feature is available in P5 projects. Create a project (adds .p5) via "P5 Studio Setup new project".');
+        return;
+      }
       const editor = vscode.window.activeTextEditor;
       if (!editor) return;
       const docUri = editor.document.uri.toString();
@@ -4195,9 +4903,9 @@ export function activate(context: vscode.ExtensionContext) {
         );
 
         // --- Pass the sketch file path to the panel for include folder lookup ---
-  (panel as any)._sketchFilePath = normalizeFsPath(editor.document.fileName);
+        (panel as any)._sketchFilePath = normalizeFsPath(editor.document.fileName);
         allP5Panels.add(panel);
-  addPanelForPath(p5PanelsByPath, editor.document.fileName, panel);
+        addPanelForPath(p5PanelsByPath, editor.document.fileName, panel);
 
 
         // Focus the output channel for the new sketch immediately
@@ -4350,7 +5058,7 @@ export function activate(context: vscode.ExtensionContext) {
               const docUri = editor.document.uri.toString();
               const fileName = path.basename(editor.document.fileName);
               const ch = getOrCreateOutputChannel(docUri, fileName);
-              ch.appendLine(`${getTime()} [🔄INFO] Reload button clicked.`);
+              ch.appendLine(`${getTime()} [🔄INFO] Reload`);
             } catch { }
             // Always clear highlight and stop stepping/auto-step on reload
             const ed = editor;
@@ -4377,14 +5085,21 @@ export function activate(context: vscode.ExtensionContext) {
               outputChannel.appendLine(`${getTime()} [‼️RUNTIME ERROR in ${fileName}] inputPrompt() must be used at the very top of the sketch to initialize a variable (e.g., let a = inputPrompt()); runtime prompts are not supported.`);
               return;
             }
-            // Log semicolon warnings on explicit reload action
+            // Log warnings on explicit reload action
             logSemicolonWarningsForDocument(editor.document);
+            logUndeclaredWarningsForDocument(editor.document);
+            logVarWarningsForDocument(editor.document);
+            logEqualityWarningsForDocument(editor.document);
             // Optionally block sketch on warning
             {
               const blockOnWarning = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
-              const warn = hasSemicolonWarnings(editor.document);
-              if (blockOnWarning && warn.has) {
+              const warnSemi = hasSemicolonWarnings(editor.document);
+              const warnUnd = hasUndeclaredWarnings(editor.document);
+              const warnVar = hasVarWarnings(editor.document);
+              const warnEq = hasEqualityWarnings(editor.document);
+              if (blockOnWarning && (warnSemi.has || warnUnd.has || warnVar.has || warnEq.has)) {
                 panel.webview.html = await createHtml('', panel, context.extensionPath);
+                logBlockingWarningsForDocument(editor.document);
                 return;
               }
             }
@@ -4527,14 +5242,21 @@ export function activate(context: vscode.ExtensionContext) {
               outputChannel.appendLine(`${getTime()} [‼️RUNTIME ERROR in ${fileName}] input can only be used at the top`);
               return;
             }
-            // Log semicolon warnings on explicit action
+            // Log warnings on explicit action
             logSemicolonWarningsForDocument(editor.document);
+            logUndeclaredWarningsForDocument(editor.document);
+            logVarWarningsForDocument(editor.document);
+            logEqualityWarningsForDocument(editor.document);
             // Optionally block sketch on warning
             {
               const blockOnWarning = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
-              const warn = hasSemicolonWarnings(editor.document);
-              if (blockOnWarning && warn.has) {
+              const warnSemi = hasSemicolonWarnings(editor.document);
+              const warnUnd = hasUndeclaredWarnings(editor.document);
+              const warnVar = hasVarWarnings(editor.document);
+              const warnEq = hasEqualityWarnings(editor.document);
+              if (blockOnWarning && (warnSemi.has || warnUnd.has || warnVar.has || warnEq.has)) {
                 panel.webview.html = await createHtml('', panel, context.extensionPath);
+                logBlockingWarningsForDocument(editor.document);
                 return;
               }
             }
@@ -4667,13 +5389,19 @@ export function activate(context: vscode.ExtensionContext) {
               outputChannel.appendLine(`${getTime()} [‼️RUNTIME ERROR in ${fileName}] input can only be used at the top`);
               return;
             }
-            // Semicolon warnings on explicit action
+            // Warnings on explicit action
             logSemicolonWarningsForDocument(editor.document);
+            logUndeclaredWarningsForDocument(editor.document);
+            logVarWarningsForDocument(editor.document);
+            logEqualityWarningsForDocument(editor.document);
             {
               const blockOnWarning = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
-              const warn = hasSemicolonWarnings(editor.document);
-              if (blockOnWarning && warn.has) {
+              const warnSemi = hasSemicolonWarnings(editor.document);
+              const warnUnd = hasUndeclaredWarnings(editor.document);
+              const warnVar = hasVarWarnings(editor.document);
+              if (blockOnWarning && (warnSemi.has || warnUnd.has || warnVar.has)) {
                 panel.webview.html = await createHtml('', panel, context.extensionPath);
+                logBlockingWarningsForDocument(editor.document);
                 return;
               }
             }
@@ -4968,14 +5696,18 @@ export function activate(context: vscode.ExtensionContext) {
 
         // Only set HTML on first open, but optionally block on warnings
         const blockOnWarning_IO = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
-        const warn_IO = hasSemicolonWarnings(editor.document);
-        if (blockOnWarning_IO && warn_IO.has) {
+        const warnSemi_IO = hasSemicolonWarnings(editor.document);
+        const warnUnd_IO = hasUndeclaredWarnings(editor.document);
+        const warnVar_IO = hasVarWarnings(editor.document);
+        if (blockOnWarning_IO && (warnSemi_IO.has || warnUnd_IO.has || warnVar_IO.has)) {
           panel.webview.html = await createHtml('', panel, context.extensionPath);
-          logSemicolonWarningsForDocument(editor.document);
+          logBlockingWarningsForDocument(editor.document);
         } else {
           panel.webview.html = await createHtml(codeToInject, panel, context.extensionPath);
-          // Log semicolon warnings when running the sketch (initial open)
+          // Log warnings when running the sketch (initial open)
           logSemicolonWarningsForDocument(editor.document);
+          logUndeclaredWarningsForDocument(editor.document);
+          logVarWarningsForDocument(editor.document);
         }
         // Send global variables immediately after setting HTML
         const { globals } = extractGlobalVariablesWithConflicts(codeToInject);
@@ -5009,16 +5741,20 @@ export function activate(context: vscode.ExtensionContext) {
             codeToSend = wrapInSetupIfNeeded(codeToSend);
             // Optionally block on semicolon warnings
             const blockOnWarning_RO = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
-            const warn_RO = hasSemicolonWarnings(editor.document);
-            if (blockOnWarning_RO && warn_RO.has) {
+            const warnSemi_RO = hasSemicolonWarnings(editor.document);
+            const warnUnd_RO = hasUndeclaredWarnings(editor.document);
+            const warnVar_RO = hasVarWarnings(editor.document);
+            if (blockOnWarning_RO && (warnSemi_RO.has || warnUnd_RO.has || warnVar_RO.has)) {
               (async () => {
                 panel.webview.html = await createHtml('', panel, context.extensionPath);
-                logSemicolonWarningsForDocument(editor.document);
+                logBlockingWarningsForDocument(editor.document);
               })();
             } else {
               panel.webview.postMessage({ type: 'reload', code: codeToSend });
-              // Log semicolon warnings on explicit open -> reload path
+              // Log warnings on explicit open -> reload path
               logSemicolonWarningsForDocument(editor.document);
+              logUndeclaredWarningsForDocument(editor.document);
+              logVarWarningsForDocument(editor.document);
             }
           } catch (err: any) {
             // If error, send empty code and show error
@@ -5048,8 +5784,10 @@ export function activate(context: vscode.ExtensionContext) {
           if (docUri) {
             const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === docUri);
             if (doc) {
-              // Log semicolon warnings on explicit reload command
+              // Log warnings on explicit reload command
               logSemicolonWarningsForDocument(doc);
+              logUndeclaredWarningsForDocument(doc);
+              logVarWarningsForDocument(doc);
               _pendingReloadReason = 'command';
               debounceDocumentUpdate(doc, false);
             }
@@ -5057,8 +5795,10 @@ export function activate(context: vscode.ExtensionContext) {
         }
         return;
       }
-      // Log semicolon warnings on explicit reload command
+      // Log warnings on explicit reload command
       logSemicolonWarningsForDocument(editor.document);
+      logUndeclaredWarningsForDocument(editor.document);
+      logVarWarningsForDocument(editor.document);
       _pendingReloadReason = 'command';
       debounceDocumentUpdate(editor.document, false); // use false to match typing
     })
@@ -5070,8 +5810,7 @@ export function activate(context: vscode.ExtensionContext) {
       const config = vscode.workspace.getConfiguration('P5Studio');
       await config.update('reloadWhileTyping', false, vscode.ConfigurationTarget.Global);
       await updateReloadWhileTypingVarsAndContext();
-      const editor = vscode.window.activeTextEditor;
-      if (editor) updateAutoReloadListeners(editor);
+      refreshAutoReloadListenersForAllOpenEditors();
       vscode.window.showInformationMessage('Reload on typing is now disabled.');
     })
   );
@@ -5081,8 +5820,7 @@ export function activate(context: vscode.ExtensionContext) {
       const config = vscode.workspace.getConfiguration('P5Studio');
       await config.update('reloadWhileTyping', true, vscode.ConfigurationTarget.Global);
       await updateReloadWhileTypingVarsAndContext();
-      const editor = vscode.window.activeTextEditor;
-      if (editor) updateAutoReloadListeners(editor);
+      refreshAutoReloadListenersForAllOpenEditors();
       vscode.window.showInformationMessage('Reload on typing is now enabled.');
     })
   );
@@ -5231,11 +5969,10 @@ text("P5", 50, 52);`;
         panel.webview.postMessage({ type: 'updateVarDebounceDelay', value: newDelay });
       }
     }
-    // --- Sync reloadWhileTyping context key and button icon if setting changed via settings UI ---
-    if (e.affectsConfiguration('P5Studio.reloadWhileTyping')) {
+    // --- Sync reloadWhileTyping/reloadOnSave if changed via settings UI ---
+    if (e.affectsConfiguration('P5Studio.reloadWhileTyping') || e.affectsConfiguration('P5Studio.reloadOnSave')) {
       updateReloadWhileTypingVarsAndContext();
-      const editor = vscode.window.activeTextEditor;
-      if (editor) updateAutoReloadListeners(editor);
+      refreshAutoReloadListenersForAllOpenEditors();
     }
     // --- Immediately apply showReloadButton/showRecordButton changes in all open panels ---
     if (

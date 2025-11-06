@@ -112,27 +112,27 @@
         {
           "command": "extension.live-p5",
           "group": "navigation",
-          "when": "isP5js && !hasP5Webview && (editorLangId == javascript || editorLangId == typescript)"
+          "when": "hasP5Project == true && isP5js && !hasP5Webview && (editorLangId == javascript || editorLangId == typescript)"
         },
         {
           "command": "extension.open-blockly",
           "group": "navigation",
-          "when": "config.P5Studio.enableBlockly == true && isP5js && (editorLangId == javascript || editorLangId == typescript)"
+          "when": "hasP5Project == true && config.P5Studio.enableBlockly == true && isP5js && (editorLangId == javascript || editorLangId == typescript)"
         },
         {
           "command": "extension.reload-p5-sketch",
           "group": "navigation",
-          "when": "isP5js && hasP5Webview && (editorLangId == javascript || editorLangId == typescript)"
+          "when": "hasP5Project == true && isP5js && hasP5Webview && (editorLangId == javascript || editorLangId == typescript)"
         },
         {
           "command": "P5Studio.toggleReloadWhileTypingOn",
           "group": "navigation@2",
-          "when": "isP5js && liveP5ReloadWhileTypingEnabled == true && (editorLangId == javascript || editorLangId == typescript)"
+          "when": "hasP5Project == true && isP5js && liveP5ReloadWhileTypingEnabled == true && (editorLangId == javascript || editorLangId == typescript)"
         },
         {
           "command": "P5Studio.toggleReloadWhileTypingOff",
           "group": "navigation@2",
-          "when": "isP5js && liveP5ReloadWhileTypingEnabled != true && (editorLangId == javascript || editorLangId == typescript)"
+          "when": "hasP5Project == true && isP5js && liveP5ReloadWhileTypingEnabled != true && (editorLangId == javascript || editorLangId == typescript)"
         }
       ],
       "explorer/context": [
@@ -149,7 +149,7 @@
       "editor/context": [
         {
           "command": "extension.openSelectedText",
-          "when": "editorHasSelection && isJsOrTs",
+          "when": "hasP5Project == true && editorHasSelection && isJsOrTs",
           "group": "navigation@0"
         },
         {
@@ -281,6 +281,54 @@
           "minimum": 0,
           "description": "Delay (in milliseconds) used by the Step-Run button between setup() statements and at the start of each loop iteration.",
           "order": 16
+        },
+        "P5Studio.enableSemicolonWarning": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the 'Missing semicolon' warning.",
+          "order": 17
+        },
+        "P5Studio.enableUndeclaredWarning": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the 'Undeclared variable' warning.",
+          "order": 18
+        },
+        "P5Studio.enableNoVarWarning": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the 'Avoid var; use let instead' warning.",
+          "order": 19
+        },
+        "P5Studio.enableLooseEqualityWarning": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the 'Use ===/!== instead of ==/!=' warning.",
+          "order": 20
+        },
+        "P5Studio.BlockOnSemicolon": {
+          "type": "boolean",
+          "default": true,
+          "description": "Block the sketch when a 'Missing semicolon' warning exists (requires BlockSketchOnWarning to be enabled).",
+          "order": 21
+        },
+        "P5Studio.BlockOnUndeclared": {
+          "type": "boolean",
+          "default": true,
+          "description": "Block the sketch when 'Undeclared variable' warnings exist (requires BlockSketchOnWarning to be enabled).",
+          "order": 22
+        },
+        "P5Studio.BlockOnNoVar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Block the sketch when 'Avoid var; use let instead' warnings exist (requires BlockSketchOnWarning to be enabled).",
+          "order": 23
+        },
+        "P5Studio.BlockOnLooseEquality": {
+          "type": "boolean",
+          "default": true,
+          "description": "Block the sketch when 'Use ===/!== instead of ==/!=' warnings exist (requires BlockSketchOnWarning to be enabled).",
+          "order": 24
         }
       }
     },

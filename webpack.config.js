@@ -14,7 +14,9 @@ module.exports = {
     },
     devtool: 'source-map',
     externals: {
-        vscode: 'commonjs vscode'
+        vscode: 'commonjs vscode',
+        // Avoid bundling the TypeScript compiler; require it at runtime from node_modules
+        typescript: 'commonjs typescript'
     },
     resolve: {
         extensions: ['.ts', '.js'],
