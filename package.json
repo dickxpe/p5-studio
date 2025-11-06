@@ -247,12 +247,6 @@
           "description": "Debounce delay (ms) for global variable drawer input changes before applying them to the sketch. Independent from reloadWhileTyping debounce.",
           "order": 5
         },
-        "P5Studio.BlockSketchOnWarning": {
-          "type": "boolean",
-          "default": true,
-          "description": "Block running the sketch and show a yellow overlay when semicolon warnings exist. When false, do not show the overlay and run the sketch, but still log the warning to the Output channel.",
-          "order": 13
-        },
         "P5Studio.SingleP5Panel": {
           "type": "boolean",
           "default": true,
@@ -282,53 +276,39 @@
           "description": "Delay (in milliseconds) used by the Step-Run button between setup() statements and at the start of each loop iteration.",
           "order": 16
         },
-        "P5Studio.enableSemicolonWarning": {
+        "P5Studio.ShowDebugButtons": {
           "type": "boolean",
           "default": true,
-          "description": "Enable the 'Missing semicolon' warning.",
+          "description": "Show the Step-Run and Single-Step debug buttons in the P5 webview toolbar.",
+          "order": 16.5
+        },
+        "P5Studio.StrictSemicolonWarning": {
+          "type": "string",
+          "enum": ["ignore", "warn", "block"],
+          "default": "block",
+          "description": "Semicolon rule: ignore (disabled), warn (log + Problems), block (yellow overlay & block).",
           "order": 17
         },
-        "P5Studio.enableUndeclaredWarning": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable the 'Undeclared variable' warning.",
+        "P5Studio.StrictUndeclaredWarning": {
+          "type": "string",
+          "enum": ["ignore", "warn", "block"],
+          "default": "block",
+          "description": "Undeclared variable rule: ignore, warn, block (overlay).",
           "order": 18
         },
-        "P5Studio.enableNoVarWarning": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable the 'Avoid var; use let instead' warning.",
+        "P5Studio.StrictNoVarWarning": {
+          "type": "string",
+          "enum": ["ignore", "warn", "block"],
+          "default": "block",
+          "description": "Avoid var rule: ignore, warn, block (overlay).",
           "order": 19
         },
-        "P5Studio.enableLooseEqualityWarning": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable the 'Use ===/!== instead of ==/!=' warning.",
+        "P5Studio.StrictLooseEqualityWarning": {
+          "type": "string",
+          "enum": ["ignore", "warn", "block"],
+          "default": "ignore",
+          "description": "Loose equality rule: ignore, warn, block (overlay).",
           "order": 20
-        },
-        "P5Studio.BlockOnSemicolon": {
-          "type": "boolean",
-          "default": true,
-          "description": "Block the sketch when a 'Missing semicolon' warning exists (requires BlockSketchOnWarning to be enabled).",
-          "order": 21
-        },
-        "P5Studio.BlockOnUndeclared": {
-          "type": "boolean",
-          "default": true,
-          "description": "Block the sketch when 'Undeclared variable' warnings exist (requires BlockSketchOnWarning to be enabled).",
-          "order": 22
-        },
-        "P5Studio.BlockOnNoVar": {
-          "type": "boolean",
-          "default": true,
-          "description": "Block the sketch when 'Avoid var; use let instead' warnings exist (requires BlockSketchOnWarning to be enabled).",
-          "order": 23
-        },
-        "P5Studio.BlockOnLooseEquality": {
-          "type": "boolean",
-          "default": true,
-          "description": "Block the sketch when 'Use ===/!== instead of ==/!=' warnings exist (requires BlockSketchOnWarning to be enabled).",
-          "order": 24
         }
       }
     },

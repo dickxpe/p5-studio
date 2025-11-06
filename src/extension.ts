@@ -115,6 +115,7 @@ async function listFilesRecursively(dirUri: vscode.Uri, exts: string[]): Promise
 
 // Set of reserved/built-in global names (p5.js, browser, JS built-ins, etc.)
 const RESERVED_GLOBALS = new Set([
+  "MEDIA_FOLDER", "INCLUDE_FOLDER", "p5",
   // p5.js color functions and color mode
   "hue", "saturation", "brightness", "red", "green", "blue", "alpha", "lightness", "colorMode", "color",
   // p5.js core properties
@@ -185,6 +186,8 @@ const RESERVED_GLOBALS = new Set([
   "RGB", "HSB", "HSL",
   // Geometry modes
   "CENTER", "CORNER", "CORNERS", "RADIUS",
+  //Close
+  "CLOSE",
   // Text alignment and vertical alignment
   "LEFT", "RIGHT", "TOP", "BOTTOM", "BASELINE",
   // Stroke caps and joins
@@ -840,6 +843,7 @@ async function createHtml(
   const delayIconPath = vscode.Uri.file(path.join(extensionPath, 'images', 'play.svg'));
   const delayIconUri = panel.webview.asWebviewUri(delayIconPath);
   const stepRunDelayMs = vscode.workspace.getConfiguration('P5Studio').get<number>('stepRunDelayMs', 500);
+  const showDebugButtons = vscode.workspace.getConfiguration('P5Studio').get<boolean>('ShowDebugButtons', true);
 
   const showReloadButton = vscode.workspace
     .getConfiguration('P5Studio')
@@ -1280,8 +1284,8 @@ canvas.p5Canvas{
   </div>
 <div id="p5-toolbar">
   <div id="reload-button" style="display:${showReloadButton ? 'flex' : 'none'}"><img src="${reloadIconUri}" title="Reload P5 Sketch"></div>
-  <div id="step-run-button" title="Run with ${stepRunDelayMs}ms delay between statements and per loop iteration"><img src="${delayIconUri}" /></div>
-  <div id="single-step-button" title="Step through statements (click to execute next statement)"><img src="${stepIconUri}" /></div>
+  <div id="step-run-button" style="display:${showDebugButtons ? 'flex' : 'none'}" title="Run with ${stepRunDelayMs}ms delay between statements and per loop iteration"><img src="${delayIconUri}" /></div>
+  <div id="single-step-button" style="display:${showDebugButtons ? 'flex' : 'none'}" title="Step through statements (click to execute next statement)"><img src="${stepIconUri}" /></div>
   <div id="capture-toggle-button" title="Toggle P5 Capture Panel"></div>
 </div>
 <script>
@@ -1637,6 +1641,14 @@ window.addEventListener("message", e => {
   case "showError": showError(data.message); break;
   case "showWarning": showWarning(data.message); break;
     case "toggleReloadButton": document.getElementById("reload-button").style.display = data.show ? "flex" : "none"; break;
+    case "toggleDebugButtons":
+      try {
+        const stepRunBtn = document.getElementById('step-run-button');
+        const singleStepBtn = document.getElementById('single-step-button');
+        if (stepRunBtn) stepRunBtn.style.display = data.show ? 'flex' : 'none';
+        if (singleStepBtn) singleStepBtn.style.display = data.show ? 'flex' : 'none';
+      } catch {}
+      break;
     case "resetErrorFlag": window._p5ErrorLogged = false; break;
     case "syntaxError": showError(data.message); break;
     case "requestLastRuntimeError":
@@ -2646,6 +2658,19 @@ function getOscConfig() {
 }
 
 let oscPort: osc.UDPPort | null = null;
+let currentOscConfig: { localAddress: string; remoteAddress: string; localPort: number; remotePort: number } | null = null;
+function onOscMessage(oscMsg: any) {
+  try {
+    oscOutputChannel.appendLine(`${getTime()} [OSC] RX ${oscMsg.address} ${JSON.stringify(oscMsg.args)}`);
+  } catch { }
+  if (activeP5Panel) {
+    activeP5Panel.webview.postMessage({
+      type: "oscReceive",
+      address: oscMsg.address,
+      args: oscMsg.args
+    });
+  }
+}
 // Setup OSC UDP port for sending/receiving OSC messages
 function setupOscPort() {
   if (oscPort) {
@@ -2653,6 +2678,7 @@ function setupOscPort() {
     oscPort = null;
   }
   const { localAddress, remoteAddress, remotePort, localPort } = getOscConfig();
+  currentOscConfig = { localAddress, remoteAddress, localPort, remotePort };
   oscPort = new osc.UDPPort({
     localAddress, // Bind to configured address (127.0.0.1 for localhost, or 0.0.0.0 for LAN)
     localPort,
@@ -2670,19 +2696,7 @@ function setupOscPort() {
       oscOutputChannel.appendLine(`${getTime()} [OSC] Listening on ${cfg.localAddress}:${cfg.localPort} | Remote target ${cfg.remoteAddress}:${cfg.remotePort}`);
     } catch { }
   });
-
-  oscPort.on("message", function (oscMsg: any) {
-    try {
-      oscOutputChannel.appendLine(`${getTime()} [OSC] RX ${oscMsg.address} ${JSON.stringify(oscMsg.args)}`);
-    } catch { }
-    if (activeP5Panel) {
-      activeP5Panel.webview.postMessage({
-        type: "oscReceive",
-        address: oscMsg.address,
-        args: oscMsg.args
-      });
-    }
-  });
+  oscPort.on("message", onOscMessage);
 
   try {
     (oscPort as any).on && (oscPort as any).on('error', (err: any) => {
@@ -2784,6 +2798,30 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(equalityDiagnostics);
   // NOTE: We'll log semicolon warnings to the per-sketch output channel on run/reload only.
 
+  type StrictLevel = 'ignore' | 'warn' | 'block';
+  function getStrictLevel(kind: 'Semicolon' | 'Undeclared' | 'NoVar' | 'LooseEquality'): StrictLevel {
+    const cfg = vscode.workspace.getConfiguration('P5Studio');
+    const key = `Strict${kind}Warning` as const;
+    let level = cfg.get<string>(key, 'warn') as StrictLevel;
+    // Migration fallback: map legacy enable*/BlockOn* to a level when new setting missing or invalid
+    const valid = level === 'ignore' || level === 'warn' || level === 'block';
+    if (!valid) level = 'warn';
+    try {
+      if (level) return level;
+    } catch { }
+    // Fallback mapping
+    const enable = cfg.get<boolean>(
+      kind === 'Semicolon' ? 'enableSemicolonWarning' :
+        kind === 'Undeclared' ? 'enableUndeclaredWarning' :
+          kind === 'NoVar' ? 'enableNoVarWarning' : 'enableLooseEqualityWarning', true);
+    const block = cfg.get<boolean>(
+      kind === 'Semicolon' ? 'BlockOnSemicolon' :
+        kind === 'Undeclared' ? 'BlockOnUndeclared' :
+          kind === 'NoVar' ? 'BlockOnNoVar' : 'BlockOnLooseEquality', true);
+    if (!enable) return 'ignore';
+    return block ? 'block' : 'warn';
+  }
+
   function lintSemicolons(document: vscode.TextDocument) {
     // Only lint real files; skip output, git, etc.
     if (document.uri.scheme !== 'file') return;
@@ -2794,9 +2832,9 @@ export function activate(context: vscode.ExtensionContext) {
       semicolonDiagnostics.delete(document.uri);
       return;
     }
-    // Honor setting toggle
-    const enable = vscode.workspace.getConfiguration('P5Studio').get<boolean>('enableSemicolonWarning', true);
-    if (!enable) { semicolonDiagnostics.delete(document.uri); return; }
+    // Honor merged strict setting
+    const level = getStrictLevel('Semicolon');
+    if (level === 'ignore') { semicolonDiagnostics.delete(document.uri); return; }
 
     const text = document.getText();
     const diagnostics: vscode.Diagnostic[] = [];
@@ -2954,9 +2992,8 @@ export function activate(context: vscode.ExtensionContext) {
     outputChannel.appendLine(`${getTime()} ${fullWarning}`);
     // Also show the warning overlay in the corresponding webview (no timestamp)
     const panel = webviewPanelMap.get(docUri);
-    const cfg = vscode.workspace.getConfiguration('P5Studio');
-    const blockOnWarning = cfg.get<boolean>('BlockSketchOnWarning', true) && cfg.get<boolean>('BlockOnSemicolon', true);
-    if (panel && blockOnWarning) {
+    const level = getStrictLevel('Semicolon');
+    if (panel && level === 'block') {
       panel.webview.postMessage({ type: 'showWarning', message: fullWarning });
     }
   }
@@ -3014,9 +3051,8 @@ export function activate(context: vscode.ExtensionContext) {
     const fullWarning = `[⚠️WARNING in ${fileName}] ${warningText}`;
     outputChannel.appendLine(`${getTime()} ${fullWarning}`);
     const panel = webviewPanelMap.get(docUri);
-    const cfg = vscode.workspace.getConfiguration('P5Studio');
-    const blockOnWarning = cfg.get<boolean>('BlockSketchOnWarning', true) && cfg.get<boolean>('BlockOnUndeclared', true);
-    if (panel && blockOnWarning) {
+    const level = getStrictLevel('Undeclared');
+    if (panel && level === 'block') {
       panel.webview.postMessage({ type: 'showWarning', message: fullWarning });
     }
   }
@@ -3041,9 +3077,8 @@ export function activate(context: vscode.ExtensionContext) {
     const fullWarning = `[⚠️WARNING in ${fileName}] ${warningText}`;
     outputChannel.appendLine(`${getTime()} ${fullWarning}`);
     const panel = webviewPanelMap.get(docUri);
-    const cfg = vscode.workspace.getConfiguration('P5Studio');
-    const blockOnWarning = cfg.get<boolean>('BlockSketchOnWarning', true) && cfg.get<boolean>('BlockOnNoVar', true);
-    if (panel && blockOnWarning) {
+    const level = getStrictLevel('NoVar');
+    if (panel && level === 'block') {
       panel.webview.postMessage({ type: 'showWarning', message: fullWarning });
     }
   }
@@ -3070,8 +3105,11 @@ export function activate(context: vscode.ExtensionContext) {
     const fileName = path.basename(document.fileName);
     const outputChannel = getOrCreateOutputChannel(docUri, fileName);
     const { eqLines, neqLines } = hasEqualityWarnings(document);
-    if (eqLines.length) outputChannel.appendLine(`${getTime()} [⚠️WARNING in ${fileName}] Use '===' instead of '==' on line(s): ${eqLines.join(', ')}`);
-    if (neqLines.length) outputChannel.appendLine(`${getTime()} [⚠️WARNING in ${fileName}] Use '!==' instead of '!=' on line(s): ${neqLines.join(', ')}`);
+    const level = getStrictLevel('LooseEquality');
+    if (level !== 'ignore') {
+      if (eqLines.length) outputChannel.appendLine(`${getTime()} [⚠️WARNING in ${fileName}] Use '===' instead of '==' on line(s): ${eqLines.join(', ')}`);
+      if (neqLines.length) outputChannel.appendLine(`${getTime()} [⚠️WARNING in ${fileName}] Use '!==' instead of '!=' on line(s): ${neqLines.join(', ')}`);
+    }
   }
 
   // Combined logger for blocking scenarios: compose both warnings into a single overlay message
@@ -3105,9 +3143,18 @@ export function activate(context: vscode.ExtensionContext) {
     if (eqMsgNeq) outputChannel.appendLine(`${getTime()} ${eqMsgNeq}`);
     // Overlay: combine into one message without timestamps
     const panel = webviewPanelMap.get(docUri);
-    const blockOnWarning = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
-    const overlay = [semiMsg, undMsg, novMsg, eqMsgEq, eqMsgNeq].filter(Boolean).join('\n');
-    if (panel && blockOnWarning && overlay) {
+    const lvlSemi = getStrictLevel('Semicolon');
+    const lvlUnd = getStrictLevel('Undeclared');
+    const lvlNoVar = getStrictLevel('NoVar');
+    const lvlLoose = getStrictLevel('LooseEquality');
+    const overlayParts = [
+      (lvlSemi === 'block') ? semiMsg : '',
+      (lvlUnd === 'block') ? undMsg : '',
+      (lvlNoVar === 'block') ? novMsg : '',
+      (lvlLoose === 'block') ? [eqMsgEq, eqMsgNeq].filter(Boolean).join('\n') : ''
+    ].filter(Boolean);
+    const overlay = overlayParts.join('\n');
+    if (panel && overlay) {
       panel.webview.postMessage({ type: 'showWarning', message: overlay });
     }
   }
@@ -3119,8 +3166,8 @@ export function activate(context: vscode.ExtensionContext) {
       const lang = document.languageId;
       const isJsLike = lang === 'javascript' || lang === 'typescript' || lang === 'javascriptreact' || lang === 'typescriptreact';
       if (!isJsLike) { undeclaredDiagnostics.delete(document.uri); return; }
-      const enable = vscode.workspace.getConfiguration('P5Studio').get<boolean>('enableUndeclaredWarning', true);
-      if (!enable) { undeclaredDiagnostics.delete(document.uri); return; }
+      const level = getStrictLevel('Undeclared');
+      if (level === 'ignore') { undeclaredDiagnostics.delete(document.uri); return; }
       const text = document.getText();
       const diagnostics: vscode.Diagnostic[] = [];
       // Parse with TS to get a robust AST
@@ -3278,8 +3325,8 @@ export function activate(context: vscode.ExtensionContext) {
       const lang = document.languageId;
       const isJsLike = lang === 'javascript' || lang === 'typescript' || lang === 'javascriptreact' || lang === 'typescriptreact';
       if (!isJsLike) { noVarDiagnostics.delete(document.uri); return; }
-      const enable = vscode.workspace.getConfiguration('P5Studio').get<boolean>('enableNoVarWarning', true);
-      if (!enable) { noVarDiagnostics.delete(document.uri); return; }
+      const level = getStrictLevel('NoVar');
+      if (level === 'ignore') { noVarDiagnostics.delete(document.uri); return; }
       const text = document.getText();
       const diagnostics: vscode.Diagnostic[] = [];
       const ts = require('typescript');
@@ -3332,8 +3379,8 @@ export function activate(context: vscode.ExtensionContext) {
       const lang = document.languageId;
       const isJsLike = lang === 'javascript' || lang === 'typescript' || lang === 'javascriptreact' || lang === 'typescriptreact';
       if (!isJsLike) { equalityDiagnostics.delete(document.uri); return; }
-      const enable = vscode.workspace.getConfiguration('P5Studio').get<boolean>('enableLooseEqualityWarning', true);
-      if (!enable) { equalityDiagnostics.delete(document.uri); return; }
+      const level = getStrictLevel('LooseEquality');
+      if (level === 'ignore') { equalityDiagnostics.delete(document.uri); return; }
       const text = document.getText();
       const diagnostics: vscode.Diagnostic[] = [];
       const ts = require('typescript');
@@ -4578,12 +4625,16 @@ export function activate(context: vscode.ExtensionContext) {
         code = `function setup() {\n${code}\n}`;
       }
       // Block sketch when configured and warnings exist; otherwise run as usual
-      const blockOnWarning_UD = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
+      const cfgUD = vscode.workspace.getConfiguration('P5Studio');
       const warnSemi_UD = hasSemicolonWarnings(document);
       const warnUnd_UD = hasUndeclaredWarnings(document);
       const warnVar_UD = hasVarWarnings(document);
       const warnEq_UD = hasEqualityWarnings(document);
-      if (blockOnWarning_UD && (warnSemi_UD.has || warnUnd_UD.has || warnVar_UD.has || warnEq_UD.has)) {
+      const shouldBlockUD = (getStrictLevel('Semicolon') === 'block' && warnSemi_UD.has)
+        || (getStrictLevel('Undeclared') === 'block' && warnUnd_UD.has)
+        || (getStrictLevel('NoVar') === 'block' && warnVar_UD.has)
+        || (getStrictLevel('LooseEquality') === 'block' && warnEq_UD.has);
+      if (shouldBlockUD) {
         // Suppress overlay during live typing; only show on explicit reload/save/command
         if (reason === 'typing') {
           // Still log warnings to the Output channel if requested
@@ -5092,12 +5143,15 @@ export function activate(context: vscode.ExtensionContext) {
             logEqualityWarningsForDocument(editor.document);
             // Optionally block sketch on warning
             {
-              const blockOnWarning = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
               const warnSemi = hasSemicolonWarnings(editor.document);
               const warnUnd = hasUndeclaredWarnings(editor.document);
               const warnVar = hasVarWarnings(editor.document);
               const warnEq = hasEqualityWarnings(editor.document);
-              if (blockOnWarning && (warnSemi.has || warnUnd.has || warnVar.has || warnEq.has)) {
+              const shouldBlock = (getStrictLevel('Semicolon') === 'block' && warnSemi.has)
+                || (getStrictLevel('Undeclared') === 'block' && warnUnd.has)
+                || (getStrictLevel('NoVar') === 'block' && warnVar.has)
+                || (getStrictLevel('LooseEquality') === 'block' && warnEq.has);
+              if (shouldBlock) {
                 panel.webview.html = await createHtml('', panel, context.extensionPath);
                 logBlockingWarningsForDocument(editor.document);
                 return;
@@ -5395,11 +5449,13 @@ export function activate(context: vscode.ExtensionContext) {
             logVarWarningsForDocument(editor.document);
             logEqualityWarningsForDocument(editor.document);
             {
-              const blockOnWarning = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
               const warnSemi = hasSemicolonWarnings(editor.document);
               const warnUnd = hasUndeclaredWarnings(editor.document);
               const warnVar = hasVarWarnings(editor.document);
-              if (blockOnWarning && (warnSemi.has || warnUnd.has || warnVar.has)) {
+              const shouldBlock = (getStrictLevel('Semicolon') === 'block' && warnSemi.has)
+                || (getStrictLevel('Undeclared') === 'block' && warnUnd.has)
+                || (getStrictLevel('NoVar') === 'block' && warnVar.has);
+              if (shouldBlock) {
                 panel.webview.html = await createHtml('', panel, context.extensionPath);
                 logBlockingWarningsForDocument(editor.document);
                 return;
@@ -5571,7 +5627,7 @@ export function activate(context: vscode.ExtensionContext) {
           else if (msg.type === 'oscSend') {
             try {
               if (!oscPort) setupOscPort();
-              oscPort!.send({
+              const packet = {
                 address: msg.address,
                 args: (msg.args || []).map((a: any) => {
                   if (typeof a === "number") return { type: "f", value: a };
@@ -5579,7 +5635,16 @@ export function activate(context: vscode.ExtensionContext) {
                   if (typeof a === "boolean") return { type: a ? "T" : "F", value: a };
                   return { type: "s", value: String(a) };
                 })
-              });
+              };
+              oscPort!.send(packet);
+              // Manual self-loopback: if remote == local and port is identical, immediately deliver to receiver
+              try {
+                if (currentOscConfig &&
+                  currentOscConfig.localPort === currentOscConfig.remotePort &&
+                  (currentOscConfig.localAddress === currentOscConfig.remoteAddress)) {
+                  onOscMessage(packet);
+                }
+              } catch { }
             } catch (e) {
               console.error("OSC send error:", e);
             }
@@ -5695,11 +5760,13 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         // Only set HTML on first open, but optionally block on warnings
-        const blockOnWarning_IO = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
         const warnSemi_IO = hasSemicolonWarnings(editor.document);
         const warnUnd_IO = hasUndeclaredWarnings(editor.document);
         const warnVar_IO = hasVarWarnings(editor.document);
-        if (blockOnWarning_IO && (warnSemi_IO.has || warnUnd_IO.has || warnVar_IO.has)) {
+        const shouldBlockIO = (getStrictLevel('Semicolon') === 'block' && warnSemi_IO.has)
+          || (getStrictLevel('Undeclared') === 'block' && warnUnd_IO.has)
+          || (getStrictLevel('NoVar') === 'block' && warnVar_IO.has);
+        if (shouldBlockIO) {
           panel.webview.html = await createHtml('', panel, context.extensionPath);
           logBlockingWarningsForDocument(editor.document);
         } else {
@@ -5740,11 +5807,13 @@ export function activate(context: vscode.ExtensionContext) {
             new Function(codeToSend);
             codeToSend = wrapInSetupIfNeeded(codeToSend);
             // Optionally block on semicolon warnings
-            const blockOnWarning_RO = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
             const warnSemi_RO = hasSemicolonWarnings(editor.document);
             const warnUnd_RO = hasUndeclaredWarnings(editor.document);
             const warnVar_RO = hasVarWarnings(editor.document);
-            if (blockOnWarning_RO && (warnSemi_RO.has || warnUnd_RO.has || warnVar_RO.has)) {
+            const shouldBlockRO = (getStrictLevel('Semicolon') === 'block' && warnSemi_RO.has)
+              || (getStrictLevel('Undeclared') === 'block' && warnUnd_RO.has)
+              || (getStrictLevel('NoVar') === 'block' && warnVar_RO.has);
+            if (shouldBlockRO) {
               (async () => {
                 panel.webview.html = await createHtml('', panel, context.extensionPath);
                 logBlockingWarningsForDocument(editor.document);
@@ -5979,6 +6048,7 @@ text("P5", 50, 52);`;
       e.affectsConfiguration('P5Studio.showReloadButton') ||
 
       e.affectsConfiguration('P5Studio.showRecordButton')
+      || e.affectsConfiguration('P5Studio.ShowDebugButtons')
     ) {
       for (const [docUri, panel] of webviewPanelMap.entries()) {
         // Update reload button
@@ -5993,6 +6063,9 @@ text("P5", 50, 52);`;
         const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
         const showRecord = showRecordConfig && hasDraw;
         panel.webview.postMessage({ type: 'toggleRecordButton', show: showRecord });
+        // Update visibility of debug buttons immediately
+        const showDebug = vscode.workspace.getConfiguration('P5Studio').get<boolean>('ShowDebugButtons', true);
+        panel.webview.postMessage({ type: 'toggleDebugButtons', show: showDebug });
       }
     }
 
