@@ -10,10 +10,7 @@ import { writeFileSync } from 'fs';
 const webviewPanelMap = new Map<string, vscode.WebviewPanel>();
 let activeP5Panel: vscode.WebviewPanel | null = null;
 
-const autoReloadListenersMap = new Map<
-  string,
-  { changeListener?: vscode.Disposable; saveListener?: vscode.Disposable }
->();
+const autoReloadListenersMap = new Map<string, { changeListener?: vscode.Disposable; saveListener?: vscode.Disposable }>();
 
 const outputChannelMap = new Map<string, vscode.OutputChannel>();
 let lastActiveOutputChannel: vscode.OutputChannel | null = null; // <--- NEW
@@ -844,10 +841,9 @@ async function createHtml(
   const delayIconUri = panel.webview.asWebviewUri(delayIconPath);
   const stepRunDelayMs = vscode.workspace.getConfiguration('P5Studio').get<number>('stepRunDelayMs', 500);
   const showDebugButtons = vscode.workspace.getConfiguration('P5Studio').get<boolean>('ShowDebugButtons', true);
+  const showFPS = vscode.workspace.getConfiguration('P5Studio').get<boolean>('showFPS', false);
 
-  const showReloadButton = vscode.workspace
-    .getConfiguration('P5Studio')
-    .get<boolean>('showReloadButton', true);
+  const showReloadButton = vscode.workspace.getConfiguration('P5Studio').get<boolean>('showReloadButton', true);
 
   // Add: showRecordButton setting
   // const showRecordButton = vscode.workspace
@@ -855,9 +851,7 @@ async function createHtml(
   //   .get<boolean>('showRecordButton', true);
 
   // Show record button based on setting only (no longer require draw())
-  const showRecordButton = vscode.workspace
-    .getConfiguration('P5Studio')
-    .get<boolean>('showRecordButton', true);
+  const showRecordButton = vscode.workspace.getConfiguration('P5Studio').get<boolean>('showRecordButton', true);
 
   function escapeBackticks(str: string) {
     return str.replace(/`/g, '\`');
@@ -1209,6 +1203,22 @@ canvas.p5Canvas{
   ${showRecordButton ? '' : 'display:none !important;'}
 }
 #capture-toggle-button svg { width: calc(12px * var(--toolbar-scale)); height: calc(12px * var(--toolbar-scale)); display: block; }
+/* FPS indicator */
+#fps-indicator {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 10004;
+  background: rgba(0,0,0,0.6);
+  color: #fff;
+  font-family: monospace;
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  user-select: none;
+  pointer-events: none; /* don't block clicks */
+  display: none;
+}
 #p5-var-controls {
   position: fixed;
   left: 0; right: 0; bottom: 0;
@@ -1272,6 +1282,7 @@ canvas.p5Canvas{
 <body>
 <div id="error-overlay"></div>
 <div id="warning-overlay"></div>
+<div id="fps-indicator" style="display:${showFPS ? 'block' : 'none'}"></div>
 <div id="inputs-overlay" aria-hidden="true">
   <div class="panel">
     <h2>Sketch inputs</h2>
@@ -1475,6 +1486,37 @@ window.onerror = function(message, source, lineno, colno, error) {
   vscode.postMessage({ type: 'showError', message: msg });
   return false; // Let the error propagate in the console as well
 };
+
+// --- FPS indicator updater ---
+(function(){
+  const el = document.getElementById('fps-indicator');
+  if (!el) return;
+  let lastTs = performance.now();
+  function tick(ts){
+    try {
+      // Prefer p5's deltaTime if available; otherwise, use rAF delta
+      let dt = 0;
+      if (window._p5Instance && typeof window._p5Instance.deltaTime === 'number' && window._p5Instance.deltaTime > 0) {
+        dt = window._p5Instance.deltaTime;
+      } else if (typeof window.deltaTime === 'number' && window.deltaTime > 0) {
+        dt = window.deltaTime;
+      } else {
+        dt = ts - lastTs;
+      }
+      let text = '';
+      if (dt > 0 && isFinite(dt)) {
+        const fps = Math.round(1000 / dt);
+        if (fps > 0 && fps <= 240) text = fps + ' fps';
+      }
+      if (el.style.display !== 'none') {
+        el.textContent = text;
+      }
+    } catch {}
+    lastTs = ts;
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
 
 // --- Add this handler for unhandled promise rejections ---
 window.onunhandledrejection = function(event) {
@@ -1727,6 +1769,15 @@ window.addEventListener("message", e => {
       if (typeof data.value === 'number') {
         document.documentElement.style.setProperty('--overlay-font-size', data.value + 'px');
       }
+      break;
+    case 'toggleFPS':
+      try {
+        const el = document.getElementById('fps-indicator');
+        if (el) {
+          el.style.display = data.show ? 'block' : 'none';
+          if (!data.show) el.textContent = '';
+        }
+      } catch {}
       break;
     case 'showTopInputs':
       try {
@@ -2787,6 +2838,38 @@ export function activate(context: vscode.ExtensionContext) {
     }
   } catch { /* ignore migration issues */ }
   // Create output channel and register with context to ensure it appears in Output panel
+  // Register TEST panel view provider
+  try {
+    const provider: vscode.WebviewViewProvider = {
+      resolveWebviewView(webviewView: vscode.WebviewView) {
+        webviewView.webview.options = {
+          enableScripts: true,
+          localResourceRoots: [vscode.Uri.file(context.extensionPath)]
+        } as any;
+        webviewView.webview.html = `<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      body { margin: 0; font-family: monospace; color: var(--vscode-editor-foreground); background: transparent; }
+      .wrap { padding: 8px; }
+      h3 { margin: 0 0 8px 0; font-weight: 600; }
+      .muted { opacity: 0.8; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h3>TEST</h3>
+      <div class="muted">This is a placeholder panel contributed by P5 Studio.</div>
+    </div>
+  </body>
+</html>`;
+      }
+    };
+    context.subscriptions.push(
+      vscode.window.registerWebviewViewProvider('p5studioVariablesView', provider)
+    );
+  } catch { }
   // --- Simple Semicolon Linter (Problems panel) ---
   const semicolonDiagnostics = vscode.languages.createDiagnosticCollection('semicolon-linter');
   const undeclaredDiagnostics = vscode.languages.createDiagnosticCollection('undeclared-variable');
@@ -6066,6 +6149,14 @@ text("P5", 50, 52);`;
         // Update visibility of debug buttons immediately
         const showDebug = vscode.workspace.getConfiguration('P5Studio').get<boolean>('ShowDebugButtons', true);
         panel.webview.postMessage({ type: 'toggleDebugButtons', show: showDebug });
+      }
+    }
+
+    // --- Immediately apply showFPS changes in all open panels ---
+    if (e.affectsConfiguration('P5Studio.showFPS')) {
+      const show = vscode.workspace.getConfiguration('P5Studio').get<boolean>('showFPS', false);
+      for (const [, panel] of webviewPanelMap.entries()) {
+        try { panel.webview.postMessage({ type: 'toggleFPS', show }); } catch { }
       }
     }
 

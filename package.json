@@ -38,7 +38,8 @@
     "commands": [
       {
         "command": "extension.live-p5",
-        "title": "P5 Studio Open P5 Panel",
+        "title": "Open P5 Panel",
+         "category": "P5 Studio",
         "icon": {
           "light": "images/p5.svg",
           "dark": "images/p5.svg"
@@ -46,7 +47,8 @@
       },
       {
         "command": "extension.open-blockly",
-        "title": "Blockly ",
+        "title": "Open Blockly ",
+         "category": "P5 Studio",
          "icon": {
           "light": "images/blockly.png",
           "dark": "images/blockly.png"
@@ -55,6 +57,7 @@
       {
         "command": "extension.reload-p5-sketch",
         "title": "Reload P5 Sketch",
+         "category": "P5 Studio",
         "icon": {
           "light": "images/run.svg",
           "dark": "images/run.svg"
@@ -62,15 +65,18 @@
       },
       {
         "command": "extension.create-jsconfig",
-        "title": "P5 Studio Setup new project"
+        "title": "Setup new p5 project",
+         "category": "P5 Studio"
       },
       {
         "command": "extension.openP5Ref",
-        "title": "📕Open P5.js Reference"
+        "title": "📕Open P5.js Reference",
+         "category": "P5 Studio"
       },
       {
         "command": "extension.openSelectedText",
-        "title": "📕Search in P5.js Reference"
+        "title": "📕Search in P5.js Reference",
+         "category": "P5 Studio"
       },
       {
         "command": "P5Studio.toggleReloadWhileTypingOn",
@@ -99,14 +105,30 @@
         "command": "extension.duplicateFile",
         "title": "Duplicate",
         "category": "File"
-      }
-      ,
+      },
       {
         "command": "extension.decouple-blockly",
         "title": "Decouple Blockly",
         "category": "File"
       }
     ],
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "p5studioVariablesPanel",
+          "title": "VARIABLES",
+          "icon": "images/p5.svg"
+        }
+      ]
+    },
+    "views": {
+      "p5studioVariablesPanel": [
+        {
+          "id": "p5studioVariablesView",
+          "name": "VARIABLES"
+        }
+      ]
+    },
     "menus": {
       "editor/title": [
         {
@@ -281,6 +303,12 @@
           "default": true,
           "description": "Show the Step-Run and Single-Step debug buttons in the P5 webview toolbar.",
           "order": 16.5
+        },
+        "P5Studio.showFPS": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show the current FPS (rounded from 1000/deltaTime) in the top-left of the P5 web panel.",
+          "order": 16.6
         },
         "P5Studio.StrictSemicolonWarning": {
           "type": "string",
