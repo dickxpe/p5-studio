@@ -2735,10 +2735,12 @@ function setupOscPort() {
     try { oscPort.close(); } catch { }
     oscPort = null;
   }
-  const { localAddress, remoteAddress, remotePort, localPort } = getOscConfig();
+  let { localAddress, remoteAddress, remotePort, localPort } = getOscConfig();
+  // If localAddress is 127.0.0.1, bind to 0.0.0.0 to allow all localhost and LAN traffic
+  const bindAddress = (localAddress === '127.0.0.1') ? '0.0.0.0' : localAddress;
   currentOscConfig = { localAddress, remoteAddress, localPort, remotePort };
   oscPort = new osc.UDPPort({
-    localAddress, // Bind to configured address (127.0.0.1 for localhost, or 0.0.0.0 for LAN)
+    localAddress: bindAddress, // Bind to all interfaces if needed
     localPort,
     remoteAddress,
     remotePort,
@@ -5732,17 +5734,7 @@ export function activate(context: vscode.ExtensionContext) {
               };
               oscOutputChannel.appendLine(`[DEBUG] Sending OSC packet: ${JSON.stringify(packet)}`);
               oscPort.send(packet);
-              // Manual self-loopback: if remote == local and port is identical, immediately deliver to receiver
-              try {
-                if (currentOscConfig &&
-                  currentOscConfig.localPort === currentOscConfig.remotePort &&
-                  (currentOscConfig.localAddress === currentOscConfig.remoteAddress)) {
-                  oscOutputChannel.appendLine(`[DEBUG] Manual self-loopback triggered`);
-                  onOscMessage(packet);
-                }
-              } catch (e) {
-                oscOutputChannel.appendLine(`[DEBUG] Error in self-loopback: ${e}`);
-              }
+              // Removed manual self-loopback to prevent duplicate delivery
             } catch (e) {
               oscOutputChannel.appendLine(`[DEBUG] OSC send error: ${e}`);
               console.error("OSC send error:", e);

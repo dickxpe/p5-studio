@@ -125,7 +125,8 @@
       "p5studioVariablesPanel": [
         {
           "id": "p5studioVariablesView",
-          "name": "VARIABLES"
+          "name": "VARIABLES",
+          "icon": "p5.svg"
         }
       ]
     },
