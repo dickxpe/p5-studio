@@ -2713,13 +2713,20 @@ let currentOscConfig: { localAddress: string; remoteAddress: string; localPort: 
 function onOscMessage(oscMsg: any) {
   try {
     oscOutputChannel.appendLine(`${getTime()} [OSC] RX ${oscMsg.address} ${JSON.stringify(oscMsg.args)}`);
+    oscOutputChannel.appendLine(`[DEBUG] Broadcasting OSC to ${webviewPanelMap.size} panels`);
   } catch { }
-  if (activeP5Panel) {
-    activeP5Panel.webview.postMessage({
-      type: "oscReceive",
-      address: oscMsg.address,
-      args: oscMsg.args
-    });
+  // Broadcast to all open P5 panels
+  for (const [uri, panel] of webviewPanelMap.entries()) {
+    try {
+      oscOutputChannel.appendLine(`[DEBUG] Sending OSC to panel for ${uri}`);
+      panel.webview.postMessage({
+        type: "oscReceive",
+        address: oscMsg.address,
+        args: oscMsg.args
+      });
+    } catch (e) {
+      oscOutputChannel.appendLine(`[DEBUG] Failed to send OSC to panel for ${uri}: ${e}`);
+    }
   }
 }
 // Setup OSC UDP port for sending/receiving OSC messages
@@ -2737,6 +2744,7 @@ function setupOscPort() {
     remotePort,
     metadata: true
   });
+  oscOutputChannel.appendLine(`[DEBUG] Opening OSC port on ${localAddress}:${localPort}, remote ${remoteAddress}:${remotePort}`);
   oscPort.open();
 
   oscPort.on("ready", function () {
@@ -5709,7 +5717,10 @@ export function activate(context: vscode.ExtensionContext) {
           // --- OSC SEND HANDLER ---
           else if (msg.type === 'oscSend') {
             try {
-              if (!oscPort) setupOscPort();
+              if (!oscPort) {
+                vscode.window.showErrorMessage('OSC port is not initialized. Try reloading the window.');
+                return;
+              }
               const packet = {
                 address: msg.address,
                 args: (msg.args || []).map((a: any) => {
@@ -5719,16 +5730,21 @@ export function activate(context: vscode.ExtensionContext) {
                   return { type: "s", value: String(a) };
                 })
               };
-              oscPort!.send(packet);
+              oscOutputChannel.appendLine(`[DEBUG] Sending OSC packet: ${JSON.stringify(packet)}`);
+              oscPort.send(packet);
               // Manual self-loopback: if remote == local and port is identical, immediately deliver to receiver
               try {
                 if (currentOscConfig &&
                   currentOscConfig.localPort === currentOscConfig.remotePort &&
                   (currentOscConfig.localAddress === currentOscConfig.remoteAddress)) {
+                  oscOutputChannel.appendLine(`[DEBUG] Manual self-loopback triggered`);
                   onOscMessage(packet);
                 }
-              } catch { }
+              } catch (e) {
+                oscOutputChannel.appendLine(`[DEBUG] Error in self-loopback: ${e}`);
+              }
             } catch (e) {
+              oscOutputChannel.appendLine(`[DEBUG] OSC send error: ${e}`);
               console.error("OSC send error:", e);
             }
             return;
