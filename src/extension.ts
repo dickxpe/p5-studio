@@ -1245,6 +1245,11 @@ canvas.p5Canvas{
   transform: translateY(100%);
   transition: opacity 0.2s cubic-bezier(.4,0,.2,1), transform 0.2s cubic-bezier(.4,0,.2,1);
 }
+#p5-var-drawer-tab.tab-visible {
+  display: flex !important;
+  opacity: 1;
+  transform: translateY(0%);
+}
 </style>
 </head>
 <body>
@@ -1777,13 +1782,11 @@ function hideDrawer() {
   const controls = document.getElementById('p5-var-controls');
   const tab = document.getElementById('p5-var-drawer-tab');
   if (!controls || !tab) return;
+  // Ensure controls stay in DOM (so height animation works) but slide out
   controls.classList.add('drawer-hidden');
+  controls.style.display = 'flex';
   tab.style.display = 'flex';
-  tab.classList.add('tab-visible'); // Animate tab up at the same time as drawer animates down
-  setTimeout(() => {
-    controls.style.display = 'none';
-    // Tab remains visible after animation
-  }, 200);
+  tab.classList.add('tab-visible');
 }
 
 // Shows the variable drawer UI in the webview
@@ -1792,13 +1795,10 @@ function showDrawer() {
   const tab = document.getElementById('p5-var-drawer-tab');
   if (!controls || !tab) return;
   controls.style.display = 'flex';
-  tab.classList.remove('tab-visible'); // Animate tab down at the same time as drawer animates up
-  setTimeout(() => {
-    tab.style.display = 'none'; // Hide tab after animation
-  }, 200);
-  setTimeout(() => {
-    controls.classList.remove('drawer-hidden');
-  }, 10);
+  controls.classList.remove('drawer-hidden');
+  tab.classList.remove('tab-visible');
+  // Give animation a frame to apply; then hide tab fully
+  setTimeout(() => { tab.style.display = 'none'; }, 200);
 }
 
 // Dynamically creates/removes the variable drawer and tab, and sets up event listeners for variable changes
@@ -1828,10 +1828,10 @@ function renderGlobalVarControls(vars, readOnly) {
   }
   controls.innerHTML = '<button class="drawer-toggle" title="Hide controls">&#x25BC;</button>';
   if (window._p5VarDrawerDefaultState === 'collapsed') {
+    controls.classList.add('drawer-hidden');
+    controls.style.display = 'flex';
     tab.style.display = 'flex';
     tab.classList.add('tab-visible');
-    controls.classList.add('drawer-hidden');
-    controls.style.display = 'none';
   } else {
     tab.style.display = 'none';
     tab.classList.remove('tab-visible');
