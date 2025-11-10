@@ -185,7 +185,8 @@
         {
           "id": "p5studioVariablesView",
           "name": "VARIABLES",
-          "icon": "p5.svg"
+          "icon": "p5.svg",
+          "type": "webview"
         }
       ]
     },

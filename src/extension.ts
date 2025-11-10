@@ -1764,16 +1764,15 @@ window.addEventListener("message", e => {
 });
 
 function updateGlobalVarInSketch(name, value) {
-  if (typeof window[name] !== 'undefined') {
-    let type = (window._p5GlobalVarTypes && window._p5GlobalVarTypes[name]) || typeof window[name];
-    if (type === 'number') {
-      let num = Number(value);
-      if (!isNaN(num)) window[name] = num;
-    } else if (type === 'boolean') {
-      window[name] = (value === 'true' || value === true);
-    } else {
-      window[name] = value;
-    }
+  // Always set window[name]; rewritten code references window.<name>
+  let type = (window._p5GlobalVarTypes && window._p5GlobalVarTypes[name]) || typeof window[name];
+  if (type === 'number') {
+    const num = Number(value);
+    if (!isNaN(num)) window[name] = num;
+  } else if (type === 'boolean') {
+    window[name] = (value === 'true' || value === true);
+  } else {
+    window[name] = value;
   }
 }
 
@@ -1803,6 +1802,10 @@ function showDrawer() {
 
 // Dynamically creates/removes the variable drawer and tab, and sets up event listeners for variable changes
 function renderGlobalVarControls(vars, readOnly) {
+  // Always send the current global vars to the extension for the VARIABLES panel
+  if (typeof vscode !== 'undefined' && Array.isArray(vars)) {
+    try { vscode.postMessage({ type: 'setGlobalVars', variables: vars }); } catch {}
+  }
   let controls = document.getElementById('p5-var-controls');
   let tab = document.getElementById('p5-var-drawer-tab');
   if (!vars || vars.length === 0) {
@@ -2675,6 +2678,16 @@ function registerEscKeybinding(context: vscode.ExtensionContext) {
 // Activate
 // ----------------------------
 export function activate(context: vscode.ExtensionContext) {
+  // --- VARIABLES PANEL RELAY LOGIC ---
+  // These must be defined at the extension activation scope
+  // so they can be accessed from message handlers and the provider
+  let latestGlobalVars: { name: string, value: any, type: string }[] = [];
+  let variablesPanelView: vscode.WebviewView | undefined;
+  function updateVariablesPanel() {
+    if (variablesPanelView) {
+      variablesPanelView.webview.postMessage({ type: 'setGlobalVars', variables: latestGlobalVars });
+    }
+  }
   // Helper: find active P5 panel
   function getActiveP5Panel(): vscode.WebviewPanel | undefined {
     // Prefer the last known active panel
@@ -2960,8 +2973,10 @@ export function activate(context: vscode.ExtensionContext) {
   // Create output channel and register with context to ensure it appears in Output panel
   // Register TEST panel view provider
   try {
+    // (Declarations moved to top-level activate scope)
     const provider: vscode.WebviewViewProvider = {
       resolveWebviewView(webviewView: vscode.WebviewView) {
+        variablesPanelView = webviewView;
         webviewView.webview.options = {
           enableScripts: true,
           localResourceRoots: [vscode.Uri.file(context.extensionPath)]
@@ -2973,17 +2988,89 @@ export function activate(context: vscode.ExtensionContext) {
     <style>
       body { margin: 0; font-family: monospace; color: var(--vscode-editor-foreground); background: transparent; }
       .wrap { padding: 8px; }
-      h3 { margin: 0 0 8px 0; font-weight: 600; }
       .muted { opacity: 0.8; }
+      table { border-collapse: collapse; width: 100%; font-size: 15px; }
+      th, td { border: 1px solid #8884; padding: 4px 8px; text-align: left; }
+      th { background: #2222; }
+      input[type="number"] { width: 80px; }
+      input[type="text"] { width: 120px; }
+      input[type="checkbox"] { transform: scale(1.2); }
     </style>
   </head>
   <body>
     <div class="wrap">
-      <h3>TEST</h3>
-      <div class="muted">This is a placeholder panel contributed by P5 Studio.</div>
+      <div id="vars-table"></div>
     </div>
+    <script>
+      // Acquire VS Code API once and reuse
+      const vscode = window.acquireVsCodeApi ? acquireVsCodeApi() : null;
+      function sendVarUpdate(name, value) {
+        if (vscode) {
+          vscode.postMessage({ type: 'updateGlobalVar', name: name, value: value });
+        } else if (window.parent) {
+          parent.postMessage({ type: 'updateGlobalVar', name: name, value: value }, '*');
+        }
+      }
+      window.addEventListener('message', function(event) {
+        if (event.data && event.data.type === 'setGlobalVars') {
+          var vars = event.data.variables || [];
+          var tableDiv = document.getElementById('vars-table');
+          if (!tableDiv) return;
+          if (!vars.length) {
+            tableDiv.innerHTML = '<span class="muted">No global variables</span>';
+            return;
+          }
+          var html = '<table><thead><tr><th>Name</th><th>Value</th><th>Type</th></tr></thead><tbody>';
+          for (var i = 0; i < vars.length; ++i) {
+            var v = vars[i];
+            html += '<tr><td>' + v.name + '</td><td>';
+            if (v.type === 'boolean') {
+              html += '<input type="checkbox" data-var="' + v.name + '"' + (v.value ? ' checked' : '') + ' />';
+            } else if (v.type === 'number') {
+              html += '<input type="number" data-var="' + v.name + '" value="' + (v.value !== undefined && v.value !== null ? v.value : '') + '" step="any" />';
+            } else {
+              html += '<input type="text" data-var="' + v.name + '" value="' + (v.value !== undefined && v.value !== null ? v.value : '') + '" />';
+            }
+            html += '</td><td>' + v.type + '</td></tr>';
+          }
+          html += '</tbody></table>';
+          tableDiv.innerHTML = html;
+          var inputs = tableDiv.querySelectorAll('input[data-var]');
+          inputs.forEach(function(input) {
+            var name = input.getAttribute('data-var');
+            if (input.type === 'checkbox') {
+              input.addEventListener('change', function() {
+                sendVarUpdate(name, input.checked);
+              });
+            } else if (input.type === 'number') {
+              input.addEventListener('change', function() {
+                sendVarUpdate(name, input.value === '' ? '' : Number(input.value));
+              });
+            } else {
+              input.addEventListener('change', function() {
+                sendVarUpdate(name, input.value);
+              });
+            }
+          });
+        }
+      });
+    </script>
   </body>
 </html>`;
+        // On first load, show latest vars if available
+        setTimeout(updateVariablesPanel, 100);
+
+        // Attach message listener for updates coming from VARIABLES panel
+        webviewView.webview.onDidReceiveMessage((msg) => {
+          if (msg && msg.type === 'updateGlobalVar' && msg.name) {
+            // Relay to ALL open P5 webviews
+            for (const [, panel] of webviewPanelMap) {
+              if (panel && panel.webview) {
+                panel.webview.postMessage({ type: 'updateGlobalVar', name: msg.name, value: msg.value });
+              }
+            }
+          }
+        });
       }
     };
     context.subscriptions.push(
@@ -5197,6 +5284,20 @@ export function activate(context: vscode.ExtensionContext) {
         });
 
         panel.webview.onDidReceiveMessage(async msg => {
+          if (msg.type === 'setGlobalVars') {
+            // Relay to VARIABLES panel
+            latestGlobalVars = Array.isArray(msg.variables) ? msg.variables : [];
+            updateVariablesPanel();
+            return;
+          } else if (msg.type === 'updateGlobalVar') {
+            // Forward update to VARIABLES panel (for live value update)
+            const idx = latestGlobalVars.findIndex(v => v.name === msg.name);
+            if (idx !== -1) {
+              latestGlobalVars[idx] = { ...latestGlobalVars[idx], value: msg.value };
+              updateVariablesPanel();
+            }
+            return;
+          }
           // Focus the script tab if requested from the webview
           if (msg.type === 'focus-script-tab') {
             // Intentionally ignored to keep focus on the webpanel tab per latest UX
