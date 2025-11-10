@@ -37,6 +37,11 @@
   "contributes": {
     "commands": [
       {
+        "command": "p5studio.clearHighlightEsc",
+        "title": "Clear Step Highlight (ESC)",
+        "category": "P5 Studio"
+      },
+      {
         "command": "extension.live-p5",
         "title": "Open P5 Panel",
          "category": "P5 Studio",
@@ -382,6 +387,11 @@
         "key": "ctrl+alt+p",
         "mac": "cmd+alt+p",
         "when": "editorTextFocus && isJsOrTs && hasP5Webview"
+      },
+      {
+        "command": "p5studio.clearHighlightEsc",
+        "key": "escape",
+        "when": "editorTextFocus"
       }
     ]
   },

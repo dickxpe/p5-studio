@@ -1,3 +1,4 @@
+
 import * as path from 'path';
 import * as vscode from 'vscode';
 import * as recast from 'recast';
@@ -1604,12 +1605,21 @@ waitForP5AndRunSketch();
 
 document.getElementById("reload-button").addEventListener("click",()=>{
   vscode.postMessage({type:"reload-button-clicked", preserveGlobals: true});
+  // Clear the current editor highlight when reload is pressed
+  if (typeof acquireVsCodeApi === 'undefined') {
+    // Running in extension host context
+    if (typeof clearStepHighlight === 'function') clearStepHighlight();
+  }
 });
 document.getElementById("step-run-button").addEventListener("click",()=>{
   vscode.postMessage({type:"step-run-clicked"});
+  // Request VS Code to focus the script tab for this sketch
+  vscode.postMessage({type: "focus-script-tab"});
 });
 document.getElementById("single-step-button").addEventListener("click",()=>{
   vscode.postMessage({type:"single-step-clicked"});
+  // Request VS Code to focus the script tab for this sketch
+  vscode.postMessage({type: "focus-script-tab"});
 });
 
 window.addEventListener("resize",()=>{ 
@@ -2767,10 +2777,23 @@ function setupOscPort() {
 }
 setupOscPort();
 
+
+// Command to clear highlight, for use with keybinding
+function registerClearHighlightCommand(context: vscode.ExtensionContext) {
+  context.subscriptions.push(vscode.commands.registerCommand('p5studio.clearHighlightEsc', async () => {
+    clearStepHighlight(vscode.window.activeTextEditor);
+    // Do NOT reload or re-inject code when clearing highlight with ESC
+  }));
+}
+// Register ESC key to clear highlight
+function registerEscKeybinding(context: vscode.ExtensionContext) {
+  // This function is obsolete. Keybindings must be declared in package.json only.
+}
 // ----------------------------
 // Activate
 // ----------------------------
 export function activate(context: vscode.ExtensionContext) {
+  registerClearHighlightCommand(context);
 
   // Helper to update the p5WebviewTabFocused context key
   function updateP5WebviewTabContext() {
@@ -4473,7 +4496,12 @@ export function activate(context: vscode.ExtensionContext) {
     }
   })();
 
+  let _lastStepHighlightEditor: vscode.TextEditor | undefined;
   vscode.window.onDidChangeActiveTextEditor(editor => {
+    // Clear highlight in the previously active editor (if any)
+    if (_lastStepHighlightEditor && _lastStepHighlightEditor !== editor) {
+      clearStepHighlight(_lastStepHighlightEditor);
+    }
     updateP5Context(editor);
     updateJsOrTsContext(editor);
     if (!editor) return;
@@ -4493,6 +4521,8 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.commands.executeCommand('setContext', 'hasP5Webview', false);
     }
     if (editor) updateAutoReloadListeners(editor);
+    // Track the last editor for highlight clearing
+    _lastStepHighlightEditor = editor;
     // Focus the output channel for the active sketch
     const channel = outputChannelMap.get(docUri);
     if (channel) showAndTrackOutputChannel(channel);
@@ -4535,6 +4565,8 @@ export function activate(context: vscode.ExtensionContext) {
   vscode.workspace.onDidChangeTextDocument(e => {
     if (e.document === vscode.window.activeTextEditor?.document) {
       updateP5Context(vscode.window.activeTextEditor);
+      // Stop highlighting as soon as code is changed
+      clearStepHighlight(vscode.window.activeTextEditor);
     }
     // Lint on text change
     lintSemicolons(e.document);
@@ -5136,6 +5168,20 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.executeCommand('setContext', 'hasP5Webview', true);
 
         panel.webview.onDidReceiveMessage(async msg => {
+          // Focus the script tab if requested from the webview
+          if (msg.type === 'focus-script-tab') {
+            // Reveal the editor for this document
+            const doc = editor.document;
+            if (doc) {
+              const openEditor = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === doc.uri.toString());
+              if (openEditor) {
+                await vscode.window.showTextDocument(openEditor.document, openEditor.viewColumn, false);
+              } else {
+                await vscode.window.showTextDocument(doc, { preview: false });
+              }
+            }
+            return;
+          }
           const fileName = path.basename(editor.document.fileName);
           const docUri = editor.document.uri.toString();
           const outputChannel = getOrCreateOutputChannel(docUri, fileName);
