@@ -1,0 +1,13 @@
+{
+  "createdAt": "2025-11-10T08:21:26.265",
+  "include": [
+    "*.js",
+    "**/*.js",
+    "*.ts",
+    "**/.ts",
+    "common/*.js",
+    "import/*.js",
+    "c:\\Users\\Peter\\.vscode\\extensions\\peterdickx.p5-studio-1.0.0\\p5types\\global.d.ts",
+    "c:\\Users\\Peter\\.vscode\\extensions\\peterdickx.p5-studio-1.0.0\\p5types\\p5helper.d.ts"
+  ]
+}

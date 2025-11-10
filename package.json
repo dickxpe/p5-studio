@@ -110,8 +110,26 @@
         "command": "extension.decouple-blockly",
         "title": "Decouple Blockly",
         "category": "File"
-      }
-    ],
+        },
+        {
+          "command": "P5Studio.toggleDebugButtonsOn",
+          "title": "Show Debug Buttons",
+          "icon": {
+            "light": "images/bug-gray.svg",
+            "dark": "images/bug-gray.svg"
+          },
+          "category": "P5 Studio"
+        },
+        {
+          "command": "P5Studio.toggleDebugButtonsOff",
+          "title": "Hide Debug Buttons",
+          "icon": {
+            "light": "images/bug-blue.svg",
+            "dark": "images/bug-blue.svg"
+          },
+          "category": "P5 Studio"
+        }
+      ],
     "viewsContainers": {
       "panel": [
         {
@@ -156,7 +174,18 @@
           "command": "P5Studio.toggleReloadWhileTypingOff",
           "group": "navigation@2",
           "when": "hasP5Project == true && isP5js && liveP5ReloadWhileTypingEnabled != true && (editorLangId == javascript || editorLangId == typescript)"
+        },
+        {
+          "command": "P5Studio.toggleDebugButtonsOn",
+          "group": "navigation",
+          "when": "p5WebviewTabFocused && !config.P5Studio.ShowDebugButtons"
+        },
+        {
+          "command": "P5Studio.toggleDebugButtonsOff",
+          "group": "navigation",
+          "when": "p5WebviewTabFocused && config.P5Studio.ShowDebugButtons"
         }
+        
       ],
       "explorer/context": [
         {

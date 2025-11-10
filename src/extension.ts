@@ -2771,6 +2771,75 @@ setupOscPort();
 // Activate
 // ----------------------------
 export function activate(context: vscode.ExtensionContext) {
+
+  // Helper to update the p5WebviewTabFocused context key
+  function updateP5WebviewTabContext() {
+    const activeTab = vscode.window.tabGroups.activeTabGroup?.activeTab;
+    let isP5Webview = false;
+    if (activeTab) {
+      // Log label and input for debugging
+      try {
+        console.log('[P5Studio] activeTab.label:', activeTab.label);
+        console.log('[P5Studio] activeTab.input:', JSON.stringify(activeTab.input));
+      } catch (e) {
+        console.log('[P5Studio] Error logging activeTab.input:', e);
+      }
+      if (activeTab.label && activeTab.input) {
+        const input = activeTab.input as { viewType?: string };
+        if (input.viewType === 'mainThreadWebview-extension.live-p5' && activeTab.label.startsWith('LIVE:')) {
+          isP5Webview = true;
+        }
+      }
+    }
+    vscode.commands.executeCommand('setContext', 'p5WebviewTabFocused', isP5Webview);
+  }
+
+  // Listen for tab group changes
+  context.subscriptions.push(
+    vscode.window.tabGroups.onDidChangeTabs(() => {
+      updateP5WebviewTabContext();
+    })
+  );
+  // Listen for active editor changes (for when webview is focused)
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(() => {
+      updateP5WebviewTabContext();
+    })
+  );
+  // Also update on activation
+  updateP5WebviewTabContext();
+  // Register the debug toggle button command for the tab group
+  // Register two commands for debug toggle (on/off)
+  context.subscriptions.push(
+    vscode.commands.registerCommand('P5Studio.toggleDebugButtonsOn', async () => {
+      const activeTab = vscode.window.tabGroups.activeTabGroup?.activeTab;
+      if (activeTab && activeTab.label && activeTab.label.startsWith('LIVE:')) {
+        for (const [, panel] of webviewPanelMap.entries()) {
+          if (panel.title === activeTab.label) {
+            const config = vscode.workspace.getConfiguration('P5Studio');
+            await config.update('ShowDebugButtons', true, vscode.ConfigurationTarget.Global);
+            panel.webview.postMessage({ type: 'toggleDebugButtons', show: true });
+            break;
+          }
+        }
+      }
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand('P5Studio.toggleDebugButtonsOff', async () => {
+      const activeTab = vscode.window.tabGroups.activeTabGroup?.activeTab;
+      if (activeTab && activeTab.label && activeTab.label.startsWith('LIVE:')) {
+        for (const [, panel] of webviewPanelMap.entries()) {
+          if (panel.title === activeTab.label) {
+            const config = vscode.workspace.getConfiguration('P5Studio');
+            await config.update('ShowDebugButtons', false, vscode.ConfigurationTarget.Global);
+            panel.webview.postMessage({ type: 'toggleDebugButtons', show: false });
+            break;
+          }
+        }
+      }
+    })
+  );
   // Previously, we closed restored LIVE/Blockly webviews on reopen to avoid empty tabs.
   // That behavior is now disabled per request; let VS Code handle restoration normally.
 
