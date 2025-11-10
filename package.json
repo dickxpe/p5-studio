@@ -115,22 +115,58 @@
         "command": "extension.decouple-blockly",
         "title": "Decouple Blockly",
         "category": "File"
-        },
+      },
         {
-          "command": "P5Studio.toggleDebugButtonsOn",
-          "title": "Show Debug Buttons",
-          "icon": {
-            "light": "images/bug-gray.svg",
-            "dark": "images/bug-gray.svg"
+          "command": "P5Studio.stepRun",
+          "title": "Step-Run",
+            "icon": {
+            "light": "images/play.svg",
+            "dark": "images/play.svg"
           },
           "category": "P5 Studio"
         },
         {
-          "command": "P5Studio.toggleDebugButtonsOff",
-          "title": "Hide Debug Buttons",
+          "command": "P5Studio.singleStep",
+          "title": "Single Step",
+            "icon": {
+            "light": "images/step.svg",
+            "dark": "images/step.svg"
+          },
+          "category": "P5 Studio"
+        },
+        {
+          "command": "P5Studio.captureToggle",
+          "title": "Toggle Capture Panel",
+            "icon": {
+            "light": "images/record_gray.svg",
+            "dark": "images/record_gray.svg"
+          },
+          "category": "P5 Studio"
+  },
+  {
+          "command": "P5Studio.reloadWebpanel",
+          "title": "Reload Webpanel",
+          "icon": {
+            "light": "images/reload.svg",
+            "dark": "images/reload.svg"
+          },
+          "category": "P5 Studio"
+        },
+        {
+          "command": "P5Studio.debugPrime",
+          "title": "Debug",
           "icon": {
             "light": "images/bug-blue.svg",
             "dark": "images/bug-blue.svg"
+          },
+          "category": "P5 Studio"
+        },
+        {
+          "command": "P5Studio.captureToggleOn",
+          "title": "Toggle Capture Panel",
+          "icon": {
+            "light": "images/record.svg",
+            "dark": "images/record.svg"
           },
           "category": "P5 Studio"
         }
@@ -171,6 +207,36 @@
           "when": "hasP5Project == true && isP5js && hasP5Webview && (editorLangId == javascript || editorLangId == typescript)"
         },
         {
+          "command": "P5Studio.reloadWebpanel",
+          "group": "navigation",
+          "when": "p5WebviewTabFocused"
+        },
+        {
+          "command": "P5Studio.debugPrime",
+          "group": "navigation@3",
+          "when": "p5WebviewTabFocused && !p5DebugPrimed && config.P5Studio.ShowDebugButton"
+        },
+        {
+          "command": "P5Studio.stepRun",
+          "group": "navigation@3",
+          "when": "p5WebviewTabFocused && p5DebugPrimed && config.P5Studio.ShowDebugButton"
+        },
+        {
+          "command": "P5Studio.singleStep",
+          "group": "navigation@4",
+          "when": "p5WebviewTabFocused && p5DebugPrimed && config.P5Studio.ShowDebugButton"
+        },
+        {
+          "command": "P5Studio.captureToggle",
+          "group": "navigation@5",
+          "when": "p5WebviewTabFocused && !p5CaptureVisible"
+        },
+        {
+          "command": "P5Studio.captureToggleOn",
+          "group": "navigation@5",
+          "when": "p5WebviewTabFocused && p5CaptureVisible"
+        },
+        {
           "command": "P5Studio.toggleReloadWhileTypingOn",
           "group": "navigation@2",
           "when": "hasP5Project == true && isP5js && liveP5ReloadWhileTypingEnabled == true && (editorLangId == javascript || editorLangId == typescript)"
@@ -179,18 +245,7 @@
           "command": "P5Studio.toggleReloadWhileTypingOff",
           "group": "navigation@2",
           "when": "hasP5Project == true && isP5js && liveP5ReloadWhileTypingEnabled != true && (editorLangId == javascript || editorLangId == typescript)"
-        },
-        {
-          "command": "P5Studio.toggleDebugButtonsOn",
-          "group": "navigation",
-          "when": "p5WebviewTabFocused && !config.P5Studio.ShowDebugButtons"
-        },
-        {
-          "command": "P5Studio.toggleDebugButtonsOff",
-          "group": "navigation",
-          "when": "p5WebviewTabFocused && config.P5Studio.ShowDebugButtons"
         }
-        
       ],
       "explorer/context": [
         {
@@ -333,10 +388,10 @@
           "description": "Delay (in milliseconds) used by the Step-Run button between setup() statements and at the start of each loop iteration.",
           "order": 16
         },
-        "P5Studio.ShowDebugButtons": {
+        "P5Studio.ShowDebugButton": {
           "type": "boolean",
           "default": true,
-          "description": "Show the Step-Run and Single-Step debug buttons in the P5 webview toolbar.",
+          "description": "Show the Debug button in the P5 webview title bar.",
           "order": 16.5
         },
         "P5Studio.showFPS": {

@@ -18,6 +18,11 @@ let lastActiveOutputChannel: vscode.OutputChannel | null = null; // <--- NEW
 // Global OSC diagnostics output channel
 const oscOutputChannel: vscode.OutputChannel = vscode.window.createOutputChannel('LIVE P5: OSC');
 
+// Track whether a given sketch's debug has been "primed" (after first single-step)
+const debugPrimedMap = new Map<string, boolean>();
+// Track capture visibility per sketch (for dynamic icon)
+const captureVisibleMap = new Map<string, boolean>();
+
 // Project marker: whether the workspace has a .p5 file at its root
 let hasP5Project: boolean = false;
 
@@ -52,7 +57,11 @@ function applyStepHighlight(editor: vscode.TextEditor, line: number) {
   const lineIdx = Math.max(0, Math.min(editor.document.lineCount - 1, line - 1));
   const range = new vscode.Range(lineIdx, 0, lineIdx, editor.document.lineAt(lineIdx).text.length);
   editor.setDecorations(deco, [range]);
-  try { editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport); } catch { }
+  try {
+    if (vscode.window.activeTextEditor && vscode.window.activeTextEditor === editor) {
+      editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+    }
+  } catch { }
 }
 
 function showAndTrackOutputChannel(ch: vscode.OutputChannel) {
@@ -841,7 +850,7 @@ async function createHtml(
   const delayIconPath = vscode.Uri.file(path.join(extensionPath, 'images', 'play.svg'));
   const delayIconUri = panel.webview.asWebviewUri(delayIconPath);
   const stepRunDelayMs = vscode.workspace.getConfiguration('P5Studio').get<number>('stepRunDelayMs', 500);
-  const showDebugButtons = vscode.workspace.getConfiguration('P5Studio').get<boolean>('ShowDebugButtons', true);
+  const showDebugButton = vscode.workspace.getConfiguration('P5Studio').get<boolean>('ShowDebugButton', true);
   const showFPS = vscode.workspace.getConfiguration('P5Studio').get<boolean>('showFPS', false);
 
   const showReloadButton = vscode.workspace.getConfiguration('P5Studio').get<boolean>('showReloadButton', true);
@@ -1161,49 +1170,7 @@ canvas.p5Canvas{
 #inputs-overlay button.primary{ background:#0078D4; border-color:#0078D4; }
 #inputs-overlay button:hover{ filter: brightness(1.1); }
 
-#p5-toolbar {
-  position: fixed;
-  top: 10px;
-  right: 10px;
-  display: flex;
-  flex-direction: row;
-  gap: calc(10px * var(--toolbar-scale));
-  /* Keep toolbar above overlays so buttons remain clickable even when an overlay is visible */
-  z-index: 10003;
-}
-#reload-button {
-  width: calc(16px * var(--toolbar-scale)); height: calc(16px * var(--toolbar-scale));
-  background: white; border-radius: calc(4px * var(--toolbar-scale)); display: flex;
-  align-items: center; justify-content: center; cursor: pointer;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-}
-#reload-button img { width: calc(12px * var(--toolbar-scale)); height: calc(12px * var(--toolbar-scale)); }
-#reload-button[style*="display: none"] { display: none !important; }
-#step-run-button {
-  width: calc(16px * var(--toolbar-scale)); height: calc(16px * var(--toolbar-scale));
-  background: white; border-radius: calc(4px * var(--toolbar-scale)); display: flex;
-  align-items: center; justify-content: center; cursor: pointer;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-}
-#step-run-button img { width: calc(12px * var(--toolbar-scale)); height: calc(12px * var(--toolbar-scale)); }
-#step-run-button[style*="display: none"] { display: none !important; }
-#single-step-button {
-  width: calc(16px * var(--toolbar-scale)); height: calc(16px * var(--toolbar-scale));
-  background: white; border-radius: calc(4px * var(--toolbar-scale)); display: flex;
-  align-items: center; justify-content: center; cursor: pointer;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-}
-#single-step-button img { width: calc(12px * var(--toolbar-scale)); height: calc(12px * var(--toolbar-scale)); }
-#single-step-button[style*="display: none"] { display: none !important; }
-#capture-toggle-button {
-  width: calc(16px * var(--toolbar-scale)); height: calc(16px * var(--toolbar-scale));
-  background: white; border-radius: calc(4px * var(--toolbar-scale)); display: flex;
-  align-items: center; justify-content: center; cursor: pointer;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-  /* Add display:none if hidden by setting */
-  ${showRecordButton ? '' : 'display:none !important;'}
-}
-#capture-toggle-button svg { width: calc(12px * var(--toolbar-scale)); height: calc(12px * var(--toolbar-scale)); display: block; }
+#p5-toolbar { /* removed toolbar */ }
 /* FPS indicator */
 #fps-indicator {
   position: fixed;
@@ -1294,12 +1261,7 @@ canvas.p5Canvas{
     </div>
   </div>
   </div>
-<div id="p5-toolbar">
-  <div id="reload-button" style="display:${showReloadButton ? 'flex' : 'none'}"><img src="${reloadIconUri}" title="Reload P5 Sketch"></div>
-  <div id="step-run-button" style="display:${showDebugButtons ? 'flex' : 'none'}" title="Run with ${stepRunDelayMs}ms delay between statements and per loop iteration"><img src="${delayIconUri}" /></div>
-  <div id="single-step-button" style="display:${showDebugButtons ? 'flex' : 'none'}" title="Step through statements (click to execute next statement)"><img src="${stepIconUri}" /></div>
-  <div id="capture-toggle-button" title="Toggle P5 Capture Panel"></div>
-</div>
+<!-- In-webview toolbar removed; actions are now provided via editor title bar buttons -->
 <script>
 // --- Prevent default VSCode context menu except on canvas ---
 document.addEventListener('contextmenu', function(e) {
@@ -1310,81 +1272,35 @@ document.addEventListener('contextmenu', function(e) {
 });
 </script>
 <script>
-// --- P5 Capture Toggle Button Logic ---
+// Capture visibility toggle (no in-webview toolbar)
 (function() {
-  // Hide record button if setting is false or draw function is missing
-  if (!${showRecordButton}) {
-    const captureBtn = document.getElementById('capture-toggle-button');
-    if (captureBtn) captureBtn.style.display = "none";
-    // Remove all .p5c-container divs if present, and prevent future ones from being added
-    document.querySelectorAll('.p5c-container').forEach(div => div.remove());
-    // Observe DOM and remove any .p5c-container that gets added later
-    const observer = new MutationObserver(() => {
-      document.querySelectorAll('.p5c-container').forEach(div => div.remove());
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
-    return;
+  window._p5CaptureVisible = false;
+  function applyCaptureVisibility() {
+    try {
+      // Remove any duplicate capture panel before showing/hiding
+      const containers = document.querySelectorAll('.p5c-container');
+      if (containers.length > 1) {
+        // Keep the first, remove the rest
+        for (let i = 1; i < containers.length; i++) {
+          containers[i].remove();
+        }
+      }
+      const div = document.querySelector('.p5c-container');
+      if (div) div.style.display = window._p5CaptureVisible ? '' : 'none';
+    } catch {}
   }
-  const captureBtn = document.getElementById('capture-toggle-button');
-  const reloadBtn = document.getElementById('reload-button');
-  let enabled = false;
-  function setIcon() {
-    // REVERSED: gray when enabled (visible), red when disabled (hidden)
-    captureBtn.innerHTML = enabled
-      ? \`${recordGraySvg}\`
-      : \`${recordRedSvg}\`;
-  }
-  function setCaptureVisibility() {
-    // Only affect the first .p5c-container and never create or remove any divs
-    const captureDiv = document.querySelector('.p5c-container');
-    if (captureDiv) {
-      captureDiv.style.display = enabled ? '' : 'none';
-    }
-  }
-  // Remove all but the first .p5c-container if multiple exist (cleanup on reload)
-  function removeDuplicateCaptureDivs() {
-    const divs = document.querySelectorAll('.p5c-container');
-    if (divs.length > 1) {
-      for (let i = 1; i < divs.length; ++i) {
-        divs[i].remove();
+  // Observe DOM to apply visibility when capture DOM appears
+  const obs = new MutationObserver(applyCaptureVisibility);
+  obs.observe(document.body, { childList: true, subtree: true });
+  window._applyCaptureVisibility = applyCaptureVisibility;
+  // On reload, remove all but one capture panel if any exist
+  document.addEventListener('DOMContentLoaded', function() {
+    const containers = document.querySelectorAll('.p5c-container');
+    if (containers.length > 1) {
+      for (let i = 1; i < containers.length; i++) {
+        containers[i].remove();
       }
     }
-  }
-  captureBtn.addEventListener('click', () => {
-    enabled = !enabled;
-    setIcon();
-    setCaptureVisibility();
-  });
-  // Initialize as disabled (hidden)
-  enabled = false;
-  setIcon();
-  setCaptureVisibility();
-  removeDuplicateCaptureDivs();
-  // If the capture div is dynamically added, observe DOM changes
-  const observer = new MutationObserver(() => {
-    removeDuplicateCaptureDivs();
-    setCaptureVisibility();
-  });
-  observer.observe(document.body, { childList: true, subtree: true });
-
-  // Observe reload button visibility to update layout
-  const reloadObserver = new MutationObserver(() => {
-    // If reload is hidden, move capture to the right (toolbar stays at right:10px)
-    if (reloadBtn && reloadBtn.style.display === "none") {
-      // Only capture button is visible, so no margin needed
-      captureBtn.style.marginLeft = "0px";
-    } else {
-      // Both visible, keep default gap
-      captureBtn.style.marginLeft = "0px";
-    }
-  });
-  if (reloadBtn) {
-    reloadObserver.observe(reloadBtn, { attributes: true, attributeFilter: ['style'] });
-  }
-  window.addEventListener('resize', () => {
-    // If reload button is visible, no margin; if not, margin-left: 0
-    const reloadVisible = reloadBtn && reloadBtn.style.display !== "none";
-    captureBtn.style.marginLeft = reloadVisible ? "0px" : "0px";
   });
 })();
 </script>
@@ -1603,24 +1519,7 @@ function waitForP5AndRunSketch() {
 }
 waitForP5AndRunSketch();
 
-document.getElementById("reload-button").addEventListener("click",()=>{
-  vscode.postMessage({type:"reload-button-clicked", preserveGlobals: true});
-  // Clear the current editor highlight when reload is pressed
-  if (typeof acquireVsCodeApi === 'undefined') {
-    // Running in extension host context
-    if (typeof clearStepHighlight === 'function') clearStepHighlight();
-  }
-});
-document.getElementById("step-run-button").addEventListener("click",()=>{
-  vscode.postMessage({type:"step-run-clicked"});
-  // Request VS Code to focus the script tab for this sketch
-  vscode.postMessage({type: "focus-script-tab"});
-});
-document.getElementById("single-step-button").addEventListener("click",()=>{
-  vscode.postMessage({type:"single-step-clicked"});
-  // Request VS Code to focus the script tab for this sketch
-  vscode.postMessage({type: "focus-script-tab"});
-});
+// Toolbar buttons removed; actions triggered via VS Code title bar commands.
 
 window.addEventListener("resize",()=>{ 
   if(window._p5Instance?._renderer && window._p5UserAutoFill){
@@ -1633,6 +1532,22 @@ window.addEventListener("resize",()=>{
 window.addEventListener("message", e => {
   const data = e.data;
   switch(data.type){
+    case "invokeReload":
+      vscode.postMessage({type:"reload-button-clicked", preserveGlobals: true});
+      break;
+    case "invokeStepRun":
+      vscode.postMessage({type:"step-run-clicked"});
+      break;
+    case "invokeSingleStep":
+      vscode.postMessage({type:"single-step-clicked"});
+      break;
+    case "toggleCaptureVisibility":
+      window._p5CaptureVisible = !window._p5CaptureVisible;
+      if (typeof window._applyCaptureVisibility === 'function') {
+        try { window._applyCaptureVisibility(); } catch {}
+      }
+      try { vscode.postMessage({ type: 'captureVisibilityChanged', visible: !!window._p5CaptureVisible }); } catch {}
+      break;
     case "reload":
       if (data.preserveGlobals) {
         // Reset stepping control flags before reloading
@@ -1692,15 +1607,7 @@ window.addEventListener("message", e => {
       break;
   case "showError": showError(data.message); break;
   case "showWarning": showWarning(data.message); break;
-    case "toggleReloadButton": document.getElementById("reload-button").style.display = data.show ? "flex" : "none"; break;
-    case "toggleDebugButtons":
-      try {
-        const stepRunBtn = document.getElementById('step-run-button');
-        const singleStepBtn = document.getElementById('single-step-button');
-        if (stepRunBtn) stepRunBtn.style.display = data.show ? 'flex' : 'none';
-        if (singleStepBtn) singleStepBtn.style.display = data.show ? 'flex' : 'none';
-      } catch {}
-      break;
+    // Removed toolbar toggle handlers (reload/debug buttons handled via title bar)
     case "resetErrorFlag": window._p5ErrorLogged = false; break;
     case "syntaxError": showError(data.message); break;
     case "requestLastRuntimeError":
@@ -1739,39 +1646,14 @@ window.addEventListener("message", e => {
     case 'updateGlobalVar':
       updateGlobalVarInSketch(data.name, data.value);
       break;
-    case "toggleRecordButton":
-      {
-        const captureBtn = document.getElementById('capture-toggle-button');
-        // Remove any previous observer to avoid duplicates
-        if (window._p5cContainerObserver) {
-          window._p5cContainerObserver.disconnect();
-          window._p5cContainerObserver = null;
-        }
-        if (captureBtn) {
-          if (data.show) {
-            // Always show the button and remove any .p5c-container observer
-            captureBtn.style.display = "";
-            // Remove all .p5c-container divs and stop removing future ones
-            // (Let the normal capture logic handle visibility)
-            // --- Reload the sketch to re-inject the p5c-container ---
-            if (window._p5UserCode) {
-              setTimeout(() => {
-                vscode.postMessage({type:"reload-button-clicked", preserveGlobals: true});
-              }, 0);
-            }
-          } else {
-            captureBtn.style.display = "none";
-            // Remove all .p5c-container divs and prevent future ones from being added
-            document.querySelectorAll('.p5c-container').forEach(div => div.remove());
-            // Set up a MutationObserver to remove future .p5c-container divs
-            window._p5cContainerObserver = new MutationObserver(() => {
-              document.querySelectorAll('.p5c-container').forEach(div => div.remove());
-            });
-            window._p5cContainerObserver.observe(document.body, { childList: true, subtree: true });
-          }
-        }
+    case "toggleRecordButton": {
+      // Now only sets internal capture visibility flag (no button UI)
+      window._p5CaptureVisible = !!data.show;
+      if (typeof window._applyCaptureVisibility === 'function') {
+        try { window._applyCaptureVisibility(); } catch {}
       }
       break;
+    }
     case 'updateVarDebounceDelay':
       if (typeof data.value === 'number') window._p5VarControlDebounceDelay = data.value;
       break;
@@ -2793,6 +2675,125 @@ function registerEscKeybinding(context: vscode.ExtensionContext) {
 // Activate
 // ----------------------------
 export function activate(context: vscode.ExtensionContext) {
+  // Helper: find active P5 panel
+  function getActiveP5Panel(): vscode.WebviewPanel | undefined {
+    // Prefer the last known active panel
+    if (activeP5Panel) return activeP5Panel;
+    // If an editor is active, find by its URI
+    const activeEditor = vscode.window.activeTextEditor;
+    if (activeEditor) {
+      const p = webviewPanelMap.get(activeEditor.document.uri.toString());
+      if (p) return p;
+    }
+    // If a webview tab is focused, resolve by matching the tab label to a panel title
+    try {
+      const activeTab = vscode.window.tabGroups.activeTabGroup?.activeTab;
+      const activeLabel = activeTab && activeTab.label ? String(activeTab.label) : '';
+      if (activeLabel) {
+        for (const [, p] of webviewPanelMap.entries()) {
+          try { if (p.title === activeLabel) return p; } catch { }
+        }
+      }
+    } catch { }
+    return undefined;
+  }
+
+  async function invokeStepRun(panel: vscode.WebviewPanel, editor: vscode.TextEditor) {
+    try { panel.webview.postMessage({ type: 'invokeStepRun' }); } catch { }
+  }
+  async function invokeSingleStep(panel: vscode.WebviewPanel, editor: vscode.TextEditor) {
+    try { panel.webview.postMessage({ type: 'invokeSingleStep' }); } catch { }
+  }
+  async function invokeReload(panel: vscode.WebviewPanel) {
+    try { panel.webview.postMessage({ type: 'invokeReload' }); } catch { }
+  }
+  async function toggleCapture(panel: vscode.WebviewPanel) {
+    panel.webview.postMessage({ type: 'toggleCaptureVisibility' });
+  }
+
+  // Register commands for editor/title buttons
+  // Map a webview panel back to its originating document URI
+  function getDocUriForPanel(panel: vscode.WebviewPanel | undefined): vscode.Uri | undefined {
+    if (!panel) return undefined;
+    for (const [uriStr, p] of webviewPanelMap.entries()) {
+      if (p === panel) {
+        try { return vscode.Uri.parse(uriStr); } catch { return undefined; }
+      }
+    }
+    return undefined;
+  }
+
+  context.subscriptions.push(vscode.commands.registerCommand('P5Studio.stepRun', async () => {
+    let editor = vscode.window.activeTextEditor;
+    const panel = getActiveP5Panel();
+    if (!panel) return;
+    if (!editor) {
+      const uri = getDocUriForPanel(panel);
+      if (uri) {
+        try { editor = await vscode.window.showTextDocument(uri, { preview: true, preserveFocus: true }); } catch { /* ignore */ }
+      }
+    }
+    if (!editor) return;
+    await invokeStepRun(panel, editor);
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand('P5Studio.singleStep', async () => {
+    let editor = vscode.window.activeTextEditor;
+    const panel = getActiveP5Panel();
+    if (!panel) return;
+    if (!editor) {
+      const uri = getDocUriForPanel(panel);
+      if (uri) {
+        try { editor = await vscode.window.showTextDocument(uri, { preview: true, preserveFocus: true }); } catch { /* ignore */ }
+      }
+    }
+    if (!editor) return;
+    await invokeSingleStep(panel, editor);
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand('P5Studio.captureToggle', async () => {
+    const panel = getActiveP5Panel();
+    if (!panel) return;
+    await toggleCapture(panel);
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand('P5Studio.captureToggleOn', async () => {
+    const panel = getActiveP5Panel();
+    if (!panel) return;
+    await toggleCapture(panel);
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand('P5Studio.reloadWebpanel', async () => {
+    const panel = getActiveP5Panel();
+    if (!panel) return;
+    // Reset primed state on reload for the active panel
+    try {
+      const uri = getDocUriForPanel(panel);
+      if (uri) {
+        debugPrimedMap.set(uri.toString(), false);
+        vscode.commands.executeCommand('setContext', 'p5DebugPrimed', false);
+        // Do not force visibility true; keep hidden until user toggles.
+        captureVisibleMap.set(uri.toString(), false);
+        vscode.commands.executeCommand('setContext', 'p5CaptureVisible', false);
+      }
+    } catch { }
+    await invokeReload(panel);
+  }));
+  // Prime-once command: performs a single step, then reveals the step buttons for this panel
+  context.subscriptions.push(vscode.commands.registerCommand('P5Studio.debugPrime', async () => {
+    const panel = getActiveP5Panel();
+    if (!panel) return;
+    let editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      const uri = getDocUriForPanel(panel);
+      if (uri) {
+        try { editor = await vscode.window.showTextDocument(uri, { preview: true, preserveFocus: true }); } catch { /* ignore */ }
+      }
+    }
+    if (!editor) return;
+    await invokeSingleStep(panel, editor);
+    try {
+      const docUri = editor.document.uri.toString();
+      debugPrimedMap.set(docUri, true);
+      vscode.commands.executeCommand('setContext', 'p5DebugPrimed', true);
+    } catch { }
+  }));
   registerClearHighlightCommand(context);
 
   // Helper to update the p5WebviewTabFocused context key
@@ -2815,6 +2816,23 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
     vscode.commands.executeCommand('setContext', 'p5WebviewTabFocused', isP5Webview);
+    // Also update the primed visibility context for the focused panel
+    if (isP5Webview) {
+      const panel = getActiveP5Panel();
+      if (panel) {
+        const uri = getDocUriForPanel(panel);
+        const primed = uri ? !!debugPrimedMap.get(uri.toString()) : false;
+        vscode.commands.executeCommand('setContext', 'p5DebugPrimed', primed);
+        const cap = uri ? !!captureVisibleMap.get(uri.toString()) : false;
+        vscode.commands.executeCommand('setContext', 'p5CaptureVisible', cap);
+      } else {
+        vscode.commands.executeCommand('setContext', 'p5DebugPrimed', false);
+        vscode.commands.executeCommand('setContext', 'p5CaptureVisible', false);
+      }
+    } else {
+      vscode.commands.executeCommand('setContext', 'p5DebugPrimed', false);
+      vscode.commands.executeCommand('setContext', 'p5CaptureVisible', false);
+    }
   }
 
   // Listen for tab group changes
@@ -2840,7 +2858,7 @@ export function activate(context: vscode.ExtensionContext) {
         for (const [, panel] of webviewPanelMap.entries()) {
           if (panel.title === activeTab.label) {
             const config = vscode.workspace.getConfiguration('P5Studio');
-            await config.update('ShowDebugButtons', true, vscode.ConfigurationTarget.Global);
+            await config.update('ShowDebugButton', true, vscode.ConfigurationTarget.Global);
             panel.webview.postMessage({ type: 'toggleDebugButtons', show: true });
             break;
           }
@@ -2855,7 +2873,7 @@ export function activate(context: vscode.ExtensionContext) {
         for (const [, panel] of webviewPanelMap.entries()) {
           if (panel.title === activeTab.label) {
             const config = vscode.workspace.getConfiguration('P5Studio');
-            await config.update('ShowDebugButtons', false, vscode.ConfigurationTarget.Global);
+            await config.update('ShowDebugButton', false, vscode.ConfigurationTarget.Global);
             panel.webview.postMessage({ type: 'toggleDebugButtons', show: false });
             break;
           }
@@ -5160,26 +5178,38 @@ export function activate(context: vscode.ExtensionContext) {
         showAndTrackOutputChannel(outputChannel); // <--- replaced direct show
 
         webviewPanelMap.set(docUri, panel);
+        captureVisibleMap.set(docUri, false);
         try {
           await addToRestore(RESTORE_LIVE_KEY, editor.document.fileName);
           await moveToOrderEnd(editor.document.fileName);
         } catch { }
         activeP5Panel = panel;
         vscode.commands.executeCommand('setContext', 'hasP5Webview', true);
+        // Initialize primed state for this sketch
+        debugPrimedMap.set(docUri, false);
+        panel.onDidDispose(() => {
+          debugPrimedMap.delete(docUri);
+          captureVisibleMap.delete(docUri);
+          if (activeP5Panel === panel) {
+            vscode.commands.executeCommand('setContext', 'p5DebugPrimed', false);
+            vscode.commands.executeCommand('setContext', 'p5CaptureVisible', false);
+          }
+        });
 
         panel.webview.onDidReceiveMessage(async msg => {
           // Focus the script tab if requested from the webview
           if (msg.type === 'focus-script-tab') {
-            // Reveal the editor for this document
-            const doc = editor.document;
-            if (doc) {
-              const openEditor = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === doc.uri.toString());
-              if (openEditor) {
-                await vscode.window.showTextDocument(openEditor.document, openEditor.viewColumn, false);
-              } else {
-                await vscode.window.showTextDocument(doc, { preview: false });
+            // Intentionally ignored to keep focus on the webpanel tab per latest UX
+            return;
+          }
+          if (msg.type === 'captureVisibilityChanged') {
+            try {
+              const docUri = editor.document.uri.toString();
+              captureVisibleMap.set(docUri, !!msg.visible);
+              if (activeP5Panel === panel) {
+                vscode.commands.executeCommand('setContext', 'p5CaptureVisible', !!msg.visible);
               }
-            }
+            } catch { }
             return;
           }
           const fileName = path.basename(editor.document.fileName);
@@ -5827,6 +5857,11 @@ export function activate(context: vscode.ExtensionContext) {
                 const ch = getOrCreateOutputChannel(docUri, fileName);
                 ch.appendLine(`${getTime()} [▶️INFO] Code stepping finished.`);
                 (panel as any)._steppingActive = false;
+                // Reset primed state so debug button returns
+                try {
+                  debugPrimedMap.set(docUri, false);
+                  vscode.commands.executeCommand('setContext', 'p5DebugPrimed', false);
+                } catch { }
               }
               // If draw() exists, keep stepping active to continue into draw frames
             } catch { }
@@ -6249,31 +6284,7 @@ text("P5", 50, 52);`;
       updateReloadWhileTypingVarsAndContext();
       refreshAutoReloadListenersForAllOpenEditors();
     }
-    // --- Immediately apply showReloadButton/showRecordButton changes in all open panels ---
-    if (
-      e.affectsConfiguration('P5Studio.showReloadButton') ||
-
-      e.affectsConfiguration('P5Studio.showRecordButton')
-      || e.affectsConfiguration('P5Studio.ShowDebugButtons')
-    ) {
-      for (const [docUri, panel] of webviewPanelMap.entries()) {
-        // Update reload button
-        const showReload = vscode.workspace.getConfiguration('P5Studio').get<boolean>('showReloadButton', true);
-        panel.webview.postMessage({ type: 'toggleReloadButton', show: showReload });
-        // Update record button (show/hide and remove capture panel if needed)
-        // Only show if config is true AND the code has a draw function
-        const showRecordConfig = vscode.workspace.getConfiguration('P5Studio').get<boolean>('showRecordButton', true);
-        let code = '';
-        const editor = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === docUri);
-        if (editor) code = editor.document.getText();
-        const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
-        const showRecord = showRecordConfig && hasDraw;
-        panel.webview.postMessage({ type: 'toggleRecordButton', show: showRecord });
-        // Update visibility of debug buttons immediately
-        const showDebug = vscode.workspace.getConfiguration('P5Studio').get<boolean>('ShowDebugButtons', true);
-        panel.webview.postMessage({ type: 'toggleDebugButtons', show: showDebug });
-      }
-    }
+    // Toolbar in webview removed; no need to sync showReloadButton/ShowDebugButton settings to webview DOM.
 
     // --- Immediately apply showFPS changes in all open panels ---
     if (e.affectsConfiguration('P5Studio.showFPS')) {
