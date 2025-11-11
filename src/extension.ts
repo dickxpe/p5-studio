@@ -872,7 +872,7 @@ async function createHtml(
         break;
       }
     }
-  } catch {}
+  } catch { }
 
   function escapeBackticks(str: string) {
     return str.replace(/`/g, '\`');
@@ -1677,6 +1677,10 @@ window.addEventListener("message", e => {
       data.variables.forEach(v => {
         window._p5GlobalVarTypes[v.name] = v.type || typeof v.value;
       });
+      // Install watchers so changes from the sketch propagate live to the VARIABLES panel
+      try { if (typeof window._installGlobalVarWatchers === 'function') window._installGlobalVarWatchers(data.variables); } catch {}
+      // Start rAF-based polling to ensure live updates even when accessors cannot be defined
+      try { if (typeof window._startGlobalVarPolling === 'function') window._startGlobalVarPolling(data.variables); } catch {}
       break;
     case 'updateGlobalVar':
       updateGlobalVarInSketch(data.name, data.value);
@@ -1798,13 +1802,141 @@ function updateGlobalVarInSketch(name, value) {
   let type = (window._p5GlobalVarTypes && window._p5GlobalVarTypes[name]) || typeof window[name];
   if (type === 'number') {
     const num = Number(value);
-    if (!isNaN(num)) window[name] = num;
+    if (!isNaN(num)) {
+      window[name] = num;
+      try { if (window._p5VarPollLast) window._p5VarPollLast[name] = num; } catch {}
+    }
   } else if (type === 'boolean') {
-    window[name] = (value === 'true' || value === true);
+    const b = (value === 'true' || value === true);
+    window[name] = b;
+    try { if (window._p5VarPollLast) window._p5VarPollLast[name] = b; } catch {}
   } else {
     window[name] = value;
+    try { if (window._p5VarPollLast) window._p5VarPollLast[name] = value; } catch {}
   }
 }
+
+// Live watchers for global variables so the VARIABLES panel updates when the sketch changes values
+(function setupVarWatchers(){
+  // Backing store for accessor properties
+  if (!window._p5GlobalVarValues) window._p5GlobalVarValues = {};
+  if (!window._p5VarWatchInstalled) window._p5VarWatchInstalled = {};
+  if (!window._p5LastPostedValues) window._p5LastPostedValues = {};
+  if (!window._p5VarPollNames) window._p5VarPollNames = new Set();
+  if (!window._p5VarPollLast) window._p5VarPollLast = {};
+  window._p5VarPollRaf = window._p5VarPollRaf || null;
+
+  // Debounced emitter for updateGlobalVar
+  if (typeof window._p5VarControlDebounceDelay !== 'number') window._p5VarControlDebounceDelay = 50;
+  let _debounceTimer = null;
+  let _pendingUpdates = new Map(); // name -> latest value
+  function queueUpdate(name, value) {
+    try { _pendingUpdates.set(name, value); } catch {}
+    if (_debounceTimer) return;
+    const delay = (typeof window._p5VarControlDebounceDelay === 'number' ? window._p5VarControlDebounceDelay : 50);
+    _debounceTimer = setTimeout(() => {
+      try {
+        _pendingUpdates.forEach((val, key) => {
+          try { vscode.postMessage({ type: 'updateGlobalVar', name: key, value: val }); } catch {}
+        });
+      } catch {}
+      _pendingUpdates.clear();
+      _debounceTimer = null;
+    }, delay);
+  }
+
+  function coerceByType(name, value) {
+    const t = (window._p5GlobalVarTypes && window._p5GlobalVarTypes[name]) || typeof value;
+    if (t === 'number') {
+      const n = Number(value);
+      return Number.isNaN(n) ? value : n;
+    }
+    if (t === 'boolean') {
+      return (value === true || value === 'true' || value === 1 || value === '1');
+    }
+    return value;
+  }
+
+  // Install watchers for new variables
+  window._installGlobalVarWatchers = function(vars) {
+    if (!Array.isArray(vars)) return;
+    vars.forEach(v => {
+      const name = v && v.name;
+      if (!name) return;
+      if (window._p5VarWatchInstalled[name]) return; // avoid redefining
+      try {
+        // Capture current value as initial backing value
+        let curr = (typeof window[name] !== 'undefined') ? window[name] : v.value;
+        window._p5GlobalVarValues[name] = coerceByType(name, curr);
+        const desc = Object.getOwnPropertyDescriptor(window, name);
+        // Define accessor only if configurable or not defined on window, to avoid errors
+        if (!desc || desc.configurable !== false) {
+          Object.defineProperty(window, name, {
+            configurable: true,
+            enumerable: true,
+            get() {
+              return window._p5GlobalVarValues[name];
+            },
+            set(val) {
+              const newVal = coerceByType(name, val);
+              const prev = window._p5GlobalVarValues[name];
+              window._p5GlobalVarValues[name] = newVal;
+              // Only notify if actually changed (strict equality for primitives)
+              if (prev !== newVal) {
+                queueUpdate(name, newVal);
+                window._p5LastPostedValues[name] = newVal;
+              }
+            }
+          });
+          window._p5VarWatchInstalled[name] = true;
+        }
+      } catch {}
+    });
+  };
+
+  // rAF-based poller as a fallback when accessors can't be defined on window (e.g., non-configurable globals)
+  function tickPoller() {
+    try {
+      // Only check simple primitives
+      window._p5VarPollNames.forEach((name) => {
+        try {
+          const t = (window._p5GlobalVarTypes && window._p5GlobalVarTypes[name]) || typeof window[name];
+          let curr = window[name];
+          if (t === 'number') {
+            const n = Number(curr);
+            if (!Number.isNaN(n)) curr = n;
+          } else if (t === 'boolean') {
+            curr = (curr === true || curr === 'true' || curr === 1 || curr === '1');
+          } else if (t !== 'string') {
+            // Skip complex types
+            return;
+          }
+          const prev = window._p5VarPollLast[name];
+          if (prev !== curr) {
+            window._p5VarPollLast[name] = curr;
+            queueUpdate(name, curr);
+          }
+        } catch {}
+      });
+    } catch {}
+    window._p5VarPollRaf = requestAnimationFrame(tickPoller);
+  }
+
+  window._startGlobalVarPolling = function(vars) {
+    try {
+      if (Array.isArray(vars)) {
+        vars.forEach(v => { if (v && v.name) window._p5VarPollNames.add(v.name); });
+      }
+      // Seed last values to avoid immediate spam
+      if (Array.isArray(vars)) {
+        vars.forEach(v => { if (v && v.name) window._p5VarPollLast[v.name] = window[v.name]; });
+      }
+    } catch {}
+    if (!window._p5VarPollRaf) {
+      window._p5VarPollRaf = requestAnimationFrame(tickPoller);
+    }
+  };
+})();
 
 // Hides the variable drawer UI in the webview
 function hideDrawer() {
@@ -2936,47 +3068,90 @@ export function activate(context: vscode.ExtensionContext) {
           parent.postMessage({ type: 'updateGlobalVar', name: name, value: value }, '*');
         }
       }
+      // Live-patch support to avoid rebuilding the table on each update
+      var _varsRendered = false;
+      var _varsIndex = new Map(); // name -> { type }
+      function normalizeForInput(type, v) {
+        if (type === 'number') {
+          var n = Number(v);
+          return Number.isNaN(n) ? '' : String(n);
+        }
+        if (type === 'boolean') return !!v;
+        return (v === undefined || v === null) ? '' : String(v);
+      }
+      function buildTable(vars) {
+        var tableDiv = document.getElementById('vars-table');
+        if (!tableDiv) return;
+        if (!vars.length) {
+          tableDiv.innerHTML = '<span class="muted">No global variables</span>';
+          _varsRendered = true; _varsIndex = new Map();
+          return;
+        }
+        var html = '<table><thead><tr><th>Name</th><th>Value</th><th>Type</th></tr></thead><tbody>';
+        _varsIndex = new Map();
+        for (var i = 0; i < vars.length; ++i) {
+          var v = vars[i];
+          _varsIndex.set(v.name, { type: v.type });
+          html += '<tr><td>' + v.name + '</td><td>';
+          if (v.type === 'boolean') {
+            html += '<input type="checkbox" data-var="' + v.name + '"' + (v.value ? ' checked' : '') + ' />';
+          } else if (v.type === 'number') {
+            html += '<input type="number" data-var="' + v.name + '" value="' + normalizeForInput('number', v.value) + '" step="any" />';
+          } else {
+            html += '<input type="text" data-var="' + v.name + '" value="' + normalizeForInput('text', v.value) + '" />';
+          }
+          html += '</td><td>' + v.type + '</td></tr>';
+        }
+        html += '</tbody></table>';
+        tableDiv.innerHTML = html;
+        var inputs = tableDiv.querySelectorAll('input[data-var]');
+        inputs.forEach(function(input) {
+          var name = input.getAttribute('data-var');
+          if (input.type === 'checkbox') {
+            input.addEventListener('change', function() { sendVarUpdate(name, input.checked); });
+          } else if (input.type === 'number') {
+            input.addEventListener('change', function() { sendVarUpdate(name, input.value === '' ? '' : Number(input.value)); });
+          } else {
+            input.addEventListener('change', function() { sendVarUpdate(name, input.value); });
+          }
+        });
+        _varsRendered = true;
+      }
+      function patchValues(vars) {
+        var tableDiv = document.getElementById('vars-table');
+        if (!tableDiv) return;
+        var needRebuild = false;
+        // Fast check: if count differs, rebuild
+        if (_varsIndex.size !== vars.length) needRebuild = true;
+        for (var i = 0; i < vars.length && !needRebuild; ++i) {
+          var v = vars[i];
+          var meta = _varsIndex.get(v.name);
+          if (!meta || meta.type !== v.type) { needRebuild = true; break; }
+        }
+        if (needRebuild || !_varsRendered) { buildTable(vars); return; }
+        // Patch existing inputs
+        for (var j = 0; j < vars.length; ++j) {
+          var vv = vars[j];
+          var input = tableDiv.querySelector('input[data-var="' + vv.name + '"]');
+          if (!input) { needRebuild = true; break; }
+          if (input === document.activeElement) continue; // don't clobber while typing
+          if (vv.type === 'boolean') {
+            var chk = !!vv.value;
+            if (input.checked !== chk) input.checked = chk;
+          } else if (vv.type === 'number') {
+            var valStr = normalizeForInput('number', vv.value);
+            if (input.value !== valStr) input.value = valStr;
+          } else {
+            var tStr = normalizeForInput('text', vv.value);
+            if (input.value !== tStr) input.value = tStr;
+          }
+        }
+        if (needRebuild) buildTable(vars);
+      }
       window.addEventListener('message', function(event) {
         if (event.data && event.data.type === 'setGlobalVars') {
           var vars = event.data.variables || [];
-          var tableDiv = document.getElementById('vars-table');
-          if (!tableDiv) return;
-          if (!vars.length) {
-            tableDiv.innerHTML = '<span class="muted">No global variables</span>';
-            return;
-          }
-          var html = '<table><thead><tr><th>Name</th><th>Value</th><th>Type</th></tr></thead><tbody>';
-          for (var i = 0; i < vars.length; ++i) {
-            var v = vars[i];
-            html += '<tr><td>' + v.name + '</td><td>';
-            if (v.type === 'boolean') {
-              html += '<input type="checkbox" data-var="' + v.name + '"' + (v.value ? ' checked' : '') + ' />';
-            } else if (v.type === 'number') {
-              html += '<input type="number" data-var="' + v.name + '" value="' + (v.value !== undefined && v.value !== null ? v.value : '') + '" step="any" />';
-            } else {
-              html += '<input type="text" data-var="' + v.name + '" value="' + (v.value !== undefined && v.value !== null ? v.value : '') + '" />';
-            }
-            html += '</td><td>' + v.type + '</td></tr>';
-          }
-          html += '</tbody></table>';
-          tableDiv.innerHTML = html;
-          var inputs = tableDiv.querySelectorAll('input[data-var]');
-          inputs.forEach(function(input) {
-            var name = input.getAttribute('data-var');
-            if (input.type === 'checkbox') {
-              input.addEventListener('change', function() {
-                sendVarUpdate(name, input.checked);
-              });
-            } else if (input.type === 'number') {
-              input.addEventListener('change', function() {
-                sendVarUpdate(name, input.value === '' ? '' : Number(input.value));
-              });
-            } else {
-              input.addEventListener('change', function() {
-                sendVarUpdate(name, input.value);
-              });
-            }
-          });
+          if (!_varsRendered) buildTable(vars); else patchValues(vars);
         }
       });
     </script>
