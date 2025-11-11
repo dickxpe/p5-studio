@@ -3047,10 +3047,16 @@ export function activate(context: vscode.ExtensionContext) {
       .wrap { padding: 8px; }
       .muted { opacity: 0.8; }
       table { border-collapse: collapse; width: 100%; font-size: 15px; }
-      th, td { border: 1px solid #8884; padding: 4px 8px; text-align: left; }
-      th { background: #2222; }
-      input[type="number"] { width: 80px; }
-      input[type="text"] { width: 120px; }
+  th, td { border: 1px solid #8884; padding: 4px 8px; text-align: left; }
+  th { background: #2222; color: #307dc1; }
+      /* Make inputs fill the table cell */
+      input[type="number"],
+      input[type="text"] {
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
+        display: block;
+      }
       input[type="checkbox"] { transform: scale(1.2); }
     </style>
   </head>
@@ -3083,7 +3089,7 @@ export function activate(context: vscode.ExtensionContext) {
         var tableDiv = document.getElementById('vars-table');
         if (!tableDiv) return;
         if (!vars.length) {
-          tableDiv.innerHTML = '<span class="muted">No global variables</span>';
+          tableDiv.innerHTML = '<span class="muted">Loading variables...</span>';
           _varsRendered = true; _varsIndex = new Map();
           return;
         }
@@ -3108,10 +3114,35 @@ export function activate(context: vscode.ExtensionContext) {
         inputs.forEach(function(input) {
           var name = input.getAttribute('data-var');
           if (input.type === 'checkbox') {
+            // Checkbox: change is fine (no continuous intermediate states)
             input.addEventListener('change', function() { sendVarUpdate(name, input.checked); });
           } else if (input.type === 'number') {
-            input.addEventListener('change', function() { sendVarUpdate(name, input.value === '' ? '' : Number(input.value)); });
+            // Number: send on every increment/decrement or typed change
+            let numDebounceTimer = null;
+            input.addEventListener('input', function() {
+              if (numDebounceTimer) clearTimeout(numDebounceTimer);
+              numDebounceTimer = setTimeout(function() {
+                if (input.value === '') { sendVarUpdate(name, ''); return; }
+                var num = Number(input.value);
+                if (!Number.isNaN(num)) sendVarUpdate(name, num); else sendVarUpdate(name, '');
+              }, 25);
+            });
+            // Also fire a final confirmation on blur (optional redundancy)
+            input.addEventListener('change', function() {
+              if (input.value === '') { sendVarUpdate(name, ''); return; }
+              var num = Number(input.value);
+              if (!Number.isNaN(num)) sendVarUpdate(name, num); else sendVarUpdate(name, '');
+            });
           } else {
+            // Text: live updates while typing
+            let textDebounceTimer = null;
+            input.addEventListener('input', function() {
+              if (textDebounceTimer) clearTimeout(textDebounceTimer);
+              textDebounceTimer = setTimeout(function() {
+                sendVarUpdate(name, input.value);
+              }, 25);
+            });
+            // Optional final send on change (kept for consistency; cheap)
             input.addEventListener('change', function() { sendVarUpdate(name, input.value); });
           }
         });
@@ -3163,6 +3194,23 @@ export function activate(context: vscode.ExtensionContext) {
         // Attach message listener for updates coming from VARIABLES panel
         webviewView.webview.onDidReceiveMessage((msg) => {
           if (msg && msg.type === 'updateGlobalVar' && msg.name) {
+            // 1) Immediately update our cached variables and refresh the VARIABLES panel
+            try {
+              const name = String(msg.name);
+              const value = msg.value;
+              const idx = latestGlobalVars.findIndex(v => v.name === name);
+              if (idx >= 0) {
+                // preserve type from cache; only change value
+                latestGlobalVars[idx] = { ...latestGlobalVars[idx], value };
+              } else {
+                // infer a basic type for new entries
+                const t = typeof value;
+                const type = (t === 'boolean' || t === 'number') ? t : 'string';
+                latestGlobalVars.push({ name, value, type });
+              }
+              updateVariablesPanel();
+            } catch {}
+
             // Relay to ALL open P5 webviews
             for (const [, panel] of webviewPanelMap) {
               if (panel && panel.webview) {
