@@ -863,6 +863,17 @@ async function createHtml(
   // Show record button based on setting only (no longer require draw())
   const showRecordButton = vscode.workspace.getConfiguration('P5Studio').get<boolean>('showRecordButton', true);
 
+  // Determine initial capture visibility for this panel from saved state
+  let initialCaptureVisible = false;
+  try {
+    for (const [key, val] of webviewPanelMap) {
+      if (val === panel) {
+        initialCaptureVisible = !!captureVisibleMap.get(key);
+        break;
+      }
+    }
+  } catch {}
+
   function escapeBackticks(str: string) {
     return str.replace(/`/g, '\`');
   }
@@ -1279,7 +1290,17 @@ document.addEventListener('contextmenu', function(e) {
 <script>
 // Capture visibility toggle (no in-webview toolbar)
 (function() {
-  window._p5CaptureVisible = false;
+  window._p5CaptureVisible = ${initialCaptureVisible ? 'true' : 'false'};
+  // Reset capture UI/timer by removing existing containers
+  function resetCaptureUIAndTimer() {
+    try {
+      const containers = document.querySelectorAll('.p5c-container');
+      containers.forEach(el => el.remove());
+      if (typeof window._applyCaptureVisibility === 'function') {
+        try { window._applyCaptureVisibility(); } catch {}
+      }
+    } catch {}
+  }
   function applyCaptureVisibility() {
     try {
       // Remove any duplicate capture panel before showing/hiding
@@ -1307,6 +1328,10 @@ document.addEventListener('contextmenu', function(e) {
       }
     }
   });
+  // Expose reset helper
+  window._resetCaptureUIAndTimer = resetCaptureUIAndTimer;
+  // Apply initial visibility on load
+  try { applyCaptureVisibility(); } catch {}
 })();
 </script>
 <script>
@@ -1338,6 +1363,8 @@ window._p5VarDrawerDefaultState = "${varDrawerDefaultState}";
 // Notify extension that webview is loaded
 window.addEventListener('DOMContentLoaded', () => {
   vscode.postMessage({ type: 'webviewLoaded' });
+  // Ensure capture toggle icon matches preserved visibility state after reload
+  try { vscode.postMessage({ type: 'captureVisibilityChanged', visible: !!window._p5CaptureVisible }); } catch {}
 });
 
 function showError(msg){
@@ -1554,6 +1581,8 @@ window.addEventListener("message", e => {
       try { vscode.postMessage({ type: 'captureVisibilityChanged', visible: !!window._p5CaptureVisible }); } catch {}
       break;
     case "reload":
+      // Always reset capture UI/timer on reload so the panel timer shows fresh
+      try { if (typeof window._resetCaptureUIAndTimer === 'function') window._resetCaptureUIAndTimer(); } catch {}
       if (data.preserveGlobals) {
         // Reset stepping control flags before reloading
         try {
@@ -1607,6 +1636,7 @@ window.addEventListener("message", e => {
         window.__liveP5StepResolve = null;
         window.__liveP5StepAdvance = null;
       } catch {}
+      try { if (typeof window._resetCaptureUIAndTimer === 'function') window._resetCaptureUIAndTimer(); } catch {}
       if(window._p5Instance){window._p5Instance.remove(); window._p5Instance=null;}
       document.querySelectorAll("canvas").forEach(c=>c.remove());
       break;
@@ -1802,120 +1832,16 @@ function showDrawer() {
 
 // Dynamically creates/removes the variable drawer and tab, and sets up event listeners for variable changes
 function renderGlobalVarControls(vars, readOnly) {
-  // Always send the current global vars to the extension for the VARIABLES panel
+  // Only send the current global vars to the extension for the VARIABLES panel
   if (typeof vscode !== 'undefined' && Array.isArray(vars)) {
     try { vscode.postMessage({ type: 'setGlobalVars', variables: vars }); } catch {}
   }
-  let controls = document.getElementById('p5-var-controls');
-  let tab = document.getElementById('p5-var-drawer-tab');
-  if (!vars || vars.length === 0) {
-    if (controls) controls.remove();
-    if (tab) tab.remove();
-    return;
-  }
-  // If controls/tab do not exist, create and append them
-  if (!controls) {
-    controls = document.createElement('div');
-    controls.id = 'p5-var-controls';
-    controls.style.display = 'none';
-    controls.innerHTML = '<button class="drawer-toggle" title="Hide controls">&#x25BC;</button>';
-    document.body.appendChild(controls);
-  }
-  // Mark controls as readonly when requested so CSS can hide number spin buttons
-  controls.classList.toggle('vars-readonly', !!readOnly);
-  if (!tab) {
-    tab = document.createElement('div');
-    tab.id = 'p5-var-drawer-tab';
-    tab.innerHTML = '<span class="arrow">&#x25B2;</span>';
-    document.body.appendChild(tab);
-  }
-  controls.innerHTML = '<button class="drawer-toggle" title="Hide controls">&#x25BC;</button>';
-  if (window._p5VarDrawerDefaultState === 'collapsed') {
-    controls.classList.add('drawer-hidden');
-    controls.style.display = 'flex';
-    tab.style.display = 'flex';
-    tab.classList.add('tab-visible');
-  } else {
-    tab.style.display = 'none';
-    tab.classList.remove('tab-visible');
-    controls.classList.remove('drawer-hidden');
-    controls.style.display = 'flex';
-  }
-  const drawerToggleBtn = controls.querySelector('.drawer-toggle');
-  drawerToggleBtn.addEventListener('click', hideDrawer);
-  vars.forEach(v => {
-    const label = document.createElement('label');
-    label.textContent = v.name + ': ';
-    let input;
-    if (v.type === 'number') {
-      input = document.createElement('input');
-      input.type = 'number';
-      input.value = (typeof v.value === 'number' && !isNaN(v.value)) ? v.value : '';
-      input.step = 'any';
-      if (readOnly) input.readOnly = true;
-    } else if (v.type === 'boolean') {
-      input = document.createElement('input');
-      input.type = 'checkbox';
-      input.checked = !!v.value;
-      if (readOnly) {
-        input.disabled = true;
-      } else {
-        input.addEventListener('change', () => {
-          updateGlobalVarInSketch(v.name, input.checked);
-          vscode.postMessage({ type: 'updateGlobalVar', name: v.name, value: input.checked });
-        });
-      }
-     // PATCH: fix vertical alignment for boolean labels
-     label.style.display = 'inline-flex';
-     label.style.alignItems = 'center';
-     label.style.height = '22px';
-     label.style.marginBottom = '0px';
-     label.style.verticalAlign = 'middle';
-     label.style.padding = '0 2px 0 0';
-     label.style.lineHeight = '1.2';
-    } else {
-      input = document.createElement('input');
-      input.type = 'text';
-      input.value = v.value !== undefined ? v.value : '';
-      if (readOnly) input.readOnly = true;
-    }
-    input.setAttribute('data-var', v.name);
-    if (typeof v.value !== 'boolean') {
-      if (!readOnly) {
-        // existing debounced input logic
-        const delay = (typeof window._p5VarControlDebounceDelay === 'number')
-          ? window._p5VarControlDebounceDelay
-          : window._p5DebounceDelay;
-        const debouncedUpdate = debounceWebview(() => {
-          let val = input.value;
-          if (v.type === 'number') val = Number(val);
-          updateGlobalVarInSketch(v.name, val);
-          vscode.postMessage({ type: 'updateGlobalVar', name: v.name, value: val });
-        }, delay);
-        input.addEventListener('input', debouncedUpdate);
-        input.addEventListener('keydown', function(ev) {
-          if (ev.key === 'Enter' || ev.key === 'Return') {
-            ev.preventDefault();
-            let val = input.value;
-            if (v.type === 'number') val = Number(val);
-            updateGlobalVarInSketch(v.name, val);
-            vscode.postMessage({ type: 'updateGlobalVar', name: v.name, value: val });
-            input.blur();
-          }
-        });
-      }
-      // if readOnly: do not attach input/change handlers
-    }
-    label.appendChild(input);
-    controls.appendChild(label);
-  });
-  // Re-attach drawer logic if needed
-  controls.querySelector('.drawer-toggle').addEventListener('click', hideDrawer);
-  tab.addEventListener('click', showDrawer);
-
-  // Start syncing drawer with global variable values
-  if (window._p5DrawerSyncInterval) clearInterval(window._p5DrawerSyncInterval);
-  window._p5DrawerSyncInterval = setInterval(syncDrawerWithGlobals, 200);
+  // Remove/hide any existing drawer UI if present
+  const controls = document.getElementById('p5-var-controls');
+  const tab = document.getElementById('p5-var-drawer-tab');
+  if (controls) controls.remove();
+  if (tab) tab.remove();
+  // Do not create or show the drawer anymore
 }
 
 // Function to sync drawer inputs with global variable values
@@ -2781,9 +2707,8 @@ export function activate(context: vscode.ExtensionContext) {
       if (uri) {
         debugPrimedMap.set(uri.toString(), false);
         vscode.commands.executeCommand('setContext', 'p5DebugPrimed', false);
-        // Do not force visibility true; keep hidden until user toggles.
-        captureVisibleMap.set(uri.toString(), false);
-        vscode.commands.executeCommand('setContext', 'p5CaptureVisible', false);
+        // Preserve capture visibility state on reload; webview will apply its current state
+        // and report it back when needed. Do not override p5CaptureVisible here.
       }
     } catch { }
     await invokeReload(panel);
