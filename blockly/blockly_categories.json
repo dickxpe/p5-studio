@@ -6,6 +6,8 @@
       "blocks": [
         "p5_setup",
         "p5_draw",
+        "p5_auto_createCanvas",
+        "p5_auto_background",
         "p5_auto_line",
         "p5_auto_circle",
         "p5_auto_rect",
@@ -31,7 +33,18 @@
       "colour": "#FF8A65",
       "blocks": [
         "p5_setup",
-        "p5_draw"
+        "p5_draw",
+        "p5_windowResized",
+           { "type": "p5_auto_keyPressed", "event": true },
+         { "type": "p5_auto_keyReleased", "event": true },
+         { "type": "p5_auto_keyTyped", "event": true },
+         { "type": "p5_auto_mouseClicked", "event": true },
+         { "type": "p5_auto_mouseDragged", "event": true },
+         { "type": "p5_auto_mouseMoved", "event": true },
+         { "type": "p5_auto_mousePressed", "event": true },
+         { "type": "p5_auto_mouseReleased", "event": true },
+         { "type": "p5_auto_mouseWheel", "event": true },
+        { "type": "p5_auto_doubleClicked", "event": true }
       ]
     },
     {
@@ -361,27 +374,27 @@
       "name": "p5 · Input",
       "colour": "#FF8A65",
       "blocks": [
-        "p5_auto_deviceMoved",
-        "p5_auto_deviceShaken",
-        "p5_auto_deviceTurned",
-        "p5_auto_doubleClicked",
+         { "type": "p5_auto_deviceMoved", "event": true },
+         { "type": "p5_auto_deviceShaken", "event": true },
+         { "type": "p5_auto_deviceTurned", "event": true },
+         { "type": "p5_auto_keyPressed", "event": true },
+         { "type": "p5_auto_keyReleased", "event": true },
+         { "type": "p5_auto_keyTyped", "event": true },
+         { "type": "p5_auto_mouseClicked", "event": true },
+         { "type": "p5_auto_mouseDragged", "event": true },
+         { "type": "p5_auto_mouseMoved", "event": true },
+         { "type": "p5_auto_mousePressed", "event": true },
+         { "type": "p5_auto_mouseReleased", "event": true },
+         { "type": "p5_auto_mouseWheel", "event": true, "params": ["event"] },
+        { "type": "p5_auto_doubleClicked", "event": true },
+         { "type": "p5_auto_touchEnded", "event": true },
+         { "type": "p5_auto_touchMoved", "event": true },
+         { "type": "p5_auto_touchStarted", "event": true },
         "p5_auto_exitPointerLock",
         "p5_auto_keyIsDown",
-        "p5_auto_keyPressed",
-        "p5_auto_keyReleased",
-        "p5_auto_keyTyped",
-        "p5_auto_mouseClicked",
-        "p5_auto_mouseDragged",
-        "p5_auto_mouseMoved",
-        "p5_auto_mousePressed",
-        "p5_auto_mouseReleased",
-        "p5_auto_mouseWheel",
         "p5_auto_requestPointerLock",
         "p5_auto_setMoveThreshold",
-        "p5_auto_setShakeThreshold",
-        "p5_auto_touchEnded",
-        "p5_auto_touchMoved",
-        "p5_auto_touchStarted"
+        "p5_auto_setShakeThreshold"
       ]
     },
     {
@@ -461,8 +474,15 @@
         "p5_auto_scale",
         "p5_auto_shearX",
         "p5_auto_shearY",
-        "p5_auto_translate",
-        "p5_auto_windowResized"
+        "p5_auto_translate"
+      ]
+    },
+    {
+      "name": "OSC",
+      "colour": "#90A4AE",
+      "blocks": [
+        "p5_sendOSC",
+        { "type": "p5_receivedOSC", "event": true }
       ]
     }
   ]

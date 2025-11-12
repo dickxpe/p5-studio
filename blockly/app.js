@@ -5,7 +5,7 @@
 
 
 (function () {
-  // Remove default 'do'/'then' labels from standard blocks by overriding Blockly messages early
+  // Remove default 'do'/'then' labels and the 'to' label on function blocks by overriding Blockly messages early
   function overrideDoThenMessages() {
     try {
       if (!window.Blockly || !Blockly.Msg) return;
@@ -14,7 +14,10 @@
         'CONTROLS_WHILEUNTIL_INPUT_DO',
         'CONTROLS_FOR_INPUT_DO',
         'CONTROLS_FOREACH_INPUT_DO',
-        'CONTROLS_IF_MSG_THEN'
+        'CONTROLS_IF_MSG_THEN',
+        // Remove the leading label on function definition blocks
+        'PROCEDURES_DEFNORETURN_TITLE',
+        'PROCEDURES_DEFRETURN_TITLE'
       ];
       keys.forEach(k => { try { Blockly.Msg[k] = ''; } catch (e) { } });
     } catch (e) { /* ignore */ }
@@ -632,7 +635,7 @@
         try {
           // Hide default 'do'/'then' labels in the flyout as well
           const tx = (t.textContent || '').trim().toLowerCase();
-          if (tx === 'do' || tx === 'then') {
+          if (tx === 'do' || tx === 'then' || tx === 'to') {
             t.textContent = '';
           }
           t.setAttribute('fill', '#000');
@@ -659,6 +662,8 @@
               try { ensureRepeatDefaults(b); } catch (e) { }
               // Ensure for blocks default to from 0 to 1 by 1
               try { ensureForDefaults(b); } catch (e) { }
+              // Auto-create variables for event block parameters (e.g., receivedOSC: address, args)
+              try { ensureEventParamVariables(b); } catch (e) { }
             }
           } catch (err) { /* ignore */ }
         });
@@ -689,10 +694,10 @@
           const row = input.fieldRow || [];
           row.forEach(field => {
             try {
-              // Match label-like fields with the text 'do' or 'then'
+              // Match label-like fields with the text 'do', 'then', or 'to'
               const val = (typeof field.getValue === 'function' ? field.getValue() : field.getText ? field.getText() : '') || '';
               const txt = ('' + val).trim().toLowerCase();
-              if (txt === 'do' || txt === 'then') {
+              if (txt === 'do' || txt === 'then' || txt === 'to') {
                 if (typeof field.setValue === 'function') field.setValue('');
                 else if (typeof field.setText === 'function') field.setText('');
               }
@@ -708,6 +713,101 @@
     try {
       const all = ws.getAllBlocks(false);
       all.forEach(b => { try { sanitizeBlockDoThenLabels(b); } catch (e) { } });
+    } catch (e) { /* ignore */ }
+  }
+
+  // --- Auto-create variables for event block parameters on block creation ---
+  function buildEventBlockTypeSet() {
+    const set = new Set();
+    try {
+      const cats = window.EXTRA_TOOLBOX_CATEGORIES || [];
+      if (Array.isArray(cats)) {
+        cats.forEach(cat => {
+          try {
+            const arr = Array.isArray(cat && cat.blocks) ? cat.blocks : [];
+            arr.forEach(item => {
+              try {
+                if (item && typeof item === 'object') {
+                  const t = item.type;
+                  const isEvent = !!item.event;
+                  if (typeof t === 'string' && isEvent) set.add(t);
+                }
+              } catch (e) { }
+            });
+          } catch (e) { }
+        });
+      }
+    } catch (e) { }
+    return set;
+  }
+  const EVENT_BLOCK_TYPES = buildEventBlockTypeSet();
+
+  function buildEventParamsMap() {
+    const map = new Map(); // type -> params[]
+    try {
+      const cats = window.EXTRA_TOOLBOX_CATEGORIES || [];
+      if (Array.isArray(cats)) {
+        cats.forEach(cat => {
+          try {
+            const arr = Array.isArray(cat && cat.blocks) ? cat.blocks : [];
+            arr.forEach(item => {
+              try {
+                if (item && typeof item === 'object' && item.type && item.event) {
+                  const params = Array.isArray(item.params) ? item.params.filter(x => typeof x === 'string') : [];
+                  map.set(item.type, params);
+                }
+              } catch (e) { }
+            });
+          } catch (e) { }
+        });
+      }
+    } catch (e) { }
+    return map;
+  }
+  const EVENT_PARAMS_MAP = buildEventParamsMap();
+
+  function ensureEventParamVariables(block) {
+    try {
+      if (!block || !block.type) return;
+      const type = String(block.type);
+      const names = [];
+      // Custom OSC event block
+      if (type === 'p5_receivedOSC') {
+        names.push('address', 'args');
+      }
+      // Auto-generated p5 event blocks flagged via JSON
+      if (type.startsWith('p5_auto_') && EVENT_BLOCK_TYPES.has(type)) {
+        // Prefer params declared in JSON, fallback to P5_PARAM_MAP
+        try {
+          const jsonParams = EVENT_PARAMS_MAP.get(type) || [];
+          jsonParams.forEach(p => { if (p && typeof p === 'string') names.push(p); });
+        } catch (e) { }
+        if (!names.length) {
+          try {
+            const fn = type.slice('p5_auto_'.length);
+            const arr = (window && window.P5_PARAM_MAP && window.P5_PARAM_MAP[fn]) || [];
+            if (Array.isArray(arr)) arr.forEach(p => { if (p && typeof p === 'string') names.push(p); });
+          } catch (e) { }
+        }
+      }
+      if (!names.length) return;
+      // Create variables if they don't exist yet
+      let existing = [];
+      try { existing = (typeof ws.getAllVariables === 'function') ? ws.getAllVariables() : []; } catch (e) { existing = []; }
+      const have = new Set();
+      existing.forEach(v => {
+        try {
+          const n = (v && (v.name || v.name_)) ? String(v.name || v.name_) : '';
+          if (n) have.add(n);
+        } catch (e) { }
+      });
+      names.forEach(n => {
+        try {
+          if (!n || have.has(n)) return;
+          if (typeof ws.createVariable === 'function') ws.createVariable(n);
+          else if (Blockly && Blockly.Variables && typeof Blockly.Variables.createVariable === 'function') Blockly.Variables.createVariable(ws, null, n);
+        } catch (e) { /* ignore per-name */ }
+      });
     } catch (e) { /* ignore */ }
   }
 

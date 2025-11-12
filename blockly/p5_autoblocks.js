@@ -47,7 +47,7 @@
         this.appendDummyInput().appendField('draw');
         this.appendStatementInput('DO').setCheck(null);
         this.setNextStatement(true, null);
-        this.setColour('#BA68C8');
+        this.setColour('#FF8A65');
         this.setTooltip('p5.js draw() function');
         this.setHelpUrl('https://p5js.org/reference/#/p5/draw');
       }
@@ -57,19 +57,19 @@
         this.appendDummyInput().appendField('setup');
         this.appendStatementInput('DO').setCheck(null);
         this.setNextStatement(true, null);
-        this.setColour('#BA68C8');
+        this.setColour('#FF8A65');
         this.setTooltip('p5.js setup() function');
         this.setHelpUrl('https://p5js.org/reference/#/p5/setup');
       }
     };
-    Blockly.Blocks['p5_auto_draw'] = {
+    Blockly.Blocks['p5_windowResized'] = {
       init: function () {
-        this.appendDummyInput().appendField('draw');
+        this.appendDummyInput().appendField('windowResized');
         this.appendStatementInput('DO').setCheck(null);
         this.setNextStatement(true, null);
-        this.setColour('#BA68C8');
-        this.setTooltip('p5.js draw() function');
-        this.setHelpUrl('https://p5js.org/reference/#/p5/draw');
+        this.setColour('#FF8A65');
+        this.setTooltip('p5.js windowResized() function');
+        this.setHelpUrl('https://p5js.org/reference/#/p5/windowResized');
       }
     };
     try {
@@ -111,6 +111,36 @@
   const categoryContents = [];
   const groupedContents = {}; // category -> array of toolbox entries
 
+  // Build meta for event-designated block types from JSON categories: type -> params[]
+  function buildEventBlockMeta() {
+    const meta = new Map(); // type -> params[]
+    try {
+      const cats = (window && window.EXTRA_TOOLBOX_CATEGORIES) || [];
+      if (Array.isArray(cats)) {
+        cats.forEach(cat => {
+          try {
+            const arr = Array.isArray(cat && cat.blocks) ? cat.blocks : [];
+            arr.forEach(item => {
+              try {
+                if (item && typeof item === 'object') {
+                  const t = item.type;
+                  const isEvent = !!item.event;
+                  if (typeof t === 'string' && isEvent) {
+                    const p = Array.isArray(item.params) ? item.params.filter(x => typeof x === 'string') : [];
+                    meta.set(t, p);
+                  }
+                }
+              } catch (_) { }
+            });
+          } catch (_) { }
+        });
+      }
+    } catch (_) { }
+    return meta;
+  }
+  const EVENT_BLOCK_META = buildEventBlockMeta();
+  const EVENT_BLOCK_TYPES = new Set(Array.from(EVENT_BLOCK_META.keys()));
+
   // Category color mapping (same as toolbox)
   const CATEGORY_COLORS = {
     'Color': '#F06292',
@@ -146,25 +176,40 @@
       const category = catMap[name] || 'Uncategorized';
       const blockColor = CATEGORY_COLORS[category] || 15;
 
-      // Multi-line: function name on top, each parameter on its own line
+      // Build block meta depending on whether this is an event block
+  const isEvent = EVENT_BLOCK_TYPES.has(type);
+  // Any params explicitly provided via JSON for this event type
+  const jsonEventParams = isEvent ? (EVENT_BLOCK_META.get(type) || []) : [];
+      // Default: call-style statement block with parameter inputs
       const blockDef = {
         type,
         message0: name,
-        previousStatement: null,
+        previousStatement: isEvent ? undefined : null,
         nextStatement: null,
         colour: blockColor,
         tooltip: 'p5.' + name,
         inputsInline: false
       };
       const inputNames = [];
-      for (let i = 0; i < arity; i++) {
-        const label = (paramNames[i] || ('arg' + (i + 1))).replace(/_/g, ' ');
-        const keyM = 'message' + (i + 1);
-        const keyA = 'args' + (i + 1);
-        blockDef[keyM] = label + ' %1';
-        const inpName = 'ARG' + i;
-        inputNames.push(inpName);
-        blockDef[keyA] = [{ type: 'input_value', name: inpName }];
+      if (isEvent) {
+        // Event block: provide a statement input body instead of value inputs
+        // Optionally show params in the header for clarity
+        const header = jsonEventParams.length ? (name + ' (' + jsonEventParams.join(', ') + ')') : name;
+        blockDef.message0 = header;
+        blockDef.message1 = '%1';
+        blockDef.args1 = [{ type: 'input_statement', name: 'DO' }];
+        // No previousStatement for event definition (top-level-ish). We keep nextStatement to allow chaining visually if desired.
+      } else {
+        // Non-event: multi-line with value inputs per parameter
+        for (let i = 0; i < arity; i++) {
+          const label = (paramNames[i] || ('arg' + (i + 1))).replace(/_/g, ' ');
+          const keyM = 'message' + (i + 1);
+          const keyA = 'args' + (i + 1);
+          blockDef[keyM] = label + ' %1';
+          const inpName = 'ARG' + i;
+          inputNames.push(inpName);
+          blockDef[keyA] = [{ type: 'input_value', name: inpName }];
+        }
       }
       blocks.push(blockDef);
 
@@ -175,20 +220,32 @@
         const gen = javascript.javascriptGenerator;
         const Order = gen.Order || javascript.Order;
         gen.forBlock[type] = function (block, generator) {
-          const args = [];
-          // Only use inputs that actually exist on the block
-          for (let i = 0; i < 32; i++) {
-            if (!block.getInput('ARG' + i)) break;
-            const code = generator.valueToCode(block, 'ARG' + i, Order ? Order.NONE : gen.ORDER_NONE);
-            args.push(code);
+          if (EVENT_BLOCK_TYPES.has(type)) {
+            const body = generator.statementToCode(block, 'DO');
+            // Prefer params from JSON meta, fallback to host-provided P5_PARAM_MAP
+            let params = [];
+            try { params = (EVENT_BLOCK_META.get(type) || []).slice(); } catch (_) { params = []; }
+            if ((!params || !params.length) && window && window.P5_PARAM_MAP && Array.isArray(window.P5_PARAM_MAP[name])) {
+              params = window.P5_PARAM_MAP[name].slice();
+            }
+            const sig = Array.isArray(params) && params.length ? '(' + params.join(', ') + ')' : '()';
+            return 'function ' + name + sig + '{\n' + body + '}\n';
+          } else {
+            const args = [];
+            // Only use inputs that actually exist on the block
+            for (let i = 0; i < 32; i++) {
+              if (!block.getInput('ARG' + i)) break;
+              const code = generator.valueToCode(block, 'ARG' + i, Order ? Order.NONE : gen.ORDER_NONE);
+              args.push(code);
+            }
+            // Remove trailing empty/undefined args (optional params)
+            let lastNonEmpty = args.length - 1;
+            while (lastNonEmpty >= 0 && (!args[lastNonEmpty] || args[lastNonEmpty].trim() === '')) {
+              lastNonEmpty--;
+            }
+            const trimmedArgs = args.slice(0, lastNonEmpty + 1).map(a => a || '');
+            return name + '(' + trimmedArgs.join(', ') + ');\n';
           }
-          // Remove trailing empty/undefined args (optional params)
-          let lastNonEmpty = args.length - 1;
-          while (lastNonEmpty >= 0 && (!args[lastNonEmpty] || args[lastNonEmpty].trim() === '')) {
-            lastNonEmpty--;
-          }
-          const trimmedArgs = args.slice(0, lastNonEmpty + 1).map(a => a || '');
-          return name + '(' + trimmedArgs.join(', ') + ');\n';
         };
       }
       // If generator is available now, register immediately; otherwise, defer until ready
@@ -302,6 +359,48 @@
     gen.forBlock['p5_constant'] = (b) => [b.getFieldValue('NAME') || '0', gen.ORDER_ATOMIC];
   }
 
+  // --- OSC category custom blocks ---
+  try {
+    Blockly.defineBlocksWithJsonArray([
+      {
+        type: 'p5_sendOSC',
+        message0: 'sendOSC',
+        message1: 'address %1',
+        args1: [{ type: 'input_value', name: 'ADDRESS' }],
+        message2: 'args %1',
+        args2: [{ type: 'input_value', name: 'ARGS' }],
+        previousStatement: null,
+        nextStatement: null,
+        colour: '#90A4AE',
+        tooltip: 'sendOSC(address, args) — send OSC message',
+      },
+      {
+        type: 'p5_receivedOSC',
+        message0: 'receivedOSC (address, args)',
+        message1: '%1',
+        args1: [{ type: 'input_statement', name: 'DO' }],
+        nextStatement: null,
+        colour: '#90A4AE',
+        tooltip: 'receivedOSC(address, args) — OSC receive event',
+      }
+    ]);
+  } catch (_) { }
+  try {
+    if (window.javascript && javascript.javascriptGenerator) {
+      const gen = javascript.javascriptGenerator;
+      const Order = gen.Order || javascript.Order;
+      gen.forBlock['p5_sendOSC'] = function (block, generator) {
+        let addr = generator.valueToCode(block, 'ADDRESS', Order ? Order.NONE : gen.ORDER_NONE) || "''";
+        let args = generator.valueToCode(block, 'ARGS', Order ? Order.NONE : gen.ORDER_NONE) || '[]';
+        return 'sendOSC(' + addr + ', ' + args + ');\n';
+      };
+      gen.forBlock['p5_receivedOSC'] = function (block, generator) {
+        const body = generator.statementToCode(block, 'DO');
+        return 'function receivedOSC(address, args){\n' + body + '}\n';
+      };
+    }
+  } catch (_) { }
+
   // Add a toolbox category at the end
   try {
     if (!window.toolbox) window.toolbox = { kind: 'categoryToolbox', contents: [] };
@@ -326,8 +425,10 @@
               entry.contents = [];
             } else if (Array.isArray(cat.blocks)) {
               entry.contents = cat.blocks
-                .filter(t => typeof t === 'string' && (!Blockly.Blocks || !!Blockly.Blocks[t]) && isAllowedBlock(t))
-                .map(t => ({ kind: 'block', type: t }));
+                .map(t => (typeof t === 'string' ? { type: t } : (t && typeof t === 'object' ? t : null)))
+                .filter(obj => obj && typeof obj.type === 'string')
+                .filter(obj => (!Blockly.Blocks || !!Blockly.Blocks[obj.type]) && isAllowedBlock(obj.type))
+                .map(obj => ({ kind: 'block', type: obj.type }));
             }
             contents.push(entry);
           } catch (_) { }
@@ -410,8 +511,10 @@
             };
             const blocks = Array.isArray(cat.blocks) ? cat.blocks : [];
             entry.contents = blocks
-              .filter(t => typeof t === 'string' && (!Blockly.Blocks || !!Blockly.Blocks[t]) && isAllowedBlock(t))
-              .map(t => ({ kind: 'block', type: t }));
+              .map(t => (typeof t === 'string' ? { type: t } : (t && typeof t === 'object' ? t : null)))
+              .filter(obj => obj && typeof obj.type === 'string')
+              .filter(obj => (!Blockly.Blocks || !!Blockly.Blocks[obj.type]) && isAllowedBlock(obj.type))
+              .map(obj => ({ kind: 'block', type: obj.type }));
             window.toolbox.contents.push(entry);
             existingNames.add(cat.name);
           } catch (_) { }

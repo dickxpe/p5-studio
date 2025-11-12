@@ -4264,7 +4264,11 @@ export function activate(context: vscode.ExtensionContext) {
             for (const cat of obj.categories) {
               if (cat && Array.isArray(cat.blocks)) {
                 for (const b of cat.blocks) {
-                  if (typeof b === 'string' && b.trim()) allowed.add(b);
+                  if (typeof b === 'string' && b.trim()) {
+                    allowed.add(b);
+                  } else if (b && typeof b === 'object' && typeof b.type === 'string' && b.type.trim()) {
+                    allowed.add(b.type);
+                  }
                 }
               }
             }
