@@ -1658,6 +1658,7 @@ window.addEventListener("message", e => {
           window.__liveP5FrameCounter = 0;
           window.__liveP5StepResolve = null;
           window.__liveP5StepAdvance = null;
+          window.__liveP5Stepping = false;
         } catch {}
         // Save current global values
         const prevGlobals = {};
@@ -1691,6 +1692,7 @@ window.addEventListener("message", e => {
           window.__liveP5FrameCounter = 0;
           window.__liveP5StepResolve = null;
           window.__liveP5StepAdvance = null;
+          window.__liveP5Stepping = false;
         } catch {}
         runUserSketch(data.code);
       }
@@ -1702,6 +1704,7 @@ window.addEventListener("message", e => {
         window.__liveP5FrameCounter = 0;
         window.__liveP5StepResolve = null;
         window.__liveP5StepAdvance = null;
+        window.__liveP5Stepping = false;
       } catch {}
       try { if (typeof window._resetCaptureUIAndTimer === 'function') window._resetCaptureUIAndTimer(); } catch {}
       if(window._p5Instance){window._p5Instance.remove(); window._p5Instance=null;}
@@ -2257,6 +2260,18 @@ function instrumentSetupForSingleStep(code: string, lineOffset: number, opts?: {
     const b = recast.types.builders;
     let changed = false;
 
+    // Collect names of user-defined functions (exclude setup/draw) so we can await their calls to enable step-into
+    const userFunctionNames = new Set<string>();
+    try {
+      const body: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
+      for (const n of body) {
+        if (n && n.type === 'FunctionDeclaration' && n.id && typeof n.id.name === 'string') {
+          const nm = n.id.name;
+          if (nm !== 'setup' && nm !== 'draw') userFunctionNames.add(nm);
+        }
+      }
+    } catch { /* ignore */ }
+
     // Collect top-level statements (non-function) to highlight before entering setup()
     // We don't re-execute them (they already ran on load); we only highlight + await
     const topLevelPreSteps: any[] = [];
@@ -2320,7 +2335,7 @@ function instrumentSetupForSingleStep(code: string, lineOffset: number, opts?: {
       const start = loc.start || { line: 1, column: 0 };
       const end = loc.end || start;
       return b.ifStatement(
-        b.memberExpression(b.identifier('window'), b.identifier('__liveP5StepResolve')),
+        b.memberExpression(b.identifier('window'), b.identifier('__liveP5Stepping')),
         b.blockStatement([
           b.expressionStatement(
             b.callExpression(
@@ -2333,7 +2348,7 @@ function instrumentSetupForSingleStep(code: string, lineOffset: number, opts?: {
     };
     const makeAwaitStep = () => b.expressionStatement(b.awaitExpression(b.callExpression(b.identifier('__waitStep'), [])));
     const makeGlobalAwaitStep = () => b.ifStatement(
-      b.memberExpression(b.identifier('window'), b.identifier('__liveP5StepResolve')),
+      b.memberExpression(b.identifier('window'), b.identifier('__liveP5Stepping')),
       b.blockStatement([
         b.expressionStatement(
           b.awaitExpression(
@@ -2447,6 +2462,25 @@ function instrumentSetupForSingleStep(code: string, lineOffset: number, opts?: {
       switch (node.type) {
         case 'BlockStatement':
           return instrumentBlock(node);
+        case 'ExpressionStatement': {
+          // If this is a direct call to a known user-defined function, rewrite to `await func(...)` to step-into
+          try {
+            const expr = node.expression;
+            if (expr && expr.type === 'CallExpression' && expr.callee && expr.callee.type === 'Identifier') {
+              const name = expr.callee.name;
+              if (userFunctionNames.has(name)) {
+                // Wrap call in await
+                const awaited = b.expressionStatement(
+                  b.awaitExpression(
+                    b.callExpression(b.identifier(name), expr.arguments || [])
+                  )
+                );
+                return awaited;
+              }
+            }
+          } catch { /* fallthrough to default instrumentation */ }
+          return node;
+        }
         case 'IfStatement':
           if (node.consequent) {
             if (node.consequent.type !== 'BlockStatement') node.consequent = b.blockStatement([node.consequent]);
@@ -2591,6 +2625,15 @@ function instrumentSetupForSingleStep(code: string, lineOffset: number, opts?: {
 
           const original = node.body.body.slice();
           const prelude = [highlightDecl, clearDecl, waitDecl, advanceDecl];
+          // Mark stepping session active so user functions can step-in
+          prelude.push(
+            b.expressionStatement(
+              b.assignmentExpression('=',
+                b.memberExpression(b.identifier('window'), b.identifier('__liveP5Stepping')),
+                b.literal(true)
+              )
+            )
+          );
           // Export helpers on window so other functions can use them during stepping
           prelude.push(
             b.expressionStatement(
