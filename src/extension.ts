@@ -2245,7 +2245,7 @@ function instrumentSetupWithDelays(code: string, delayMs: number): string {
 
 // Instrument setup() for single-step execution. Before each statement in setup() (and inside loop/if blocks),
 // insert a call to __highlight(line/col) and `await __waitStep()` so each click advances to the next statement.
-function instrumentSetupForSingleStep(code: string, lineOffset: number): string {
+function instrumentSetupForSingleStep(code: string, lineOffset: number, opts?: { disableTopLevelPreSteps?: boolean }): string {
   try {
     const acorn = require('acorn');
     const ast = recast.parse(code, {
@@ -2261,34 +2261,36 @@ function instrumentSetupForSingleStep(code: string, lineOffset: number): string 
     // We don't re-execute them (they already ran on load); we only highlight + await
     const topLevelPreSteps: any[] = [];
     try {
-      const programBody: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
-      for (const stmt of programBody) {
-        if (!stmt || typeof stmt.type !== 'string') continue;
-        // Skip function declarations (including setup/draw and helpers)
-        if (stmt.type === 'FunctionDeclaration') continue;
-        // Skip empty statements
-        if (stmt.type === 'EmptyStatement') continue;
-        // Include directives (e.g., 'use strict') as a single highlight step
-        const hi = ((): any => {
-          const loc = stmt && (stmt as any).loc ? (stmt as any).loc : null;
-          if (!loc) return null;
-          const start = loc.start || { line: 1, column: 0 };
-          const end = loc.end || start;
-          return b.expressionStatement(
-            b.callExpression(b.identifier('__highlight'), [
-              b.literal(start.line),
-              b.literal(start.column + 1),
-              b.literal(end.line),
-              b.literal(end.column + 1)
-            ])
-          );
-        })();
-        if (hi) {
-          topLevelPreSteps.push(hi);
-          // await gate to advance to next top-level statement
-          topLevelPreSteps.push(
-            b.expressionStatement(b.awaitExpression(b.callExpression(b.identifier('__waitStep'), [])))
-          );
+      if (!opts || !opts.disableTopLevelPreSteps) {
+        const programBody: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
+        for (const stmt of programBody) {
+          if (!stmt || typeof stmt.type !== 'string') continue;
+          // Skip function declarations (including setup/draw and helpers)
+          if (stmt.type === 'FunctionDeclaration') continue;
+          // Skip empty statements
+          if (stmt.type === 'EmptyStatement') continue;
+          // Include directives (e.g., 'use strict') as a single highlight step
+          const hi = ((): any => {
+            const loc = stmt && (stmt as any).loc ? (stmt as any).loc : null;
+            if (!loc) return null;
+            const start = loc.start || { line: 1, column: 0 };
+            const end = loc.end || start;
+            return b.expressionStatement(
+              b.callExpression(b.identifier('__highlight'), [
+                b.literal(start.line),
+                b.literal(start.column + 1),
+                b.literal(end.line),
+                b.literal(end.column + 1)
+              ])
+            );
+          })();
+          if (hi) {
+            topLevelPreSteps.push(hi);
+            // await gate to advance to next top-level statement
+            topLevelPreSteps.push(
+              b.expressionStatement(b.awaitExpression(b.callExpression(b.identifier('__waitStep'), [])))
+            );
+          }
         }
       }
     } catch { /* ignore */ }
@@ -2699,9 +2701,11 @@ function instrumentSetupForSingleStep(code: string, lineOffset: number): string 
                 )
               ])
             );
+            // Ensure that when there is no setup(), the top-level pre-steps are also protected
+            // by the draw-busy guard to avoid overlapping awaits across frames.
             node.body.body = hasSetupFunction
               ? [...prelude, drawGateGuard, drawBusyGuard, setDrawBusy, incFrameCounter, ...entryStep, ...instrumentedBlock.body, clearDrawBusy]
-              : [...prelude, topOnceGuard, drawBusyGuard, setDrawBusy, incFrameCounter, ...entryStep, ...instrumentedBlock.body, clearDrawBusy];
+              : [...prelude, drawBusyGuard, setDrawBusy, topOnceGuard, incFrameCounter, ...entryStep, ...instrumentedBlock.body, clearDrawBusy];
           }
           changed = true;
           return false;
@@ -6078,8 +6082,8 @@ export function activate(context: vscode.ExtensionContext) {
             const didWrap = wrapped !== codeForRun;
             // Compute global variables BEFORE instrumentation for accurate offset and rewrite
             const preGlobals = extractGlobalVariables(wrapped);
-            const lineOffsetTotal = (didWrap ? 1 : 0) + (preGlobals ? preGlobals.length : 0);
-            let instrumented = instrumentSetupForSingleStep(wrapped, lineOffsetTotal);
+            const lineOffsetTotal = (didWrap ? 1 : 0);
+            let instrumented = instrumentSetupForSingleStep(wrapped, lineOffsetTotal, { disableTopLevelPreSteps: didWrap });
             const globals = preGlobals;
             let rewrittenCode = rewriteUserCodeWithWindowGlobals(instrumented, globals);
             const hasDraw = /\bfunction\s+draw\s*\(/.test(wrapped);
@@ -6224,8 +6228,8 @@ export function activate(context: vscode.ExtensionContext) {
             const didWrap = wrapped !== codeForRun;
             // Compute global variables BEFORE instrumentation for accurate offset and rewrite
             const preGlobals = extractGlobalVariables(wrapped);
-            const lineOffsetTotal = (didWrap ? 1 : 0) + (preGlobals ? preGlobals.length : 0);
-            let instrumented = instrumentSetupForSingleStep(wrapped, lineOffsetTotal);
+            const lineOffsetTotal = (didWrap ? 1 : 0);
+            let instrumented = instrumentSetupForSingleStep(wrapped, lineOffsetTotal, { disableTopLevelPreSteps: didWrap });
             const globals = preGlobals;
             let rewrittenCode = rewriteUserCodeWithWindowGlobals(instrumented, globals);
             const hasDraw = /\bfunction\s+draw\s*\(/.test(wrapped);
