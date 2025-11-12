@@ -7,6 +7,12 @@ import * as fs from 'fs';
 import * as crypto from 'crypto';
 import { exec } from 'child_process';
 import { writeFileSync } from 'fs';
+// Modularized helpers and constants
+import { debounce, getTime, getDebounceDelay, listFilesRecursively } from './utils/helpers';
+import { RESERVED_GLOBALS, P5_NUMERIC_IDENTIFIERS, P5_EVENT_HANDLERS } from './constants';
+import { extractGlobalVariablesWithConflicts, extractGlobalVariables, rewriteUserCodeWithWindowGlobals } from './processing/codeRewriter';
+import { detectTopLevelInputs, hasNonTopInputUsage, preprocessTopLevelInputs, hasCachedInputsForKey, getCachedInputsForKey, setCachedInputsForKey, TopInputItem } from './processing/topInputs';
+import { createHtml } from './webview/createHtml';
 
 const webviewPanelMap = new Map<string, vscode.WebviewPanel>();
 let activeP5Panel: vscode.WebviewPanel | null = null;
@@ -78,2053 +84,34 @@ function getOrCreateOutputChannel(docUri: string, fileName: string) {
   return channel;
 }
 
-// Debounce utility to delay function execution, used to avoid excessive reloads
-function debounce<Func extends (...args: any[]) => void>(fn: Func, delay: number) {
-  let timeout: NodeJS.Timeout;
-  return (...args: Parameters<Func>) => {
-    clearTimeout(timeout);
-    timeout = setTimeout(() => fn(...args), delay);
-  };
-}
+// (helpers moved to ./utils/helpers)
 
-// Get current time as HH:MM:SS string for log timestamps
-function getTime(): string {
-  const now = new Date();
-  const h = String(now.getHours()).padStart(2, '0');
-  const m = String(now.getMinutes()).padStart(2, '0');
-  const s = String(now.getSeconds()).padStart(2, '0');
-  return `${h}:${m}:${s}`;
-}
+// (constants moved to ./constants)
 
-// Read debounce delay from user config
-function getDebounceDelay() {
-  return vscode.workspace.getConfiguration('P5Studio').get<number>('debounceDelay', 500);
-}
+// (moved to ./processing/codeRewriter)
 
-// Recursively list .js/.ts files in a folder (for script imports)
-async function listFilesRecursively(dirUri: vscode.Uri, exts: string[]): Promise<string[]> {
-  let files: string[] = [];
-  try {
-    const entries = await vscode.workspace.fs.readDirectory(dirUri);
-    for (const [name, type] of entries) {
-      const entryUri = vscode.Uri.file(path.join(dirUri.fsPath, name));
-      if (type === vscode.FileType.File && exts.some(ext => name.endsWith(ext))) {
-        files.push(entryUri.fsPath);
-      } else if (type === vscode.FileType.Directory) {
-        files = files.concat(await listFilesRecursively(entryUri, exts));
-      }
-    }
-  } catch (e) { }
-  return files;
-}
+// (moved to ./processing/codeRewriter)
 
-// Set of reserved/built-in global names (p5.js, browser, JS built-ins, etc.)
-const RESERVED_GLOBALS = new Set([
-  "MEDIA_FOLDER", "INCLUDE_FOLDER", "p5",
-  // p5.js color functions and color mode
-  "hue", "saturation", "brightness", "red", "green", "blue", "alpha", "lightness", "colorMode", "color",
-  // p5.js core properties
-  "width", "height", "frameCount", "frameRate", "deltaTime", "mouseX", "mouseY", "pmouseX", "pmouseY",
-  "winMouseX", "winMouseY", "pwinMouseX", "pwinMouseY", "mouseButton", "mouseIsPressed", "key", "keyCode",
-  "keyIsPressed", "keyIsDown", "touches", "deviceOrientation", "accelerationX", "accelerationY", "accelerationZ",
-  "pAccelerationX", "pAccelerationY", "pAccelerationZ", "rotationX", "rotationY", "rotationZ", "pRotationX",
-  "pRotationY", "pRotationZ", "turnAxis", "movedX", "movedY", "movedZ", "winMouseX", "winMouseY", "pwinMouseX", "pwinMouseY",
-  // p5.js structure
-  "setup", "draw", "preload", "remove", "mouseMoved", "mouseDragged", "mousePressed", "mouseReleased", "mouseClicked",
-  "doubleClicked", "mouseWheel", "touchStarted", "touchMoved", "touchEnded", "keyPressed", "keyReleased", "keyTyped",
-  // p5.js rendering
-  "createCanvas", "resizeCanvas", "noCanvas", "createGraphics", "createCapture", "createVideo", "createAudio", "loadImage",
-  "image", "imageMode", "blend", "copy", "filter", "get", "loadPixels", "set", "updatePixels", "noLoop", "loop", "redraw",
-  "clear", "background", "color", "fill", "noFill", "stroke", "noStroke", "strokeWeight", "strokeCap", "strokeJoin",
-  "erase", "noErase", "blendMode", "drawingContext", "push", "pop", "resetMatrix", "applyMatrix", "translate", "rotate",
-  "rotateX", "rotateY", "rotateZ", "scale", "shearX", "shearY", "createShader", "shader", "resetShader",
-  // p5.js shapes
-  "rect", "square", "ellipse", "circle", "arc", "triangle", "quad", "line", "point", "beginShape", "endShape", "vertex",
-  "bezierVertex", "curveVertex", "bezier", "curve", "curveTightness", "curveDetail",
-  // p5.js typography
-  "text", "textFont", "textSize", "textAlign", "textStyle", "textLeading", "textWidth", "textAscent", "textDescent",
-  // p5.js attributes
-  "ellipseMode", "rectMode", "angleMode", "noSmooth", "smooth", "strokeCap", "strokeJoin",
-  // p5.js math
-  "abs", "ceil", "constrain", "dist", "exp", "floor", "lerp", "log", "mag", "map", "max", "min", "norm", "pow", "round",
-  "sq", "sqrt", "createVector", "noise", "noiseDetail", "noiseSeed", "randomSeed", "random", "randomGaussian",
-  // p5.js conversion / formatting helpers
-  "int", "float", "str", "boolean", "byte", "char", "unchar", "hex", "unhex", "nf", "nfc", "nfp", "nfs",
-  // p5.js trigonometry
-  "degrees", "radians", "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
-  // p5.js time & date
-  "day", "hour", "minute", "millis", "month", "second", "year",
-  // p5.js events
-  "deviceMoved", "deviceTurned", "deviceShaken",
-  // p5.js input
-  "createInput", "createButton", "createCheckbox", "createSelect", "createSlider", "createRadio", "createColorPicker",
-  // p5.js output
-  "print", "println", "save", "saveCanvas", "saveFrames", "saveJSON", "saveStrings", "saveTable", "saveXML",
-  // p5.js files
-  "loadJSON", "loadStrings", "loadTable", "loadXML", "loadBytes", "loadFont", "loadShader", "loadImage", "loadSound",
-  // p5.js sound (if p5.sound is loaded)
-  "loadSound", "createAudio", "createOscillator", "createGain", "createConvolver", "createDelay", "createCompressor",
-  "createPanner", "createStereoPanner", "createAnalyser", "createEnvelope", "createFFT", "createFilter", "createBiquadFilter",
-  "createLowPass", "createHighPass", "createBandPass", "createPeaking", "createNotch", "createAllPass", "createLowshelf",
-  "createHighshelf", "createDistortion", "createWaveShaper", "createMediaElementSource", "createMediaStreamSource",
-  // p5.js dom
-  "createDiv", "createSpan", "createP", "createImg", "createA", "createElement", "select", "selectAll", "removeElements",
-  // p5.js misc
-  "frameRate", "pixelDensity", "displayWidth", "displayHeight", "windowWidth", "windowHeight", "windowResized",
-  // browser globals (partial, common)
-  "window", "document", "navigator", "location", "console", "setTimeout", "setInterval", "clearTimeout", "clearInterval",
-  "alert", "prompt", "confirm", "requestAnimationFrame", "cancelAnimationFrame", "localStorage", "sessionStorage",
-  "fetch", "XMLHttpRequest", "Event", "addEventListener", "removeEventListener", "dispatchEvent",
-  // JS built-ins
-  "Array", "Object", "Function", "String", "Number", "Boolean", "Symbol", "Date", "Math", "RegExp", "Error", "EvalError",
-  "RangeError", "ReferenceError", "SyntaxError", "TypeError", "URIError", "JSON", "parseInt", "parseFloat", "isNaN",
-  "isFinite", "decodeURI", "decodeURIComponent", "encodeURI", "encodeURIComponent", "escape", "unescape", "Infinity",
-  "NaN", "undefined", "null", "Map", "Set", "WeakMap", "WeakSet", "Promise", "Reflect", "Proxy", "Intl", "DataView",
-  "ArrayBuffer", "SharedArrayBuffer", "Atomics", "BigInt", "BigInt64Array", "BigUint64Array", "Float32Array",
-  "Float64Array", "Int8Array", "Int16Array", "Int32Array", "Uint8Array", "Uint8ClampedArray", "Uint16Array", "Uint32Array",
-  // VS Code injected
-  "acquireVsCodeApi",
-  // p5.js constants (alignment, modes, keys, mouse, etc.)
-  // Angle modes
-  "DEGREES", "RADIANS",
-  // Color modes
-  "RGB", "HSB", "HSL",
-  // Geometry modes
-  "CENTER", "CORNER", "CORNERS", "RADIUS",
-  //Arc mode
-  "OPEN", "CHORD", "PIE",
-  //Close
-  "CLOSE",
-  // Text alignment and vertical alignment
-  "LEFT", "RIGHT", "TOP", "BOTTOM", "BASELINE",
-  // Stroke caps and joins
-  "ROUND", "SQUARE", "PROJECT", "MITER", "BEVEL",
-  // Image/rectangle modes reuse CENTER/CORNER/CORNERS/RADIUS
-  // Blend modes
-  "BLEND", "ADD", "DARKEST", "LIGHTEST", "DIFFERENCE", "EXCLUSION", "MULTIPLY", "SCREEN", "REPLACE", "OVERLAY", "HARD_LIGHT", "SOFT_LIGHT",
-  // Cursor constants
-  "ARROW", "CROSS", "HAND", "MOVE", "TEXT", "WAIT",
-  // Renderer constant
-  "WEBGL",
-  // Angle constants
-  "PI", "HALF_PI", "QUARTER_PI", "TWO_PI",
-  // Key constants
-  "BACKSPACE", "DELETE", "ENTER", "RETURN", "TAB", "ESCAPE",
-  // Arrow keys
-  "UP_ARROW", "DOWN_ARROW", "LEFT_ARROW", "RIGHT_ARROW",
-  // Modifier keys
-  "ALT", "CONTROL", "SHIFT"
-]);
+// (event handlers moved to ./constants)
 
-// Add a set of known p5 numeric properties
-const P5_NUMERIC_IDENTIFIERS = new Set([
-  "width", "height", "frameCount", "frameRate", "deltaTime", "mouseX", "mouseY", "pmouseX", "pmouseY",
-  "winMouseX", "winMouseY", "pwinMouseX", "pwinMouseY", "accelerationX", "accelerationY", "accelerationZ",
-  "pAccelerationX", "pAccelerationY", "pAccelerationZ", "rotationX", "rotationY", "rotationZ", "pRotationX",
-  "pRotationY", "pRotationZ", "movedX", "movedY", "movedZ", "displayWidth", "displayHeight", "windowWidth",
-  "windowHeight"
-]);
+// (moved to ./processing/codeRewriter)
 
-// Extract top-level global variables and detect conflicts with reserved names
-function extractGlobalVariablesWithConflicts(code: string): { globals: { name: string, value: any, type: string }[], conflicts: string[] } {
-  const acorn = require('acorn');
-  const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
-  const globals: { name: string, value: any, type: string }[] = [];
-  const conflicts: string[] = [];
-  function extractFromDecls(decls: any[]) {
-    for (const decl of decls) {
-      if (decl.id && decl.id.name) {
-        let value = undefined;
-        let type = 'other';
-        if (decl.init && decl.init.type === 'Literal') {
-          value = decl.init.value;
-          type = typeof value;
-        } else if (decl.init && decl.init.type === 'UnaryExpression' && decl.init.argument.type === 'Literal') {
-          value = decl.init.operator === '-' ? -decl.init.argument.value : decl.init.argument.value;
-          type = typeof value;
-        }
-        // If initializer is an Identifier, use its name as value
-        else if (decl.init && decl.init.type === 'Identifier') {
-          value = decl.init.name;
-          // If identifier is a known p5 numeric property, treat as number; otherwise mark as other
-          type = P5_NUMERIC_IDENTIFIERS.has(decl.init.name) ? 'number' : 'other';
-        }
-        // If initializer is a CallExpression (e.g., random()), treat as number
-        else if (decl.init && decl.init.type === 'CallExpression') {
-          value = 0;
-          type = 'number';
-        }
-        // Try to evaluate other initializers
-        else if (decl.init) {
-          try {
-            const safeGlobals = { Math, Number, String, Boolean, Array, Object };
-            value = Function(...Object.keys(safeGlobals), `return (${recast.print(decl.init).code});`)
-              (...Object.values(safeGlobals));
-            type = typeof value;
-            // Only expose number/string/boolean; everything else is 'other'
-            if (!['number', 'string', 'boolean'].includes(type)) {
-              value = undefined;
-              type = 'other';
-            }
-          } catch {
-            value = undefined;
-            type = 'other';
-          }
-        }
-        if (RESERVED_GLOBALS.has(decl.id.name)) {
-          conflicts.push(decl.id.name);
-        } else {
-          globals.push({ name: decl.id.name, value, type });
-        }
-      }
-    }
-  }
-  recast.types.visit(ast, {
-    visitVariableDeclaration(path) {
-      if (path.parentPath && path.parentPath.value.type === 'Program') {
-        extractFromDecls(path.value.declarations);
-      }
-      this.traverse(path);
-    }
-  });
-  if (ast.program && Array.isArray(ast.program.body)) {
-    for (const node of ast.program.body) {
-      if (node.type === 'VariableDeclaration') {
-        extractFromDecls(node.declarations);
-      }
-    }
-  }
-  return { globals, conflicts };
-}
-
-// Extract top-level global variables, excluding reserved names
-function extractGlobalVariables(code: string): { name: string, value: any, type: string }[] {
-  const acorn = require('acorn');
-  const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
-  const globals: { name: string, value: any, type: string }[] = [];
-  function extractFromDecls(decls: any[]) {
-    for (const decl of decls) {
-      if (decl.id && decl.id.name) {
-        let value = undefined;
-        let type = 'other';
-        if (decl.init && decl.init.type === 'Literal') {
-          value = decl.init.value;
-          type = typeof value;
-        } else if (decl.init && decl.init.type === 'UnaryExpression' && decl.init.argument.type === 'Literal') {
-          value = decl.init.operator === '-' ? -decl.init.argument.value : decl.init.argument.value;
-          type = typeof value;
-        }
-        else if (decl.init && decl.init.type === 'Identifier') {
-          value = decl.init.name;
-          // PATCH: If identifier is a known p5 numeric property, treat as number
-          type = P5_NUMERIC_IDENTIFIERS.has(decl.init.name) ? 'number' : 'other';
-        }
-        else if (decl.init && decl.init.type === 'CallExpression') {
-          value = undefined;
-          type = 'number';
-        }
-        else if (decl.init) {
-          try {
-            const safeGlobals = { Math, Number, String, Boolean, Array, Object };
-            value = Function(...Object.keys(safeGlobals), `return (${recast.print(decl.init).code});`)
-              (...Object.values(safeGlobals));
-            type = typeof value;
-            if (!['number', 'string', 'boolean'].includes(type)) {
-              value = undefined;
-              type = 'other';
-            }
-          } catch {
-            value = undefined;
-            type = 'other';
-          }
-        }
-        globals.push({ name: decl.id.name, value, type });
-      }
-    }
-  }
-  recast.types.visit(ast, {
-    visitVariableDeclaration(path) {
-      if (path.parentPath && path.parentPath.value.type === 'Program') {
-        extractFromDecls(path.value.declarations);
-      }
-      this.traverse(path);
-    }
-  });
-  if (ast.program && Array.isArray(ast.program.body)) {
-    for (const node of ast.program.body) {
-      if (node.type === 'VariableDeclaration') {
-        extractFromDecls(node.declarations);
-      }
-    }
-  }
-  return globals.filter(g => !RESERVED_GLOBALS.has(g.name));
-}
-
-// List of p5 event handler function names
-const P5_EVENT_HANDLERS = [
-  "mouseMoved", "mouseDragged", "mousePressed", "mouseReleased", "mouseClicked",
-  "doubleClicked", "mouseWheel", "touchStarted", "touchMoved", "touchEnded",
-  "keyPressed", "keyReleased", "keyTyped", "deviceMoved", "deviceTurned", "deviceShaken"
-];
-
-// Rewrite user code so global variables are attached to window and event handlers are guarded
-function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string, value?: any }[]): string {
-  if (!globals.length) return code;
-  const acorn = require('acorn');
-  const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
-  const globalNames = new Set(globals.map(g => g.name));
-  const programBody = ast.program.body;
-  const newBody = [];
-  let setupFound = false;
-  const globalAssignments: any[] = [];
-
-  // Collect assignments for globals with initializers
-  for (const stmt of programBody) {
-    if (stmt.type === 'VariableDeclaration') {
-      for (const decl of stmt.declarations) {
-        if (decl.id && decl.id.name && globalNames.has(decl.id.name) && decl.init) {
-          // Assignment: x = <init>;
-          globalAssignments.push(
-            recast.types.builders.expressionStatement(
-              recast.types.builders.assignmentExpression(
-                '=',
-                recast.types.builders.identifier(decl.id.name),
-                decl.init
-              )
-            )
-          );
-        }
-      }
-    }
-  }
-
-  // Insert window.<global> = undefined for all globals at the very top
-  for (const g of globals) {
-    newBody.push(
-      recast.types.builders.expressionStatement(
-        recast.types.builders.assignmentExpression(
-          '=',
-          recast.types.builders.memberExpression(
-            recast.types.builders.identifier('window'),
-            recast.types.builders.identifier(g.name),
-            false
-          ),
-          recast.types.builders.identifier('undefined')
-        )
-      )
-    );
-  }
-
-  for (let i = 0; i < programBody.length; i++) {
-    let stmt = programBody[i];
-
-    // Remove initializers from global variable declarations
-    if (stmt.type === 'VariableDeclaration') {
-      stmt.declarations = stmt.declarations.map(decl => {
-        if (decl.id && decl.id.name && globalNames.has(decl.id.name)) {
-          // Remove initializer
-          return Object.assign({}, decl, { init: null });
-        }
-        return decl;
-      });
-      // Always convert to var for globals
-      if ((stmt.kind === 'let' || stmt.kind === 'const') && stmt.declarations.some(decl => decl.id && decl.id.name && globalNames.has(decl.id.name))) {
-        stmt = Object.assign({}, stmt, { kind: 'var' });
-      }
-      newBody.push(stmt);
-      // For each declared global, assign to window
-      for (const decl of stmt.declarations) {
-        if (decl.id && decl.id.name && globalNames.has(decl.id.name)) {
-          newBody.push(recast.types.builders.expressionStatement(
-            recast.types.builders.assignmentExpression('=',
-              recast.types.builders.memberExpression(
-                recast.types.builders.identifier('window'),
-                recast.types.builders.identifier(decl.id.name),
-                false
-              ),
-              recast.types.builders.identifier(decl.id.name)
-            )
-          ));
-        }
-      }
-      continue;
-    }
-
-    // Detect setup function and inject global assignments at its start
-    if (
-      stmt.type === 'FunctionDeclaration' &&
-      stmt.id && stmt.id.name === 'setup' &&
-      stmt.body && stmt.body.body
-    ) {
-      setupFound = true;
-      const originalStmt: any = stmt;
-      const newSetupBody = [
-        ...globalAssignments, // Inject assignments at the start
-        ...stmt.body.body
-      ];
-      // At the end of setup, set window._p5SetupDone = true;
-      newSetupBody.push(
-        recast.types.builders.expressionStatement(
-          recast.types.builders.assignmentExpression(
-            '=',
-            recast.types.builders.memberExpression(
-              recast.types.builders.identifier('window'),
-              recast.types.builders.identifier('_p5SetupDone'),
-              false
-            ),
-            recast.types.builders.literal(true)
-          )
-        )
-      );
-      let newFn = recast.types.builders.functionDeclaration(
-        stmt.id,
-        stmt.params,
-        recast.types.builders.blockStatement(newSetupBody)
-      );
-      // Preserve async flag if original setup was async (needed for step-run instrumentation)
-      (newFn as any).async = !!(originalStmt as any).async;
-      stmt = newFn as any;
-      newBody.push(stmt);
-      continue;
-    }
-
-    // Wrap event handler functions to guard with window._p5SetupDone
-    if (
-      stmt.type === 'FunctionDeclaration' &&
-      stmt.id && P5_EVENT_HANDLERS.includes(stmt.id.name)
-    ) {
-      const originalStmt: any = stmt;
-      const origBody = stmt.body.body;
-      const guardedBody = [
-        recast.types.builders.ifStatement(
-          recast.types.builders.unaryExpression('!',
-            recast.types.builders.memberExpression(
-              recast.types.builders.identifier('window'),
-              recast.types.builders.identifier('_p5SetupDone'),
-              false
-            )
-          ),
-          recast.types.builders.blockStatement([
-            recast.types.builders.returnStatement(null) // <-- fix: pass null as argument
-          ])
-        ),
-        ...origBody
-      ];
-      let newFn = recast.types.builders.functionDeclaration(
-        stmt.id,
-        stmt.params,
-        recast.types.builders.blockStatement(guardedBody)
-      );
-      // Preserve async if the original handler was async (unlikely, but keep semantics)
-      (newFn as any).async = !!(originalStmt as any).async;
-      stmt = newFn as any;
-    }
-
-    newBody.push(stmt);
-  }
-
-  // If no setup function, create one and inject global assignments
-  if (!setupFound) {
-    const setupBody = [
-      ...globalAssignments,
-      recast.types.builders.expressionStatement(
-        recast.types.builders.assignmentExpression(
-          '=',
-          recast.types.builders.memberExpression(
-            recast.types.builders.identifier('window'),
-            recast.types.builders.identifier('_p5SetupDone'),
-            false
-          ),
-          recast.types.builders.literal(true)
-        )
-      )
-    ];
-    newBody.push(
-      recast.types.builders.functionDeclaration(
-        recast.types.builders.identifier('setup'),
-        [],
-        recast.types.builders.blockStatement(setupBody)
-      )
-    );
-  }
-
-  ast.program.body = newBody;
-
-  recast.types.visit(ast, {
-    visitIdentifier(path) {
-      const name = path.value.name;
-      if (
-        globalNames.has(name) &&
-        // Not already window.foo
-        !(path.parentPath && path.parentPath.value &&
-          path.parentPath.value.type === 'MemberExpression' &&
-          path.parentPath.value.property === path.value &&
-          path.parentPath.value.object.type === 'Identifier' &&
-          path.parentPath.value.object.name === 'window') &&
-        // Not a declaration/definition
-        !(path.parentPath && path.parentPath.value &&
-          ((path.parentPath.value.type === 'VariableDeclarator' && path.parentPath.value.id === path.value) ||
-            (path.parentPath.value.type === 'FunctionDeclaration' && path.parentPath.value.id === path.value) ||
-            (path.parentPath.value.type === 'FunctionExpression' && path.parentPath.value.id === path.value) ||
-            (path.parentPath.value.type === 'ClassDeclaration' && path.parentPath.value.id === path.value))) &&
-        // Not this.foo or this.window.foo
-        !(path.parentPath && path.parentPath.value &&
-          path.parentPath.value.type === 'MemberExpression' &&
-          path.parentPath.value.property === path.value &&
-          ((path.parentPath.value.object.type === 'ThisExpression') ||
-            (path.parentPath.value.object.type === 'MemberExpression' &&
-              path.parentPath.value.object.object && path.parentPath.value.object.object.type === 'ThisExpression' &&
-              path.parentPath.value.object.property && path.parentPath.value.object.property.name === 'window')))
-      ) {
-        return recast.types.builders.memberExpression(
-          recast.types.builders.identifier('window'),
-          recast.types.builders.identifier(name),
-          false
-        );
-      }
-      this.traverse(path);
-    }
-  });
-  const rewritten = recast.print(ast).code;
-  // DEBUG: log rewritten code
-  console.log('REWRITTEN CODE:', rewritten);
-  return rewritten;
-}
-
-// ----------------------------
-// Preprocess top-level inputPrompt() placeholders with simple caching
-// ----------------------------
-type TopInputItem = { varName: string; label?: string; defaultValue?: any };
-const _topInputCache = new Map<string, { items: TopInputItem[]; values: any[] }>();
 let _allowInteractiveTopInputs = true;
 // Track reason for last reload/update to alter input overlay behavior
 let _pendingReloadReason: 'typing' | 'save' | 'command' | undefined;
 
-function detectTopLevelInputs(code: string): TopInputItem[] {
-  try {
-    const acorn = require('acorn');
-    const ast = recast.parse(code, {
-      parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) }
-    });
-    const body: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
-    const items: TopInputItem[] = [];
-    for (let i = 0; i < body.length; i++) {
-      const node = body[i];
-      if (!node) break;
-      if (node.type === 'EmptyStatement') { continue; }
-      if (node.type === 'ExpressionStatement' && node.expression && node.expression.type === 'Literal' && (node as any).directive) {
-        // 'use strict' or similar directive — allow and continue
-        continue;
-      }
-      if (node.type !== 'VariableDeclaration') {
-        break; // Stop scanning at first non-declaration/non-directive
-      }
-      const decls = (node as any).declarations || [];
-      for (const d of decls) {
-        if (d && d.type === 'VariableDeclarator' && d.init && d.init.type === 'CallExpression') {
-          const callee = d.init.callee;
-          if (callee && callee.type === 'Identifier' && callee.name === 'inputPrompt') {
-            const varName = d.id && d.id.name ? d.id.name : `value${items.length + 1}`;
-            let label: string | undefined;
-            let defaultValue: any = undefined;
-            const args = d.init.arguments || [];
-            if (args[0] && args[0].type === 'Literal' && typeof args[0].value === 'string') label = String(args[0].value);
-            if (args[1] && args[1].type === 'Literal') defaultValue = args[1].value;
-            items.push({ varName, label, defaultValue });
-          }
-        }
-      }
-    }
-    return items;
-  } catch {
-    return [];
-  }
-}
-
-function hasCachedInputsForKey(key: string, items: TopInputItem[]): boolean {
-  if (!key) return false;
-  const cached = _topInputCache.get(key);
-  if (!cached) return false;
-  if (cached.items.length !== items.length) return false;
-  for (let i = 0; i < items.length; i++) {
-    const a = cached.items[i];
-    const b = items[i];
-    if (a.varName !== b.varName) return false;
-    if ((a.label || '') !== (b.label || '')) return false;
-  }
-  return true;
-}
-
-// Detect any usage of inputPrompt() that is NOT at the very top of the file
-function hasNonTopInputUsage(code: string): boolean {
-  try {
-    const acorn = require('acorn');
-    const ast = recast.parse(code, {
-      parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) }
-    });
-    const body: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
-    // Find the boundary of the allowed top block (directives/empties + variable declarations)
-    let idx = 0;
-    while (idx < body.length) {
-      const node = body[idx];
-      if (!node) break;
-      if (node.type === 'EmptyStatement') { idx++; continue; }
-      if (node.type === 'ExpressionStatement' && node.expression && node.expression.type === 'Literal' && (node as any).directive) {
-        idx++; continue;
-      }
-      if (node.type === 'VariableDeclaration') { idx++; continue; }
-      break; // first non-allowed top node
-    }
-    const allowedTopEnd = idx; // statements [0, allowedTopEnd) are top block
-
-    // Helper to decide if a CallExpression is an allowed top-level inputPrompt()
-    function isAllowedTopCall(node: any): boolean {
-      // Must be within a VariableDeclarator.init inside one of the first allowedTopEnd VariableDeclaration statements
-      // We'll walk up the parent chain using recast paths in a manual walk
-      return false; // We'll do a positional check instead of parent links
-    }
-
-    // Build a set of allowed inputPrompt() nodes by scanning the top block
-    const allowedNodes = new Set<any>();
-    for (let i = 0; i < allowedTopEnd; i++) {
-      const node = body[i];
-      if (node && node.type === 'VariableDeclaration') {
-        const decls = (node as any).declarations || [];
-        for (const d of decls) {
-          if (d && d.init && d.init.type === 'CallExpression' && d.init.callee && d.init.callee.type === 'Identifier' && d.init.callee.name === 'inputPrompt') {
-            allowedNodes.add(d.init);
-          }
-        }
-      }
-    }
-
-    let illegalFound = false;
-    recast.types.visit(ast, {
-      visitCallExpression(path) {
-        try {
-          const call = path.value;
-          if (call && call.callee && call.callee.type === 'Identifier' && call.callee.name === 'inputPrompt') {
-            if (!allowedNodes.has(call)) {
-              illegalFound = true;
-              return false; // stop traversing further
-            }
-          }
-        } catch { }
-        this.traverse(path);
-      }
-    });
-    return illegalFound;
-  } catch {
-    return false;
-  }
-}
-
-async function preprocessTopLevelInputs(
-  code: string,
-  opts?: { key?: string; interactive?: boolean }
-): Promise<string> {
-  try {
-    const acorn = require('acorn');
-    const ast = recast.parse(code, {
-      parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) }
-    });
-    const b = recast.types.builders;
-    const body: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
-    const placeholders: Array<{ decl: any; varName: string; label?: string; defaultValue?: any; }> = [];
-
-    // Scan from the top until a non-VariableDeclaration is found
-    for (let i = 0; i < body.length; i++) {
-      const node = body[i];
-      if (!node) break;
-      if (node.type === 'EmptyStatement') { continue; }
-      if (node.type === 'ExpressionStatement' && node.expression && node.expression.type === 'Literal' && (node as any).directive) {
-        // 'use strict' or similar directive — allow and continue
-        continue;
-      }
-      if (node.type !== 'VariableDeclaration') break;
-      const decls = (node as any).declarations || [];
-      for (const d of decls) {
-        if (d && d.type === 'VariableDeclarator' && d.init && d.init.type === 'CallExpression') {
-          const callee = d.init.callee;
-          if (callee && callee.type === 'Identifier' && callee.name === 'inputPrompt') {
-            let label: string | undefined;
-            let defaultValue: any = undefined;
-            const args = d.init.arguments || [];
-            if (args[0] && args[0].type === 'Literal' && typeof args[0].value === 'string') {
-              label = String(args[0].value);
-            }
-            if (args[1] && args[1].type === 'Literal') {
-              defaultValue = args[1].value;
-            }
-            const varName = d.id && d.id.name ? d.id.name : `value${placeholders.length + 1}`;
-            placeholders.push({ decl: d, varName, label, defaultValue });
-          }
-        }
-      }
-    }
-
-    if (placeholders.length === 0) return code;
-
-    const key = opts?.key || '';
-    const interactive = typeof opts?.interactive === 'boolean' ? opts!.interactive : _allowInteractiveTopInputs;
-
-    const items: TopInputItem[] = placeholders.map(ph => ({ varName: ph.varName, label: ph.label }));
-    let values: any[] | null = null;
-
-    if (!interactive && key && _topInputCache.has(key)) {
-      const cached = _topInputCache.get(key)!;
-      const sameShape = cached.items.length === items.length && cached.items.every((it, i) => it.varName === items[i].varName && (it.label || '') === (items[i].label || ''));
-      if (sameShape) {
-        values = cached.values.slice();
-      }
-    }
-
-    if (!values) {
-      values = [];
-      for (const ph of placeholders) {
-        const prompt = ph.label || `Enter value for ${ph.varName}`;
-        const defaultStr = ph.defaultValue !== undefined ? String(ph.defaultValue) : '';
-        if (!interactive) {
-          // No cached values and interactive disabled: skip preprocessing
-          return code;
-        }
-        const input = await vscode.window.showInputBox({ prompt, value: defaultStr, ignoreFocusOut: true });
-        if (typeof input === 'undefined') {
-          // User cancelled: abort preprocessing (keep original code)
-          return code;
-        }
-        let typed: any = input;
-        const low = input.trim().toLowerCase();
-        if (low === 'true' || low === 'false') {
-          typed = (low === 'true');
-        } else {
-          const num = Number(input);
-          if (!Number.isNaN(num) && input.trim() !== '') typed = num;
-        }
-        values.push(typed);
-      }
-      if (key) _topInputCache.set(key, { items, values: values.slice() });
-    }
-
-    // Apply values
-    for (let i = 0; i < placeholders.length; i++) {
-      const ph = placeholders[i];
-      ph.decl.init = b.literal(values[i]);
-    }
-    return recast.print(ast).code;
-  } catch (e) {
-    return code;
-  }
-}
-
-// ----------------------------
-// Create Webview HTML
-// ----------------------------
-async function createHtml(
-  userCode: string,
-  panel: vscode.WebviewPanel,
-  extensionPath: string
-) {
-  // Preprocess top-of-file inputPrompt() placeholders before anything else
-  const key = (panel && (panel as any)._sketchFilePath) ? String((panel as any)._sketchFilePath) : '';
-  userCode = await preprocessTopLevelInputs(userCode, { key, interactive: _allowInteractiveTopInputs });
-  // Get the sketch filename (without extension)
-  let sketchFileName = '';
-  if (panel && (panel as any)._sketchFilePath) {
-    sketchFileName = path.basename((panel as any)._sketchFilePath);
-  }
-  // Choose p5 version from settings; fall back gracefully if missing
-  let selectedP5Version = vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11';
-  const p5VersionedPathFs = path.join(extensionPath, 'assets', selectedP5Version, 'p5.min.js');
-  let p5ResolvedFs = p5VersionedPathFs;
-  if (!fs.existsSync(p5ResolvedFs)) {
-    if (selectedP5Version === '1.11') {
-      const legacy = path.join(extensionPath, 'assets', 'p5.min.js');
-      p5ResolvedFs = legacy;
-    } else {
-      // For 2.1 or any non-1.11 version, do NOT fallback to 1.11; leave unresolved to surface error/overlay
-      p5ResolvedFs = p5VersionedPathFs; // keep as-is; will 404 in webview if missing
-    }
-  }
-  const p5Path = vscode.Uri.file(p5ResolvedFs);
-  const p5Uri = panel.webview.asWebviewUri(p5Path);
-
-  // Add p5.sound.min.js
-  const p5SoundVersionedPathFs = path.join(extensionPath, 'assets', selectedP5Version, 'p5.sound.min.js');
-  let p5SoundResolvedFs = p5SoundVersionedPathFs;
-  if (!fs.existsSync(p5SoundResolvedFs)) {
-    if (selectedP5Version === '1.11') {
-      const legacy = path.join(extensionPath, 'assets', 'p5.sound.min.js');
-      p5SoundResolvedFs = legacy;
-    } else {
-      p5SoundResolvedFs = p5SoundVersionedPathFs;
-    }
-  }
-  const p5SoundPath = vscode.Uri.file(p5SoundResolvedFs);
-  const p5SoundUri = panel.webview.asWebviewUri(p5SoundPath);
-
-  const p5CaptureVersionedPathFs = path.join(extensionPath, 'assets', selectedP5Version, 'p5.capture.umd.min.js');
-  let p5CaptureResolvedFs = p5CaptureVersionedPathFs;
-  if (!fs.existsSync(p5CaptureResolvedFs)) {
-    if (selectedP5Version === '1.11') {
-      const legacy = path.join(extensionPath, 'assets', 'p5.capture.umd.min.js');
-      p5CaptureResolvedFs = legacy;
-    } else {
-      p5CaptureResolvedFs = p5CaptureVersionedPathFs;
-    }
-  }
-  const p5CapturePath = vscode.Uri.file(p5CaptureResolvedFs);
-  const p5CaptureUri = panel.webview.asWebviewUri(p5CapturePath);
-
-  const reloadIconPath = vscode.Uri.file(path.join(extensionPath, 'images', 'reload.svg'));
-  const reloadIconUri = panel.webview.asWebviewUri(reloadIconPath);
-  const stepIconPath = vscode.Uri.file(path.join(extensionPath, 'images', 'step.svg'));
-  const stepIconUri = panel.webview.asWebviewUri(stepIconPath);
-  const delayIconPath = vscode.Uri.file(path.join(extensionPath, 'images', 'play.svg'));
-  const delayIconUri = panel.webview.asWebviewUri(delayIconPath);
-  const stepRunDelayMs = vscode.workspace.getConfiguration('P5Studio').get<number>('stepRunDelayMs', 500);
-  const showDebugButton = vscode.workspace.getConfiguration('P5Studio').get<boolean>('ShowDebugButton', true);
-  const showFPS = vscode.workspace.getConfiguration('P5Studio').get<boolean>('showFPS', false);
-
-  // Note: The in-webview toolbar has been removed; showReloadButton/showRecordButton settings are deprecated
-  // and no longer read. Buttons are provided via VS Code title bar commands instead.
-
-  // Determine initial capture visibility for this panel from saved state
-  let initialCaptureVisible = false;
+// Helper to compute initial capture visibility for a webview panel from saved state
+function getInitialCaptureVisible(panel: vscode.WebviewPanel): boolean {
   try {
     for (const [key, val] of webviewPanelMap) {
       if (val === panel) {
-        initialCaptureVisible = !!captureVisibleMap.get(key);
-        break;
+        return !!captureVisibleMap.get(key);
       }
     }
   } catch { }
-
-  function escapeBackticks(str: string) {
-    return str.replace(/`/g, '\`');
-  }
-
-  // Detect globals and rewrite code
-  const { globals, conflicts } = extractGlobalVariablesWithConflicts(userCode);
-  const rewrittenCode = rewriteUserCodeWithWindowGlobals(userCode, globals);
-  const escapedCode = escapeBackticks(rewrittenCode);
-
-  const uniqueId = Date.now() + '-' + Math.random().toString(36).substr(2, 8);
-  const p5UriWithCacheBust = vscode.Uri.parse(p5Uri.toString() + `?v=${uniqueId}`);
-  const p5SoundUriWithCacheBust = vscode.Uri.parse(p5SoundUri.toString() + `?v=${uniqueId}`);
-  const p5CaptureUriWithCacheBust = vscode.Uri.parse(p5CaptureUri.toString() + `?v=${uniqueId}`);
-  // --- Inject common, import, and include scripts ---
-  let scriptTags = '';
-  try {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    // --- Determine sketch file's folder for "include" ---
-    let includeFiles: string[] = [];
-    if (panel && (panel as any)._sketchFilePath) {
-      const sketchDir = path.dirname((panel as any)._sketchFilePath);
-      const includeDir = path.join(sketchDir, 'include');
-      // Only try to list files if the include folder exists
-      if (fs.existsSync(includeDir) && fs.statSync(includeDir).isDirectory()) {
-        includeFiles = await listFilesRecursively(vscode.Uri.file(includeDir), ['.js', '.ts']);
-      }
-    }
-    if (workspaceFolder) {
-      // --- Collect import, common, and include scripts in the requested order ---
-      const importDir = path.join(workspaceFolder.uri.fsPath, 'import');
-      const commonDir = path.join(workspaceFolder.uri.fsPath, 'common');
-      const importFiles = await listFilesRecursively(vscode.Uri.file(importDir), ['.js', '.ts']);
-      const commonFiles = await listFilesRecursively(vscode.Uri.file(commonDir), ['.js', '.ts']);
-      // includeFiles already set above
-
-      const allFiles = [...importFiles, ...commonFiles, ...includeFiles];
-
-      scriptTags = `<script src='${p5UriWithCacheBust}'></script>\n` +
-        `<script src='${p5SoundUriWithCacheBust}'></script>\n` +
-        `<script src='${p5CaptureUriWithCacheBust}'></script>\n` +
-        allFiles.map(s => `<script src='${panel.webview.asWebviewUri(vscode.Uri.file(s))}'></script>`).join('\n');
-    } else {
-      // Fallback: just p5 and p5.sound
-      scriptTags = `<script src='${p5UriWithCacheBust}'></script>\n` +
-        `<script src='${p5SoundUriWithCacheBust}'></script>`;
-      // capture is optional in fallback
-    }
-  } catch (e) { /* ignore */ }
-
-  // In createHtml, get debounceDelay from config and pass to webview
-  const debounceDelay = vscode.workspace.getConfiguration('P5Studio').get<number>('debounceDelay', 500);
-  // Use the new setting key only (no backward compatibility)
-  const cfgVarDelay = vscode.workspace.getConfiguration('P5Studio');
-  const varControlDebounceDelay = cfgVarDelay.get<number>('variablePanelDebounceDelay', 500);
-
-  // Get the webview URI for the media folder (if it exists)
-  let mediaWebviewUriPrefix = '';
-  try {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    if (workspaceFolder) {
-      const mediaFolder = path.join(workspaceFolder.uri.fsPath, 'media');
-      const mediaUri = vscode.Uri.file(mediaFolder);
-      mediaWebviewUriPrefix = panel.webview.asWebviewUri(mediaUri).toString();
-    }
-  } catch (e) { /* ignore */ }
-
-  // --- NEW: Get the webview URI for the include folder (if it exists) ---
-  let includeWebviewUriPrefix = '';
-  try {
-    if (panel && (panel as any)._sketchFilePath) {
-      const sketchDir = path.dirname((panel as any)._sketchFilePath);
-      const includeDir = path.join(sketchDir, 'include');
-      if (fs.existsSync(includeDir) && fs.statSync(includeDir).isDirectory()) {
-        const includeUri = vscode.Uri.file(includeDir);
-        includeWebviewUriPrefix = panel.webview.asWebviewUri(includeUri).toString();
-      }
-    }
-  } catch (e) { /* ignore */ }
-
-  // Add record icons (inline SVGs)
-  const recordRedSvg = `<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#ff3333" stroke="#b00" stroke-width="2"/></svg>`;
-  const recordGraySvg = `<svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="#bbb" stroke="#888" stroke-width="2"/></svg>`;
-
-  // Match overlay font size to the editor font size
-  const editorFontSize = vscode.workspace.getConfiguration('editor').get<number>('fontSize', 14);
-
-  return `<!DOCTYPE html>
-<!-- cache-bust: ${uniqueId} -->
-<html>
-<head>
-${scriptTags}
-<script>
-// Provide the sketch filename (without extension) to the webview
-window._p5SketchFileName = ${JSON.stringify(sketchFileName)};
-window._p5UserCode = \`${escapedCode}\`;
-// --- output() alias for console.log ---
-window.output = function(...args) { console.log(...args); };
-// --- Provide MEDIA_FOLDER and INCLUDE_FOLDER globals for user sketches ---
-// Always ensure trailing slash so MEDIA_FOLDER + "file.png" works.
-(function() {
-  function ensureTrailingSlash(str) {
-    if (!str) return "";
-    return str.endsWith("/") ? str : str + "/";
-  }
-  window.MEDIA_FOLDER = ensureTrailingSlash(${JSON.stringify(mediaWebviewUriPrefix)});
-  window.INCLUDE_FOLDER = ensureTrailingSlash(${JSON.stringify(includeWebviewUriPrefix)});
-})();
-</script>
-<script>
-// --- OSC SEND/RECEIVE API for user sketches ---
-window.sendOSC = function(address, args) {
-  if (typeof vscode !== "undefined" && address) {
-    vscode.postMessage({ type: "oscSend", address, args: Array.isArray(args) ? args : [] });
-  }
-};
-// Helper: normalize OSC args (supports osc.js metadata objects)
-// Example inputs: 42, [1,2], [{type:'i', value: 3}] -> returns plain JS values array
-window.oscArgsToArray = function(args) {
-  const list = Array.isArray(args) ? args : [args];
-  return list.map(arg => (arg && typeof arg === 'object' && 'value' in arg) ? arg.value : arg);
-};
-// Only window.receivedOSC(address, args) is supported for incoming OSC messages.
-window.addEventListener("message", function(e) {
-  if (e.data && e.data.type === "oscReceive") {
-    if (typeof window.receivedOSC === "function") {
-      window.receivedOSC(e.data.address, e.data.args);
-    }
-  }
-});
-// --- Custom context menu for "Save As png..." and "Copy image" on canvas ---
-(function() {
-  // Inject style for custom context menu hover effect
-  if (!document.getElementById('p5-custom-menu-style')) {
-    const style = document.createElement('style');
-    style.id = 'p5-custom-menu-style';
-    style.textContent = \`
-      .p5-custom-context-menu {
-        position: fixed;
-        background: #1F1F1F;
-        color: #cccccc;
-        padding: 0;
-        border: 2px solid #454545;
-        border-radius: 8px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        z-index: 10001;
-        font-family: monospace;
-        user-select: none;
-     min-width: 120px;
-        overflow: hidden;
-      }
-      .p5-custom-context-menu-item {
-        padding: 5px 16px;
-        cursor: pointer;
-        transition: background 0.15s, color 0.15s;
-        border-radius: 5px;
-        margin: 1px 2px;
-        font-size: 13px;
-      }
-      .p5-custom-context-menu-item:hover {
-        background: #0078D4 !important;
-        color: #fff !important;
-      }
-    \`;
-    document.head.appendChild(style);
-  }
-  let customMenu = null;
-  document.addEventListener('contextmenu', function(e) {
-    // Only show on canvas (p5Canvas)
-    const canvas = e.target && e.target.classList && e.target.classList.contains('p5Canvas') ? e.target : null;
-    if (!canvas) return;
-    e.preventDefault();
-    // Remove any existing menu
-    if (customMenu) customMenu.remove();
-    customMenu = document.createElement('div');
-    customMenu.className = 'p5-custom-context-menu';
-    customMenu.style.left = e.clientX + 'px';
-    customMenu.style.top = e.clientY + 'px';
-
-    // Helper: get a PNG dataUrl of the canvas at its display size (not upscaled by CSS)
-    function getCanvasDataUrlAtDisplaySize() {
-      // If canvas width/height != clientWidth/clientHeight, draw to a temp canvas at display size
-      const c = canvas;
-      const cssW = c.clientWidth;
-      const cssH = c.clientHeight;
-      const pxW = c.width;
-      const pxH = c.height;
-      if (pxW === cssW && pxH === cssH) {
-        return c.toDataURL('image/png');
-      }
-      // Downscale to display size
-      const tmp = document.createElement('canvas');
-      tmp.width = cssW;
-      tmp.height = cssH;
-      const ctx = tmp.getContext('2d');
-      ctx.drawImage(c, 0, 0, pxW, pxH, 0, 0, cssW, cssH);
-      return tmp.toDataURL('image/png');
-    }
-
-    // Save as png...
-    const saveItem = document.createElement('div');
-    saveItem.className = 'p5-custom-context-menu-item';
-    saveItem.textContent = 'Save as png...';
-    saveItem.addEventListener('mousedown', function(ev) { ev.stopPropagation(); ev.preventDefault(); });
-    saveItem.addEventListener('click', function() {
-      try {
-        const dataUrl = getCanvasDataUrlAtDisplaySize();
-        // Use the sketch filename (without extension) if available
-        let fileName = (window._p5SketchFileName || '').replace(/\.[^.]+$/, '') || 'sketch';
-        fileName = fileName + '.png';
-        vscode.postMessage({ type: 'saveCanvasImage', dataUrl, fileName });
-      } catch (err) {
-        vscode.postMessage({ type: 'showError', message: 'Failed to export image: ' + err });
-      }
-      customMenu.remove();
-    });
-
-    // Copy image
-    const copyItem = document.createElement('div');
-    copyItem.className = 'p5-custom-context-menu-item';
-    copyItem.textContent = 'Copy image';
-    copyItem.addEventListener('mousedown', function(ev) { ev.stopPropagation(); ev.preventDefault(); });
-    copyItem.addEventListener('click', async function() {
-      try {
-        const dataUrl = getCanvasDataUrlAtDisplaySize();
-        // Try using Clipboard API if available
-        if (navigator.clipboard && window.ClipboardItem) {
-          const res = await fetch(dataUrl);
-          const blob = await res.blob();
-          const item = new window.ClipboardItem({ 'image/png': blob });
-          await navigator.clipboard.write([item]);
-          // Show notification in webview (since VSCode API not available here)
-          var cssW = canvas.clientWidth;
-          var cssH = canvas.clientHeight;
-          vscode.postMessage({ type: 'showInfo', message: 'Canvas image copied to clipboard (' + cssW + ' x ' + cssH + ')' });
-        } else {
-          vscode.postMessage({ type: 'copyCanvasImage', dataUrl });
-        }
-      } catch (err) {
-        vscode.postMessage({ type: 'showError', message: 'Failed to copy image: ' + err });
-      }
-      customMenu.remove();
-    });
-
-    customMenu.appendChild(saveItem);
-    customMenu.appendChild(copyItem);
-    document.body.appendChild(customMenu);
-
-    // Remove menu on click elsewhere or escape
-    function removeMenu() { if (customMenu) { customMenu.remove(); customMenu = null; } }
-    setTimeout(() => {
-      document.addEventListener('mousedown', removeMenu, { once: true });
-      document.addEventListener('keydown', function esc(ev) { if (ev.key === 'Escape') { removeMenu(); document.removeEventListener('keydown', esc); } });
-    }, 0);
-  });
-})();
-</script>
-<style>
-:root { --overlay-font-size: ${editorFontSize}px; --toolbar-scale: 1.5; }
-html,body{margin:0;padding:0;overflow:hidden;width:100%;height:100%;background:transparent;}
-canvas.p5Canvas{
-  display:block;
-  /* --- Add drop shadow below --- */
-  box-shadow: 0 4px 24px 0 rgba(0,0,0,0.35);
+  return false;
 }
-#error-overlay{
-  position:fixed; top:0; left:0; right:0; bottom:0;
-  background: #1f1f1f; color:#f22268; font-family:monospace; padding:10px; font-size: var(--overlay-font-size);
-  display:none; z-index: 9999; white-space:pre-wrap; overflow:auto;
-}
-/* Warning overlay (yellow text) */
-#warning-overlay{
-  position:fixed; top:0; left:0; right:0; bottom:0;
-  background: #1f1f1f; color:#ffeb3b; font-family:monospace; padding:10px; font-size: var(--overlay-font-size);
-  display:none; z-index: 9998; white-space:pre-wrap; overflow:auto;
-}
-/* Warning overlay (yellow text) */
-#warning-overlay{
-  position:fixed; top:0; left:0; right:0; bottom:0;
-  background: #1f1f1f; color:#ffeb3b; font-family:monospace; padding:10px;
-  display:none; z-index: 9998; white-space:pre-wrap; overflow:auto;
-}
-/* Inputs overlay */
-#inputs-overlay{
-  position:fixed; top:0; left:0; right:0; bottom:0;
-  background: rgba(0,0,0,0.7); color:#fff; font-family:monospace; padding:16px;
-  display:none; z-index: 10002; overflow:auto;
-}
-#inputs-overlay .panel{
-  max-width: 520px; margin: 40px auto; background:#1f1f1f; border:1px solid #444; border-radius:8px; padding:16px;
-  box-shadow: 0 4px 24px rgba(0,0,0,0.4);
-}
-#inputs-overlay h2{ margin:0 0 8px 0; font-size: 18px; }
-#inputs-overlay p{ margin:0 0 12px 0; color:#ddd; }
-#inputs-overlay .input-row{ display:flex; align-items:center; gap:8px; margin:6px 0; }
-#inputs-overlay .input-row label{ width: 180px; text-align:right; color:#ddd; }
-#inputs-overlay .input-row input[type="text"],
-#inputs-overlay .input-row input[type="number"]{
-  flex:1; padding:6px 8px; border-radius:4px; border:1px solid #555; background:#222; color:#fff;
-}
-#inputs-overlay .buttons{ display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
-#inputs-overlay button{ padding:6px 10px; border-radius:4px; border:1px solid #555; background:#2b2b2b; color:#fff; cursor:pointer; }
-#inputs-overlay button.primary{ background:#0078D4; border-color:#0078D4; }
-#inputs-overlay button:hover{ filter: brightness(1.1); }
-
-#p5-toolbar { /* removed toolbar */ }
-/* FPS indicator */
-#fps-indicator {
-  position: fixed;
-  top: 10px;
-  left: 10px;
-  z-index: 10004;
-  background: rgba(0,0,0,0.6);
-  color: #fff;
-  font-family: monospace;
-  font-size: 12px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  user-select: none;
-  pointer-events: none; /* don't block clicks */
-  display: none;
-}
-#p5-var-controls {
-  position: fixed;
-  left: 0; right: 0; bottom: 0;
-  background: #1f1f1f;
-  z-index: 10000;
-  padding: 4px 12px 2px 12px;
-  font-family: monospace;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 4px 10px;
-  max-height: calc(3 * 2.0em);
-  overflow-y: auto;
-  transition: transform 0.2s cubic-bezier(.4,0,.2,1), box-shadow 0.2s;
-  box-shadow: 0 -2px 8px rgba(0,0,0,0.2);
-}
-#p5-var-controls.drawer-hidden {
-  transform: translateY(100%);
-  box-shadow: none;
-}
-#p5-var-controls .drawer-toggle {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  background: none;
-  border: none;
-  color: #fff;
-  font-size: 16px;
-  cursor: pointer;
-  z-index: 10001;
-  padding: 2px 4px;
-  transition: color 0.2s;
-}
-#p5-var-controls .drawer-toggle:hover {
-  color: #ff0;
-}
-#p5-var-drawer-tab {
-  display: none;
-  position: fixed;
-  right: 0px;
-  bottom: 0;
-  background: #1f1f1f;
-  color: #fff;
-  border-radius: 6px 0px 0px 0px;
-  padding: 0px 4px 2px 4px;
-  font-family: monospace;
-  font-size: 20px;
-  z-index: 10001;
-  box-shadow: 0 -2px 8px rgba(0,0,0,0.2);
-  cursor: pointer;
-  min-width: 24px;
-  min-height: 28px;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  transform: translateY(100%);
-  transition: opacity 0.2s cubic-bezier(.4,0,.2,1), transform 0.2s cubic-bezier(.4,0,.2,1);
-}
-#p5-var-drawer-tab.tab-visible {
-  display: flex !important;
-  opacity: 1;
-  transform: translateY(0%);
-}
-</style>
-</head>
-<body>
-<div id="error-overlay"></div>
-<div id="warning-overlay"></div>
-<div id="fps-indicator" style="display:${showFPS ? 'block' : 'none'}"></div>
-<div id="inputs-overlay" aria-hidden="true">
-  <div class="panel">
-    <h2>Sketch inputs</h2>
-    <p>Enter values for top-of-sketch inputs before running.</p>
-    <div id="inputs-container"></div>
-    <div class="buttons">
-      <button id="inputs-submit" class="primary" disabled>Run</button>
-    </div>
-  </div>
-  </div>
-<!-- In-webview toolbar removed; actions are now provided via editor title bar buttons -->
-<script>
-// --- Prevent default VSCode context menu except on canvas ---
-document.addEventListener('contextmenu', function(e) {
-  // Allow context menu only on canvas with class 'p5Canvas'
-  if (!(e.target && e.target.classList && e.target.classList.contains('p5Canvas'))) {
-    e.preventDefault();
-  }
-});
-</script>
-<script>
-// Capture visibility toggle (no in-webview toolbar)
-(function() {
-  window._p5CaptureVisible = ${initialCaptureVisible ? 'true' : 'false'};
-  // Reset capture UI/timer by removing existing containers
-  function resetCaptureUIAndTimer() {
-    try {
-      const containers = document.querySelectorAll('.p5c-container');
-      containers.forEach(el => el.remove());
-      if (typeof window._applyCaptureVisibility === 'function') {
-        try { window._applyCaptureVisibility(); } catch {}
-      }
-    } catch {}
-  }
-  function applyCaptureVisibility() {
-    try {
-      // Remove any duplicate capture panel before showing/hiding
-      const containers = document.querySelectorAll('.p5c-container');
-      if (containers.length > 1) {
-        // Keep the first, remove the rest
-        for (let i = 1; i < containers.length; i++) {
-          containers[i].remove();
-        }
-      }
-      const div = document.querySelector('.p5c-container');
-      if (div) div.style.display = window._p5CaptureVisible ? '' : 'none';
-    } catch {}
-  }
-  // Observe DOM to apply visibility when capture DOM appears
-  const obs = new MutationObserver(applyCaptureVisibility);
-  obs.observe(document.body, { childList: true, subtree: true });
-  window._applyCaptureVisibility = applyCaptureVisibility;
-  // On reload, remove all but one capture panel if any exist
-  document.addEventListener('DOMContentLoaded', function() {
-    const containers = document.querySelectorAll('.p5c-container');
-    if (containers.length > 1) {
-      for (let i = 1; i < containers.length; i++) {
-        containers[i].remove();
-      }
-    }
-  });
-  // Expose reset helper
-  window._resetCaptureUIAndTimer = resetCaptureUIAndTimer;
-  // Apply initial visibility on load
-  try { applyCaptureVisibility(); } catch {}
-})();
-</script>
-<script>
-// --- Provide MEDIA_FOLDER global for user sketches ---
-const MEDIA_FOLDER = ${JSON.stringify(mediaWebviewUriPrefix)};
-
-window._p5UserCode = ${JSON.stringify(escapedCode)};
-const vscode = acquireVsCodeApi();
-window._p5Instance = null;
-window._p5UserDefinedCanvas = false;
-window._p5UserAutoFill = false;
-window._p5UserBackground = false;
-window._p5LastBackgroundArgs = null;
-window._p5ErrorLogged = false;
-window._p5ErrorActive = false;
-
-// Debounce utility for webview
-function debounceWebview(fn, delay) {
-  let timeout;
-  return function(...args) {
-    clearTimeout(timeout);
-    timeout = setTimeout(() => fn.apply(this, args), delay);
-  };
-}
-window._p5DebounceDelay = ${debounceDelay};
-window._p5VarControlDebounceDelay = ${varControlDebounceDelay};
-
-// Notify extension that webview is loaded
-window.addEventListener('DOMContentLoaded', () => {
-  vscode.postMessage({ type: 'webviewLoaded' });
-  // Ensure capture toggle icon matches preserved visibility state after reload
-  try { vscode.postMessage({ type: 'captureVisibilityChanged', visible: !!window._p5CaptureVisible }); } catch {}
-});
-
-function showError(msg){
-  window._p5ErrorActive = true;
-  const el = document.getElementById("error-overlay");
-  if(el){el.textContent = msg; el.style.display = "block";}
-  if(window._p5Instance){window._p5Instance.remove(); window._p5Instance = null;}
-  document.querySelectorAll("canvas").forEach(c=>c.remove());
-  // Prevent p5.js from calling user draw/setup again
-  window.draw = undefined;
-  window.setup = undefined;
-}
-function clearError(){
-  window._p5ErrorActive = false;
-  const el=document.getElementById("error-overlay");
-  if(el){el.textContent=""; el.style.display="none";}
-  const wl=document.getElementById("warning-overlay");
-  if(wl){wl.textContent=""; wl.style.display="none";}
-}
-function showWarning(msg){
-  const wl = document.getElementById('warning-overlay');
-  if (wl) { wl.textContent = msg; wl.style.display = 'block'; }
-}
-// Suppress benign internal p5 error that can appear after another error
-function _p5ShouldSuppressError(raw){
-  try{
-    const msg = (raw==null?"":String(raw));
-    // Check both with and without our [RUNTIME ERROR] prefix
-    return /(^|\s)\[?‼️RUNTIME ERROR\]?\s*this\._decrementPreload is not a function/i.test(msg)
-      || /this\._decrementPreload is not a function/i.test(msg)
-      || /_decrementPreload/.test(msg);
-  }catch{ return false; }
-}
-
-(function(){
-  const origLog=console.log;
-  console.log=function(...args){vscode.postMessage({type:"log",message:args}); origLog.apply(console,args);}
-  const origErr=console.error;
-  console.error=function(...args){
-    // Always prefix with [‼️RUNTIME ERROR] and stringify arguments, including Arguments objects and Error objects
-    let msg = Array.prototype.map.call(args, a => {
-      if (typeof a === "string") return a;
-      if (Object.prototype.toString.call(a) === "[object Arguments]") return Array.prototype.join.call(a, " ");
-      if (a instanceof Error) return a.message;
-      return (a && a.toString ? a.toString() : String(a));
-    }).join(" ");
-    // Suppress only the specific benign p5 internal error
-    if (_p5ShouldSuppressError(msg)) { origErr.apply(console,args); return; }
-    if (!msg.startsWith("[RUNTIME ERROR]")) {
-      msg = "[‼️RUNTIME ERROR] " + msg;
-    }
-    showError(msg); // Always show in overlay
-    vscode.postMessage({type:"showError",message:msg}); // Always log in output
-    origErr.apply(console,args);
-  }
-})();
-
-window.onerror = function(message, source, lineno, colno, error) {
-  let msg = message && message.toString ? message.toString() : String(message);
-  if (_p5ShouldSuppressError(msg)) {
-    // Let it go to the browser console but do not show overlay or VS Code output
-    return false;
-  }
-  if (!msg.startsWith('[RUNTIME ERROR]')) {
-    msg = '[‼️RUNTIME ERROR] ' + msg;
-  }
-  showError(msg);
-  vscode.postMessage({ type: 'showError', message: msg });
-  return false; // Let the error propagate in the console as well
-};
-
-// --- FPS indicator updater ---
-(function(){
-  const el = document.getElementById('fps-indicator');
-  if (!el) return;
-  let lastTs = performance.now();
-  function tick(ts){
-    try {
-      // Prefer p5's deltaTime if available; otherwise, use rAF delta
-      let dt = 0;
-      if (window._p5Instance && typeof window._p5Instance.deltaTime === 'number' && window._p5Instance.deltaTime > 0) {
-        dt = window._p5Instance.deltaTime;
-      } else if (typeof window.deltaTime === 'number' && window.deltaTime > 0) {
-        dt = window.deltaTime;
-      } else {
-        dt = ts - lastTs;
-      }
-      let text = '';
-      if (dt > 0 && isFinite(dt)) {
-        const fps = Math.round(1000 / dt);
-        if (fps > 0 && fps <= 240) text = fps + ' fps';
-      }
-      if (el.style.display !== 'none') {
-        el.textContent = text;
-      }
-    } catch {}
-    lastTs = ts;
-    requestAnimationFrame(tick);
-  }
-  requestAnimationFrame(tick);
-})();
-
-// --- Add this handler for unhandled promise rejections ---
-window.onunhandledrejection = function(event) {
-  let msg = '';
-  if (event && event.reason) {
-    if (typeof event.reason === 'string') {
-      msg = event.reason;
-    } else if (event.reason && event.reason.message) {
-      msg = event.reason.message;
-    } else {
-      msg = JSON.stringify(event.reason);
-    }
-  } else {
-    msg = 'Unhandled promise rejection';
-  }
-  if (_p5ShouldSuppressError(msg)) {
-    return; // do not show overlay or postMessage for this specific error
-  }
-  if (!msg.startsWith('[‼️RUNTIME ERROR]')) {
-    msg = '[‼️RUNTIME ERROR] ' + msg;
-  }
-  showError(msg);
-  vscode.postMessage({ type: 'showError', message: msg });
-  // Prevent default logging to console (optional)
-  // event.preventDefault();
-};
-
-function runUserSketch(code){
-  clearError();
-  window._p5ErrorLogged = false;
-  window._p5SetupDone = false;
-  window._p5PostedAfterSetup = false;
-  if(window._p5Instance){window._p5Instance.remove();window._p5Instance=null;}
-  document.querySelectorAll("canvas").forEach(c=>c.remove());
-
-  // Remove previous user code script if present
-  const prevScript = document.getElementById('user-code-script');
-  if (prevScript) prevScript.remove();
-
-  // Inject user code as a new script tag and attach error handler
-  const script = document.createElement('script');
-  script.id = 'user-code-script';
-  script.type = 'text/javascript';
-  script.setAttribute('data-user-code', 'true');
-  script.textContent = code;
-  script.onerror = function(event) {
-    let raw = (event.message || 'Unknown error');
-    if (_p5ShouldSuppressError(raw)) { return; }
-    let msg = '[‼️RUNTIME ERROR] ' + raw;
-    showError(msg);
-    if (typeof vscode !== "undefined") {
-      vscode.postMessage({ type: "showError", message: msg });
-    }
-    window._p5Instance = null;
-  };
-  document.head.appendChild(script);
-
-  try {
-    window._p5Instance = new p5();
-    // After p5 starts, poll for setup completion once and push all current globals to VARIABLES panel
-    try {
-      if (window._p5SetupWatcher) { try { clearInterval(window._p5SetupWatcher); } catch {} }
-      window._p5SetupWatcher = setInterval(() => {
-        try {
-          if (window._p5SetupDone && !window._p5PostedAfterSetup) {
-            window._p5PostedAfterSetup = true;
-            if (window._p5GlobalVarTypes) {
-              Object.keys(window._p5GlobalVarTypes).forEach(name => {
-                try {
-                  let val = window[name];
-                  // Normalize by declared type
-                  const t = window._p5GlobalVarTypes[name] || typeof val;
-                  if (t === 'number') {
-                    const n = Number(val);
-                    if (!Number.isNaN(n)) val = n;
-                  } else if (t === 'boolean') {
-                    val = (val === true || val === 'true' || val === 1 || val === '1');
-                  } else if (t !== 'string') {
-                    // Skip complex types for the VARIABLES panel
-                    return;
-                  }
-                  try { vscode.postMessage({ type: 'updateGlobalVar', name, value: val }); } catch {}
-                } catch {}
-              });
-            }
-            try { if (window._p5SetupWatcher) { clearInterval(window._p5SetupWatcher); window._p5SetupWatcher = null; } } catch {}
-          }
-        } catch {}
-      }, 50);
-    } catch {}
-  } catch (err) {
-    let raw = (err && err.message ? err.message : String(err));
-    if (_p5ShouldSuppressError(raw)) { return; }
-    let msg = '[‼️RUNTIME ERROR] ' + raw;
-    showError(msg);
-    if (typeof vscode !== "undefined") {
-      vscode.postMessage({ type: "showError", message: msg });
-    }
-    window._p5Instance = null;
-  }
-}
-
-function waitForP5AndRunSketch() {
-  // If there's no user code (e.g., a syntax error path injected empty code),
-  // don't instantiate p5 to prevent runtime errors like _decrementPreload.
-  const hasCode = typeof window._p5UserCode === 'string' && window._p5UserCode.trim().length > 0;
-  if (!hasCode) {
-    return; // Extension will display the syntax error overlay separately.
-  }
-  // Defer running until p5 is loaded AND variables have been sent so watchers are installed,
-  // to ensure we capture final values after setup-only sketches.
-  window._p5WaitStart = window._p5WaitStart || performance.now();
-  const MAX_WAIT_MS = 1200; // safety cap
-  const watchersReady = !!window._p5VarWatchersReady; // set when 'setGlobalVars' arrives
-  if (window.p5 && (watchersReady || (performance.now() - window._p5WaitStart) > MAX_WAIT_MS)) {
-    runUserSketch(window._p5UserCode);
-  } else {
-    setTimeout(waitForP5AndRunSketch, 10);
-  }
-}
-waitForP5AndRunSketch();
-
-// Toolbar buttons removed; actions triggered via VS Code title bar commands.
-
-window.addEventListener("resize",()=>{ 
-  if(window._p5Instance?._renderer && window._p5UserAutoFill){
-    window._p5Instance.resizeCanvas(window.innerWidth,window.innerHeight);
-    const bgArgs = window._p5LastBackgroundArgs || [255];
-    if(window._p5UserBackground) window._p5Instance.background(...bgArgs);
-  }
-});
-
-window.addEventListener("message", e => {
-  const data = e.data;
-  switch(data.type){
-    case "invokeReload":
-      vscode.postMessage({type:"reload-button-clicked", preserveGlobals: true});
-      break;
-    case "invokeStepRun":
-      vscode.postMessage({type:"step-run-clicked"});
-      break;
-    case "invokeSingleStep":
-      vscode.postMessage({type:"single-step-clicked"});
-      break;
-    case "toggleCaptureVisibility":
-      window._p5CaptureVisible = !window._p5CaptureVisible;
-      if (typeof window._applyCaptureVisibility === 'function') {
-        try { window._applyCaptureVisibility(); } catch {}
-      }
-      try { vscode.postMessage({ type: 'captureVisibilityChanged', visible: !!window._p5CaptureVisible }); } catch {}
-      break;
-    case "reload":
-      // Always reset capture UI/timer on reload so the panel timer shows fresh
-      try { if (typeof window._resetCaptureUIAndTimer === 'function') window._resetCaptureUIAndTimer(); } catch {}
-      if (data.preserveGlobals) {
-        // Reset stepping control flags before reloading
-        try {
-          window.__liveP5Gate = null;
-          window.__liveP5DrawBusy = false;
-          window.__liveP5FrameCounter = 0;
-          window.__liveP5StepResolve = null;
-          window.__liveP5StepAdvance = null;
-          window.__liveP5Stepping = false;
-        } catch {}
-        // Save current global values
-        const prevGlobals = {};
-        if (window._p5GlobalVarTypes) {
-          Object.keys(window._p5GlobalVarTypes).forEach(name => {
-            prevGlobals[name] = window[name];
-          });
-        }
-        // Remove global var declarations and window assignments from code
-        let codeNoGlobals = data.code;
-        if (window._p5GlobalVarTypes) {
-          Object.keys(window._p5GlobalVarTypes).forEach(name => {
-            // Remove lines like 'var x = ...;' or 'var x;' (with or without semicolon)
-            codeNoGlobals = codeNoGlobals.replace(new RegExp('^\\s*var\\s+'+name+'(\\s*=.*)?;?\\s*$', 'gm'), '');
-            // Remove lines like 'window.x = x;' (with or without semicolon)
-            codeNoGlobals = codeNoGlobals.replace(new RegExp('^\\s*window\\.'+name+'\\s*=\\s*' + name + ';?\\s*$', 'gm'), '');
-          });
-        }
-        runUserSketch(codeNoGlobals);
-        // Restore global values
-        if (window._p5GlobalVarTypes) {
-          Object.keys(prevGlobals).forEach(name => {
-            window[name] = prevGlobals[name];
-          });
-        }
-      } else {
-        // Reset stepping control flags before reloading
-        try {
-          window.__liveP5Gate = null;
-          window.__liveP5DrawBusy = false;
-          window.__liveP5FrameCounter = 0;
-          window.__liveP5StepResolve = null;
-          window.__liveP5StepAdvance = null;
-          window.__liveP5Stepping = false;
-        } catch {}
-        runUserSketch(data.code);
-      }
-      break;
-    case "stop":
-      try {
-        window.__liveP5Gate = null;
-        window.__liveP5DrawBusy = false;
-        window.__liveP5FrameCounter = 0;
-        window.__liveP5StepResolve = null;
-        window.__liveP5StepAdvance = null;
-        window.__liveP5Stepping = false;
-      } catch {}
-      try { if (typeof window._resetCaptureUIAndTimer === 'function') window._resetCaptureUIAndTimer(); } catch {}
-      if(window._p5Instance){window._p5Instance.remove(); window._p5Instance=null;}
-      document.querySelectorAll("canvas").forEach(c=>c.remove());
-      break;
-  case "showError": showError(data.message); break;
-  case "showWarning": showWarning(data.message); break;
-    // Removed toolbar toggle handlers (reload/debug buttons handled via title bar)
-    case "resetErrorFlag": window._p5ErrorLogged = false; break;
-    case "syntaxError": showError(data.message); break;
-    case "requestLastRuntimeError":
-      // If there was a runtime error, re-send it to the extension
-      if (window._p5ErrorLogged && window._p5Instance == null) {
-        const el = document.getElementById("error-overlay");
-        if (el && el.textContent) {
-          // --- FIX: Always prefix with [RUNTIME ERROR] if not present ---
-          let msg = el.textContent;
-          if (!msg.startsWith("[‼️RUNTIME ERROR]")) {
-            msg = "[‼️RUNTIME ERROR] " + msg;
-          }
-          vscode.postMessage({type:"showError",message:msg});
-        }
-      }
-      break;
-    case 'step-advance':
-      try {
-        if (typeof window.__liveP5StepAdvance === 'function') {
-          window.__liveP5StepAdvance();
-        }
-      } catch (e) { }
-      break;
-    case 'setGlobalVars':
-      if (typeof data.debounceDelay === 'number') {
-        window._p5DebounceDelay = data.debounceDelay;
-      }
-      const readOnly = !!data.readOnly;
-      renderGlobalVarControls(data.variables, readOnly);
-      // Store types for later use (use v.type provided by extension)
-      window._p5GlobalVarTypes = {};
-      data.variables.forEach(v => {
-        window._p5GlobalVarTypes[v.name] = v.type || typeof v.value;
-      });
-      // Install watchers so changes from the sketch propagate live to the VARIABLES panel
-      try { if (typeof window._installGlobalVarWatchers === 'function') window._installGlobalVarWatchers(data.variables); } catch {}
-      // Start rAF-based polling to ensure live updates even when accessors cannot be defined
-      try { if (typeof window._startGlobalVarPolling === 'function') window._startGlobalVarPolling(data.variables); } catch {}
-      // Signal that watchers are ready so we can start the sketch safely
-      try { window._p5VarWatchersReady = true; } catch {}
-      break;
-    case 'updateGlobalVar':
-      updateGlobalVarInSketch(data.name, data.value);
-      break;
-    case 'requestGlobalsSnapshot':
-      try {
-        // If we've already posted final values after setup, skip duplicate snapshot
-        if (window._p5PostedAfterSetup) break;
-        if (window._p5GlobalVarTypes) {
-          Object.keys(window._p5GlobalVarTypes).forEach(name => {
-            try {
-              let val = window[name];
-              const t = window._p5GlobalVarTypes[name] || typeof val;
-              if (t === 'number') {
-                const n = Number(val);
-                if (!Number.isNaN(n)) val = n;
-              } else if (t === 'boolean') {
-                val = (val === true || val === 'true' || val === 1 || val === '1');
-              } else if (t !== 'string') {
-                return;
-              }
-              try { vscode.postMessage({ type: 'updateGlobalVar', name, value: val }); } catch {}
-            } catch {}
-          });
-        }
-      } catch {}
-      break;
-    case "toggleRecordButton": {
-      // Now only sets internal capture visibility flag (no button UI)
-      window._p5CaptureVisible = !!data.show;
-      if (typeof window._applyCaptureVisibility === 'function') {
-        try { window._applyCaptureVisibility(); } catch {}
-      }
-      break;
-    }
-    case 'updateVarDebounceDelay':
-      if (typeof data.value === 'number') window._p5VarControlDebounceDelay = data.value;
-      break;
-    case 'updateOverlayFontSize':
-      if (typeof data.value === 'number') {
-        document.documentElement.style.setProperty('--overlay-font-size', data.value + 'px');
-      }
-      break;
-    case 'toggleFPS':
-      try {
-        const el = document.getElementById('fps-indicator');
-        if (el) {
-          el.style.display = data.show ? 'block' : 'none';
-          if (!data.show) el.textContent = '';
-        }
-      } catch {}
-      break;
-    case 'showTopInputs':
-      try {
-        if (!data || !Array.isArray(data.items)) return;
-        const overlay = document.getElementById('inputs-overlay');
-        const container = document.getElementById('inputs-container');
-        const btnSubmit = document.getElementById('inputs-submit');
-        if (!overlay || !container) return;
-        container.innerHTML = '';
-        data.items.forEach((it) => {
-          const row = document.createElement('div');
-          row.className = 'input-row';
-          const lab = document.createElement('label');
-          lab.textContent = (it.label || it.varName) + ':';
-          lab.htmlFor = 'topin_' + it.varName;
-          let inputEl;
-          if (typeof it.defaultValue === 'boolean') {
-            inputEl = document.createElement('input');
-            inputEl.type = 'checkbox';
-            inputEl.id = 'topin_' + it.varName;
-            inputEl.checked = !!it.defaultValue;
-          } else {
-            inputEl = document.createElement('input');
-            inputEl.type = (typeof it.defaultValue === 'number') ? 'number' : 'text';
-            inputEl.id = 'topin_' + it.varName;
-            if (typeof it.defaultValue !== 'undefined' && it.defaultValue !== null) {
-              inputEl.value = String(it.defaultValue);
-            } else {
-              inputEl.value = '';
-            }
-          }
-          inputEl.setAttribute('data-name', it.varName);
-          row.appendChild(lab);
-          row.appendChild(inputEl);
-          container.appendChild(row);
-        });
-        // Validation: enable Run only when all non-checkbox fields are filled (non-empty and valid number for numeric fields)
-        function allValid() {
-          let ok = true;
-          container.querySelectorAll('[data-name]').forEach((el) => {
-            if (!ok) return;
-            if (el.type === 'checkbox') { ok = true; return; }
-            const v = (el.value || '').trim();
-            if (v.length === 0) { ok = false; return; }
-            if (el.type === 'number') {
-              const n = Number(v);
-              if (Number.isNaN(n)) { ok = false; return; }
-            }
-          });
-          return ok;
-        }
-        function wireValidation() {
-          if (!btnSubmit) return;
-          const update = () => { btnSubmit.disabled = !allValid(); };
-          container.querySelectorAll('[data-name]').forEach((el) => {
-            el.addEventListener('input', update);
-            el.addEventListener('change', update);
-          });
-          // initial state
-          update();
-        }
-        wireValidation();
-        if (btnSubmit) {
-          btnSubmit.onclick = () => {
-            if (btnSubmit.disabled) return;
-            const values = [];
-            container.querySelectorAll('[data-name]').forEach((el) => {
-              const name = el.getAttribute('data-name');
-              let value;
-              if (el.type === 'checkbox') value = !!el.checked;
-              else value = el.value;
-              values.push({ name, value });
-            });
-            vscode.postMessage({ type: 'submitTopInputs', values });
-          };
-        }
-        overlay.style.display = 'block';
-        overlay.setAttribute('aria-hidden', 'false');
-      } catch {}
-      break;
-    case 'hideTopInputs': {
-      const overlay = document.getElementById('inputs-overlay');
-      if (overlay) { overlay.style.display = 'none'; overlay.setAttribute('aria-hidden', 'true'); }
-      break;
-    }
-  }
-});
-
-function updateGlobalVarInSketch(name, value) {
-  // Always set window[name]; rewritten code references window.<name>
-  let type = (window._p5GlobalVarTypes && window._p5GlobalVarTypes[name]) || typeof window[name];
-  if (type === 'number') {
-    const num = Number(value);
-    if (!isNaN(num)) {
-      window[name] = num;
-      try { if (window._p5VarPollLast) window._p5VarPollLast[name] = num; } catch {}
-    }
-  } else if (type === 'boolean') {
-    const b = (value === 'true' || value === true);
-    window[name] = b;
-    try { if (window._p5VarPollLast) window._p5VarPollLast[name] = b; } catch {}
-  } else {
-    window[name] = value;
-    try { if (window._p5VarPollLast) window._p5VarPollLast[name] = value; } catch {}
-  }
-}
-
-// Live watchers for global variables so the VARIABLES panel updates when the sketch changes values
-(function setupVarWatchers(){
-  // Backing store for accessor properties
-  if (!window._p5GlobalVarValues) window._p5GlobalVarValues = {};
-  if (!window._p5VarWatchInstalled) window._p5VarWatchInstalled = {};
-  if (!window._p5LastPostedValues) window._p5LastPostedValues = {};
-  if (!window._p5VarPollNames) window._p5VarPollNames = new Set();
-  if (!window._p5VarPollLast) window._p5VarPollLast = {};
-  window._p5VarPollRaf = window._p5VarPollRaf || null;
-
-  // Debounced emitter for updateGlobalVar
-  if (typeof window._p5VarControlDebounceDelay !== 'number') window._p5VarControlDebounceDelay = 50;
-  let _debounceTimer = null;
-  let _pendingUpdates = new Map(); // name -> latest value
-  function queueUpdate(name, value) {
-    try { _pendingUpdates.set(name, value); } catch {}
-    if (_debounceTimer) return;
-    const delay = (typeof window._p5VarControlDebounceDelay === 'number' ? window._p5VarControlDebounceDelay : 50);
-    _debounceTimer = setTimeout(() => {
-      try {
-        _pendingUpdates.forEach((val, key) => {
-          try { vscode.postMessage({ type: 'updateGlobalVar', name: key, value: val }); } catch {}
-        });
-      } catch {}
-      _pendingUpdates.clear();
-      _debounceTimer = null;
-    }, delay);
-  }
-
-  function coerceByType(name, value) {
-    const t = (window._p5GlobalVarTypes && window._p5GlobalVarTypes[name]) || typeof value;
-    if (t === 'number') {
-      const n = Number(value);
-      return Number.isNaN(n) ? value : n;
-    }
-    if (t === 'boolean') {
-      return (value === true || value === 'true' || value === 1 || value === '1');
-    }
-    return value;
-  }
-
-  // Install watchers for new variables
-  window._installGlobalVarWatchers = function(vars) {
-    if (!Array.isArray(vars)) return;
-    vars.forEach(v => {
-      const name = v && v.name;
-      if (!name) return;
-      if (window._p5VarWatchInstalled[name]) return; // avoid redefining
-      try {
-        // Capture current value as initial backing value
-        let curr = (typeof window[name] !== 'undefined') ? window[name] : v.value;
-        window._p5GlobalVarValues[name] = coerceByType(name, curr);
-        const desc = Object.getOwnPropertyDescriptor(window, name);
-        // Define accessor only if configurable or not defined on window, to avoid errors
-        if (!desc || desc.configurable !== false) {
-          Object.defineProperty(window, name, {
-            configurable: true,
-            enumerable: true,
-            get() {
-              return window._p5GlobalVarValues[name];
-            },
-            set(val) {
-              const newVal = coerceByType(name, val);
-              const prev = window._p5GlobalVarValues[name];
-              window._p5GlobalVarValues[name] = newVal;
-              // Only notify if actually changed (strict equality for primitives)
-              if (prev !== newVal) {
-                queueUpdate(name, newVal);
-                window._p5LastPostedValues[name] = newVal;
-              }
-            }
-          });
-          window._p5VarWatchInstalled[name] = true;
-        }
-      } catch {}
-    });
-  };
-
-  // rAF-based poller as a fallback when accessors can't be defined on window (e.g., non-configurable globals)
-  function tickPoller() {
-    try {
-      // Only check simple primitives
-      window._p5VarPollNames.forEach((name) => {
-        try {
-          const t = (window._p5GlobalVarTypes && window._p5GlobalVarTypes[name]) || typeof window[name];
-          let curr = window[name];
-          if (t === 'number') {
-            const n = Number(curr);
-            if (!Number.isNaN(n)) curr = n;
-          } else if (t === 'boolean') {
-            curr = (curr === true || curr === 'true' || curr === 1 || curr === '1');
-          } else if (t !== 'string') {
-            // Skip complex types
-            return;
-          }
-          const prev = window._p5VarPollLast[name];
-          if (prev !== curr) {
-            window._p5VarPollLast[name] = curr;
-            queueUpdate(name, curr);
-          }
-        } catch {}
-      });
-    } catch {}
-    window._p5VarPollRaf = requestAnimationFrame(tickPoller);
-  }
-
-  window._startGlobalVarPolling = function(vars) {
-    try {
-      if (Array.isArray(vars)) {
-        vars.forEach(v => { if (v && v.name) window._p5VarPollNames.add(v.name); });
-      }
-      // Seed last values to avoid immediate spam
-      if (Array.isArray(vars)) {
-        vars.forEach(v => { if (v && v.name) window._p5VarPollLast[v.name] = window[v.name]; });
-      }
-    } catch {}
-    if (!window._p5VarPollRaf) {
-      window._p5VarPollRaf = requestAnimationFrame(tickPoller);
-    }
-  };
-})();
-
-// Hides the variable drawer UI in the webview
-function hideDrawer() {
-  const controls = document.getElementById('p5-var-controls');
-  const tab = document.getElementById('p5-var-drawer-tab');
-  if (!controls || !tab) return;
-  // Ensure controls stay in DOM (so height animation works) but slide out
-  controls.classList.add('drawer-hidden');
-  controls.style.display = 'flex';
-  tab.style.display = 'flex';
-  tab.classList.add('tab-visible');
-}
-
-// Shows the variable drawer UI in the webview
-function showDrawer() {
-  const controls = document.getElementById('p5-var-controls');
-  const tab = document.getElementById('p5-var-drawer-tab');
-  if (!controls || !tab) return;
-  controls.style.display = 'flex';
-  controls.classList.remove('drawer-hidden');
-  tab.classList.remove('tab-visible');
-  // Give animation a frame to apply; then hide tab fully
-  setTimeout(() => { tab.style.display = 'none'; }, 200);
-}
-
-// Dynamically creates/removes the variable drawer and tab, and sets up event listeners for variable changes
-function renderGlobalVarControls(vars, readOnly) {
-  // Send globals to the extension for the VARIABLES panel,
-  // but enrich values with current runtime values if available so we don't revert to initial code values.
-  if (typeof vscode !== 'undefined' && Array.isArray(vars)) {
-    try {
-      const list = vars.map(v => {
-        const name = v && v.name;
-        if (!name) return v;
-        let t = (window._p5GlobalVarTypes && window._p5GlobalVarTypes[name]) || v.type || typeof window[name];
-        let val = (typeof window[name] !== 'undefined') ? window[name] : v.value;
-        if (t === 'number') {
-          const n = Number(val);
-          if (!Number.isNaN(n)) val = n;
-        } else if (t === 'boolean') {
-          val = (val === true || val === 'true' || val === 1 || val === '1');
-        } else if (t !== 'string') {
-          // keep original for complex types
-        }
-        return { ...v, value: val, type: t };
-      });
-      vscode.postMessage({ type: 'setGlobalVars', variables: list });
-    } catch {}
-  }
-  // Remove/hide any existing drawer UI if present
-  const controls = document.getElementById('p5-var-controls');
-  const tab = document.getElementById('p5-var-drawer-tab');
-  if (controls) controls.remove();
-  if (tab) tab.remove();
-  // Do not create or show the drawer anymore
-}
-
-// Function to sync drawer inputs with global variable values
-function syncDrawerWithGlobals() {
-  if (!window._p5GlobalVarTypes) return;
-  const controls = document.getElementById('p5-var-controls');
-  if (!controls) return;
-  Object.keys(window._p5GlobalVarTypes).forEach(name => {
-    const type = window._p5GlobalVarTypes[name];
-    const input = controls.querySelector('input[data-var="' + name + '"]');
-    if (!input) return;
-    let globalVal = window[name];
-    if (type === 'number') {
-      // --- PATCH: match input formatting to initial value ---
-      if (input !== document.activeElement) {
-        let step = input.step;
-        if (step === '1') {
-          // Integer: always show floored value
-          if (input.value !== String(Math.floor(globalVal))) input.value = Math.floor(globalVal);
-        } else if (step && step !== 'any') {
-          // Decimal: use precision from step
-          let precision = 0;
-          if (step.indexOf('.') !== -1) precision = step.split('.')[1].length;
-          if (typeof globalVal === 'number' && !isNaN(globalVal)) {
-            let valStr = Number(globalVal).toFixed(precision);
-            if (input.value !== valStr) input.value = valStr;
-          }
-        } else {
-          // Fallback
-          if (input.value !== String(globalVal)) input.value = globalVal;
-        }
-      }
-      // --- END PATCH ---
-    } else if (type === 'boolean') {
-      if (input.checked !== !!globalVal) input.checked = !!globalVal;
-    } else {
-      if (input !== document.activeElement) {
-        if (input.value !== String(globalVal)) input.value = globalVal;
-      }
-    }
-  });
-}
-</script>
-</body>
-</html>`;
-}
+// createHtml moved to './webview/createHtml'
 
 // Instrument setup() to insert `await __sleep(delayMs)` between top-level statements/blocks.
 // Returns original code if setup() cannot be found.
@@ -5240,7 +3227,7 @@ export function activate(context: vscode.ExtensionContext) {
     // If inputPrompt() is used outside top-of-sketch, block and show friendly error
     try {
       if (hasNonTopInputUsage(code)) {
-        panel.webview.html = await createHtml('', panel, context.extensionPath);
+        panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
         const friendly = 'inputPrompt() can only be used at the very top of the sketch to initialize a variable, e.g.: let a = inputPrompt(); ';
         setTimeout(() => { panel.webview.postMessage({ type: 'showError', message: friendly }); }, 150);
         const time = getTime();
@@ -5258,7 +3245,7 @@ export function activate(context: vscode.ExtensionContext) {
           // Always show overlay on save/command; prefill with cache if available
           let itemsToShow = inputs;
           if (hasCachedInputsForKey(key, inputs)) {
-            const cached = _topInputCache.get(key);
+            const cached = getCachedInputsForKey(key);
             if (cached) {
               itemsToShow = inputs.map((it, i) => ({
                 varName: it.varName,
@@ -5267,7 +3254,7 @@ export function activate(context: vscode.ExtensionContext) {
               }));
             }
           }
-          panel.webview.html = await createHtml('', panel, context.extensionPath);
+          panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
           setTimeout(() => { panel.webview.postMessage({ type: 'showTopInputs', items: itemsToShow }); }, 150);
           return;
         } else if (hasCachedInputsForKey(key, inputs)) {
@@ -5291,7 +3278,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (conflicts.length > 0) {
         syntaxErrorMsg = `${getTime()} [‼️SYNTAX ERROR in ${fileName}] Reserved variable name(s) used: ${conflicts.join(', ')}`;
         syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
-        panel.webview.html = await createHtml('', panel, context.extensionPath);
+        panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
         hadSyntaxError = true;
         throw new Error(syntaxErrorMsg);
       }
@@ -5323,7 +3310,7 @@ export function activate(context: vscode.ExtensionContext) {
           }
           return;
         } else {
-          panel.webview.html = await createHtml('', panel, context.extensionPath);
+          panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
           logBlockingWarningsForDocument(document);
           return;
         }
@@ -5332,7 +3319,7 @@ export function activate(context: vscode.ExtensionContext) {
         const docKey = (panel && (panel as any)._sketchFilePath) ? String((panel as any)._sketchFilePath) : document.fileName;
         const unresolved = detectTopLevelInputs(document.getText());
         if (unresolved.length > 0 && !hasCachedInputsForKey(docKey, unresolved)) {
-          panel.webview.html = await createHtml('', panel, context.extensionPath);
+          panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
           setTimeout(() => { panel.webview.postMessage({ type: 'showTopInputs', items: unresolved }); }, 150);
           return;
         }
@@ -5341,7 +3328,7 @@ export function activate(context: vscode.ExtensionContext) {
         const inputs = detectTopLevelInputs(code);
         if (inputs.length > 0 && !hasCachedInputsForKey(key, inputs)) {
           // Do not run sketch with unresolved inputs on auto updates. Show input UI and return.
-          panel.webview.html = await createHtml('', panel, context.extensionPath);
+          panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
           setTimeout(() => {
             panel.webview.postMessage({ type: 'showTopInputs', items: inputs });
           }, 150);
@@ -5349,7 +3336,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
         _allowInteractiveTopInputs = false; // suppress prompts, use cache
         try {
-          panel.webview.html = await createHtml(code, panel, context.extensionPath);
+          panel.webview.html = await createHtml(code, panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
         } finally {
           _allowInteractiveTopInputs = true;
         }
@@ -5380,7 +3367,7 @@ export function activate(context: vscode.ExtensionContext) {
         syntaxErrorMsg = `${getTime()} [‼️SYNTAX ERROR in ${path.basename(document.fileName)}] ${err.message}`;
         syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
       }
-      panel.webview.html = await createHtml('', panel, context.extensionPath);
+      panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
       hadSyntaxError = true;
     }
 
@@ -5841,7 +3828,7 @@ export function activate(context: vscode.ExtensionContext) {
                 if (typeof v === 'number') return v;
                 return v;
               });
-              _topInputCache.set(key, { items: items.map(i => ({ varName: i.varName, label: i.label })), values });
+              setCachedInputsForKey(key, items.map(i => ({ varName: i.varName, label: i.label })), values);
 
               // Preprocess non-interactively using the cache
               _allowInteractiveTopInputs = false;
@@ -5859,7 +3846,7 @@ export function activate(context: vscode.ExtensionContext) {
               panel.webview.postMessage({ type: 'hideTopInputs' });
               const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
               if (!hasDraw) {
-                panel.webview.html = await createHtml(code, panel, context.extensionPath);
+                panel.webview.html = await createHtml(code, panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
                 setTimeout(() => {
                   const { globals } = extractGlobalVariablesWithConflicts(code);
                   let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
@@ -5916,7 +3903,7 @@ export function activate(context: vscode.ExtensionContext) {
             const rawCode = editor.document.getText();
             // Friendly error for inputPrompt misuse
             if (hasNonTopInputUsage(rawCode)) {
-              panel.webview.html = await createHtml('', panel, context.extensionPath);
+              panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
               setTimeout(() => {
                 panel.webview.postMessage({ type: 'showError', message: 'inputPrompt() must be used at the very top of the sketch to initialize a variable (e.g., let a = inputPrompt()); runtime prompts are not supported.' });
               }, 150);
@@ -5940,7 +3927,7 @@ export function activate(context: vscode.ExtensionContext) {
                 || (getStrictLevel('NoVar') === 'block' && warnVar.has)
                 || (getStrictLevel('LooseEquality') === 'block' && warnEq.has);
               if (shouldBlock) {
-                panel.webview.html = await createHtml('', panel, context.extensionPath);
+                panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
                 logBlockingWarningsForDocument(editor.document);
                 return;
               }
@@ -5951,7 +3938,7 @@ export function activate(context: vscode.ExtensionContext) {
               let syntaxErrorMsg = `${getTime()} [‼️SYNTAX ERROR in ${fileName}] Reserved variable name(s) used: ${conflicts.join(', ')}`;
               syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
               // Replace HTML with empty sketch so nothing runs, then show overlay
-              panel.webview.html = await createHtml('', panel, context.extensionPath);
+              panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
               setTimeout(() => {
                 panel.webview.postMessage({ type: 'syntaxError', message: stripLeadingTimestamp(syntaxErrorMsg) });
               }, 150);
@@ -5973,7 +3960,7 @@ export function activate(context: vscode.ExtensionContext) {
                 let rewrittenCode = rewriteUserCodeWithWindowGlobals(code, globals);
                 const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
                 if (!hasDraw) {
-                  panel.webview.html = await createHtml(code, panel, context.extensionPath);
+                  panel.webview.html = await createHtml(code, panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
                   setTimeout(() => {
                     const { globals } = extractGlobalVariablesWithConflicts(code);
                     let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
@@ -6006,7 +3993,7 @@ export function activate(context: vscode.ExtensionContext) {
                 return;
               } else {
                 // No cache: show overlay (prefill with defaults)
-                panel.webview.html = await createHtml('', panel, context.extensionPath);
+                panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
                 setTimeout(() => {
                   panel.webview.postMessage({ type: 'showTopInputs', items: inputsBefore });
                 }, 150);
@@ -6025,7 +4012,7 @@ export function activate(context: vscode.ExtensionContext) {
             }
             const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
             if (!hasDraw) {
-              panel.webview.html = await createHtml(code, panel, context.extensionPath);
+              panel.webview.html = await createHtml(code, panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
               setTimeout(() => {
                 const { globals } = extractGlobalVariablesWithConflicts(code);
                 let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
@@ -6094,7 +4081,7 @@ export function activate(context: vscode.ExtensionContext) {
             // Not stepping yet: instrument with single-step and start auto-advance
             // Friendly error for input misuse
             if (hasNonTopInputUsage(rawCode)) {
-              panel.webview.html = await createHtml('', panel, context.extensionPath);
+              panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
               setTimeout(() => {
                 panel.webview.postMessage({ type: 'showError', message: 'input can only be used at the top' });
               }, 150);
@@ -6115,7 +4102,7 @@ export function activate(context: vscode.ExtensionContext) {
               const warnVar = hasVarWarnings(editor.document);
               const warnEq = hasEqualityWarnings(editor.document);
               if (blockOnWarning && (warnSemi.has || warnUnd.has || warnVar.has || warnEq.has)) {
-                panel.webview.html = await createHtml('', panel, context.extensionPath);
+                panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
                 logBlockingWarningsForDocument(editor.document);
                 return;
               }
@@ -6126,7 +4113,7 @@ export function activate(context: vscode.ExtensionContext) {
               const outputChannel = getOrCreateOutputChannel(docUri, fileName);
               let syntaxErrorMsg = `${getTime()} [‼️SYNTAX ERROR in ${fileName}] Reserved variable name(s) used: ${conflicts.join(', ')}`;
               syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
-              panel.webview.html = await createHtml('', panel, context.extensionPath);
+              panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
               setTimeout(() => {
                 panel.webview.postMessage({ type: 'syntaxError', message: stripLeadingTimestamp(syntaxErrorMsg) });
               }, 150);
@@ -6145,7 +4132,7 @@ export function activate(context: vscode.ExtensionContext) {
                 codeForRun = await preprocessTopLevelInputs(rawCode, { key, interactive: false });
                 _allowInteractiveTopInputs = true;
               } else {
-                panel.webview.html = await createHtml('', panel, context.extensionPath);
+                panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
                 setTimeout(() => {
                   panel.webview.postMessage({ type: 'showTopInputs', items: inputsBefore });
                 }, 150);
@@ -6188,7 +4175,7 @@ export function activate(context: vscode.ExtensionContext) {
               }, delayMs);
             };
             if (!hasDraw) {
-              panel.webview.html = await createHtml(instrumented, panel, context.extensionPath);
+              panel.webview.html = await createHtml(instrumented, panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
               setTimeout(afterLoad, 200);
             } else {
               panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: false });
@@ -6241,7 +4228,7 @@ export function activate(context: vscode.ExtensionContext) {
             // First click: enter stepping mode by instrumenting setup()
             // Friendly error for input misuse
             if (hasNonTopInputUsage(rawCode)) {
-              panel.webview.html = await createHtml('', panel, context.extensionPath);
+              panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
               setTimeout(() => {
                 panel.webview.postMessage({ type: 'showError', message: 'input can only be used at the top' });
               }, 150);
@@ -6557,7 +4544,7 @@ export function activate(context: vscode.ExtensionContext) {
           const key = editor.document.fileName;
           let itemsToShow = _inputsNeeded;
           if (hasCachedInputsForKey(key, _inputsNeeded)) {
-            const cached = _topInputCache.get(key);
+            const cached = getCachedInputsForKey(key);
             if (cached) {
               itemsToShow = _inputsNeeded.map((it, i) => ({
                 varName: it.varName,
