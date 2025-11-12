@@ -1530,6 +1530,7 @@ function runUserSketch(code){
   clearError();
   window._p5ErrorLogged = false;
   window._p5SetupDone = false;
+  window._p5PostedAfterSetup = false;
   if(window._p5Instance){window._p5Instance.remove();window._p5Instance=null;}
   document.querySelectorAll("canvas").forEach(c=>c.remove());
 
@@ -1557,6 +1558,37 @@ function runUserSketch(code){
 
   try {
     window._p5Instance = new p5();
+    // After p5 starts, poll for setup completion once and push all current globals to VARIABLES panel
+    try {
+      if (window._p5SetupWatcher) { try { clearInterval(window._p5SetupWatcher); } catch {} }
+      window._p5SetupWatcher = setInterval(() => {
+        try {
+          if (window._p5SetupDone && !window._p5PostedAfterSetup) {
+            window._p5PostedAfterSetup = true;
+            if (window._p5GlobalVarTypes) {
+              Object.keys(window._p5GlobalVarTypes).forEach(name => {
+                try {
+                  let val = window[name];
+                  // Normalize by declared type
+                  const t = window._p5GlobalVarTypes[name] || typeof val;
+                  if (t === 'number') {
+                    const n = Number(val);
+                    if (!Number.isNaN(n)) val = n;
+                  } else if (t === 'boolean') {
+                    val = (val === true || val === 'true' || val === 1 || val === '1');
+                  } else if (t !== 'string') {
+                    // Skip complex types for the VARIABLES panel
+                    return;
+                  }
+                  try { vscode.postMessage({ type: 'updateGlobalVar', name, value: val }); } catch {}
+                } catch {}
+              });
+            }
+            try { if (window._p5SetupWatcher) { clearInterval(window._p5SetupWatcher); window._p5SetupWatcher = null; } } catch {}
+          }
+        } catch {}
+      }, 50);
+    } catch {}
   } catch (err) {
     let raw = (err && err.message ? err.message : String(err));
     if (_p5ShouldSuppressError(raw)) { return; }
@@ -1576,7 +1608,12 @@ function waitForP5AndRunSketch() {
   if (!hasCode) {
     return; // Extension will display the syntax error overlay separately.
   }
-  if (window.p5) {
+  // Defer running until p5 is loaded AND variables have been sent so watchers are installed,
+  // to ensure we capture final values after setup-only sketches.
+  window._p5WaitStart = window._p5WaitStart || performance.now();
+  const MAX_WAIT_MS = 1200; // safety cap
+  const watchersReady = !!window._p5VarWatchersReady; // set when 'setGlobalVars' arrives
+  if (window.p5 && (watchersReady || (performance.now() - window._p5WaitStart) > MAX_WAIT_MS)) {
     runUserSketch(window._p5UserCode);
   } else {
     setTimeout(waitForP5AndRunSketch, 10);
@@ -1714,9 +1751,32 @@ window.addEventListener("message", e => {
       try { if (typeof window._installGlobalVarWatchers === 'function') window._installGlobalVarWatchers(data.variables); } catch {}
       // Start rAF-based polling to ensure live updates even when accessors cannot be defined
       try { if (typeof window._startGlobalVarPolling === 'function') window._startGlobalVarPolling(data.variables); } catch {}
+      // Signal that watchers are ready so we can start the sketch safely
+      try { window._p5VarWatchersReady = true; } catch {}
       break;
     case 'updateGlobalVar':
       updateGlobalVarInSketch(data.name, data.value);
+      break;
+    case 'requestGlobalsSnapshot':
+      try {
+        if (window._p5GlobalVarTypes) {
+          Object.keys(window._p5GlobalVarTypes).forEach(name => {
+            try {
+              let val = window[name];
+              const t = window._p5GlobalVarTypes[name] || typeof val;
+              if (t === 'number') {
+                const n = Number(val);
+                if (!Number.isNaN(n)) val = n;
+              } else if (t === 'boolean') {
+                val = (val === true || val === 'true' || val === 1 || val === '1');
+              } else if (t !== 'string') {
+                return;
+              }
+              try { vscode.postMessage({ type: 'updateGlobalVar', name, value: val }); } catch {}
+            } catch {}
+          });
+        }
+      } catch {}
       break;
     case "toggleRecordButton": {
       // Now only sets internal capture visibility flag (no button UI)
@@ -1997,9 +2057,27 @@ function showDrawer() {
 
 // Dynamically creates/removes the variable drawer and tab, and sets up event listeners for variable changes
 function renderGlobalVarControls(vars, readOnly) {
-  // Only send the current global vars to the extension for the VARIABLES panel
+  // Send globals to the extension for the VARIABLES panel,
+  // but enrich values with current runtime values if available so we don't revert to initial code values.
   if (typeof vscode !== 'undefined' && Array.isArray(vars)) {
-    try { vscode.postMessage({ type: 'setGlobalVars', variables: vars }); } catch {}
+    try {
+      const list = vars.map(v => {
+        const name = v && v.name;
+        if (!name) return v;
+        let t = (window._p5GlobalVarTypes && window._p5GlobalVarTypes[name]) || v.type || typeof window[name];
+        let val = (typeof window[name] !== 'undefined') ? window[name] : v.value;
+        if (t === 'number') {
+          const n = Number(val);
+          if (!Number.isNaN(n)) val = n;
+        } else if (t === 'boolean') {
+          val = (val === true || val === 'true' || val === 1 || val === '1');
+        } else if (t !== 'string') {
+          // keep original for complex types
+        }
+        return { ...v, value: val, type: t };
+      });
+      vscode.postMessage({ type: 'setGlobalVars', variables: list });
+    } catch {}
   }
   // Remove/hide any existing drawer UI if present
   const controls = document.getElementById('p5-var-controls');
@@ -5190,6 +5268,13 @@ export function activate(context: vscode.ExtensionContext) {
           const readOnly = hasOnlySetup(document.getText());
           panel.webview.postMessage({ type: 'setGlobalVars', variables: filtered, readOnly });
         }, 200);
+        // For setup-only sketches, request a snapshot after setup finishes to ensure final values are reflected
+        setTimeout(() => {
+          const onlySetup = hasOnlySetup(document.getText());
+          if (onlySetup) {
+            try { panel.webview.postMessage({ type: 'requestGlobalsSnapshot' }); } catch { }
+          }
+        }, 600);
       }
     } catch (err: any) {
       if (!syntaxErrorMsg) {
@@ -5770,6 +5855,12 @@ export function activate(context: vscode.ExtensionContext) {
                     const readOnly = hasOnlySetup(editor.document.getText());
                     panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
                   }, 200);
+                  setTimeout(() => {
+                    const onlySetup = hasOnlySetup(editor.document.getText());
+                    if (onlySetup) {
+                      try { panel.webview.postMessage({ type: 'requestGlobalsSnapshot' }); } catch { }
+                    }
+                  }, 600);
                 } else {
                   panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: false });
                   setTimeout(() => {
@@ -5816,6 +5907,18 @@ export function activate(context: vscode.ExtensionContext) {
                 const readOnly = hasOnlySetup(editor.document.getText());
                 panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
               }, 200);
+              setTimeout(() => {
+                const onlySetup = hasOnlySetup(editor.document.getText());
+                if (onlySetup) {
+                  try { panel.webview.postMessage({ type: 'requestGlobalsSnapshot' }); } catch { }
+                }
+              }, 600);
+              setTimeout(() => {
+                const onlySetup = hasOnlySetup(editor.document.getText());
+                if (onlySetup) {
+                  try { panel.webview.postMessage({ type: 'requestGlobalsSnapshot' }); } catch { }
+                }
+              }, 600);
             } else {
               // For sketches with draw(), we want the reload button to reset globals to their original initial values.
               // Do NOT ask the webview to preserve the current runtime globals; perform a normal reload and then
