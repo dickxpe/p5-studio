@@ -833,14 +833,47 @@ async function createHtml(
   if (panel && (panel as any)._sketchFilePath) {
     sketchFileName = path.basename((panel as any)._sketchFilePath);
   }
-  const p5Path = vscode.Uri.file(path.join(extensionPath, 'assets', 'p5.min.js'));
+  // Choose p5 version from settings; fall back gracefully if missing
+  let selectedP5Version = vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11';
+  const p5VersionedPathFs = path.join(extensionPath, 'assets', selectedP5Version, 'p5.min.js');
+  let p5ResolvedFs = p5VersionedPathFs;
+  if (!fs.existsSync(p5ResolvedFs)) {
+    if (selectedP5Version === '1.11') {
+      const legacy = path.join(extensionPath, 'assets', 'p5.min.js');
+      p5ResolvedFs = legacy;
+    } else {
+      // For 2.1 or any non-1.11 version, do NOT fallback to 1.11; leave unresolved to surface error/overlay
+      p5ResolvedFs = p5VersionedPathFs; // keep as-is; will 404 in webview if missing
+    }
+  }
+  const p5Path = vscode.Uri.file(p5ResolvedFs);
   const p5Uri = panel.webview.asWebviewUri(p5Path);
 
   // Add p5.sound.min.js
-  const p5SoundPath = vscode.Uri.file(path.join(extensionPath, 'assets', 'p5.sound.min.js'));
+  const p5SoundVersionedPathFs = path.join(extensionPath, 'assets', selectedP5Version, 'p5.sound.min.js');
+  let p5SoundResolvedFs = p5SoundVersionedPathFs;
+  if (!fs.existsSync(p5SoundResolvedFs)) {
+    if (selectedP5Version === '1.11') {
+      const legacy = path.join(extensionPath, 'assets', 'p5.sound.min.js');
+      p5SoundResolvedFs = legacy;
+    } else {
+      p5SoundResolvedFs = p5SoundVersionedPathFs;
+    }
+  }
+  const p5SoundPath = vscode.Uri.file(p5SoundResolvedFs);
   const p5SoundUri = panel.webview.asWebviewUri(p5SoundPath);
 
-  const p5CapturePath = vscode.Uri.file(path.join(extensionPath, 'assets', 'p5.capture.umd.min.js'));
+  const p5CaptureVersionedPathFs = path.join(extensionPath, 'assets', selectedP5Version, 'p5.capture.umd.min.js');
+  let p5CaptureResolvedFs = p5CaptureVersionedPathFs;
+  if (!fs.existsSync(p5CaptureResolvedFs)) {
+    if (selectedP5Version === '1.11') {
+      const legacy = path.join(extensionPath, 'assets', 'p5.capture.umd.min.js');
+      p5CaptureResolvedFs = legacy;
+    } else {
+      p5CaptureResolvedFs = p5CaptureVersionedPathFs;
+    }
+  }
+  const p5CapturePath = vscode.Uri.file(p5CaptureResolvedFs);
   const p5CaptureUri = panel.webview.asWebviewUri(p5CapturePath);
 
   const reloadIconPath = vscode.Uri.file(path.join(extensionPath, 'images', 'reload.svg'));
@@ -2880,7 +2913,10 @@ export function activate(context: vscode.ExtensionContext) {
       }
       if (activeTab.label && activeTab.input) {
         const input = activeTab.input as { viewType?: string };
-        if (input.viewType === 'mainThreadWebview-extension.live-p5' && activeTab.label.startsWith('LIVE:')) {
+        const vt = (input && typeof input.viewType === 'string') ? String(input.viewType) : '';
+        // Be resilient to VS Code internals: sometimes the viewType may be wrapped (e.g., 'mainThreadWebview-...')
+        const looksLikeLiveP5 = vt === 'extension.live-p5' || vt.endsWith('extension.live-p5') || vt.endsWith('.live-p5');
+        if (looksLikeLiveP5 && String(activeTab.label).startsWith('LIVE:')) {
           isP5Webview = true;
         }
       }
@@ -3209,7 +3245,7 @@ export function activate(context: vscode.ExtensionContext) {
                 latestGlobalVars.push({ name, value, type });
               }
               updateVariablesPanel();
-            } catch {}
+            } catch { }
 
             // Relay to ALL open P5 webviews
             for (const [, panel] of webviewPanelMap) {
@@ -4093,7 +4129,17 @@ export function activate(context: vscode.ExtensionContext) {
     function buildP5CategoryMap(): Record<string, string> {
       const map: Record<string, string> = {};
       try {
-        const srcRoot = path.join(context.extensionPath, 'p5types', 'src');
+        // Resolve p5types location: prefer versioned under assets/<version>/p5types
+        const selectedP5Version = vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11';
+        const srcRoot = (
+          selectedP5Version === '1.11'
+            ? path.join(context.extensionPath, 'assets', '1.11', 'p5types', 'src')
+            : path.join(context.extensionPath, 'assets', selectedP5Version, 'p5types', 'src')
+        );
+        // If the versioned p5types are missing, return empty map (no fallback when not 1.11)
+        if (!fs.existsSync(srcRoot)) {
+          return map;
+        }
         const topFolders = [
           'color', 'core', 'data', 'dom', 'events', 'image', 'io', 'math', 'typography', 'utilities', 'webgl'
         ];
@@ -4186,7 +4232,17 @@ export function activate(context: vscode.ExtensionContext) {
       const optionalMap: Record<string, boolean[]> = {};
       const typeMap: Record<string, string[]> = {};
       try {
-        const srcRoot = path.join(context.extensionPath, 'p5types', 'src');
+        // Resolve p5types location: prefer versioned under assets/<version>/p5types
+        const selectedP5Version = vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11';
+        const srcRoot = (
+          selectedP5Version === '1.11'
+            ? path.join(context.extensionPath, 'assets', '1.11', 'p5types', 'src')
+            : path.join(context.extensionPath, 'assets', selectedP5Version, 'p5types', 'src')
+        );
+        // If the versioned p5types are missing, return empty maps (no fallback when not 1.11)
+        if (!fs.existsSync(srcRoot)) {
+          return { paramMap, optionalMap, typeMap };
+        }
         const folders = [
           'color', 'core', 'data', 'dom', 'events', 'image', 'io', 'math', 'typography', 'utilities', 'webgl'
         ];
@@ -4460,7 +4516,9 @@ export function activate(context: vscode.ExtensionContext) {
           localResourceRoots: [
             vscode.Uri.file(path.join(context.extensionPath, 'blockly')),
             vscode.Uri.file(path.join(context.extensionPath, 'vendor')),
-            vscode.Uri.file(path.join(context.extensionPath, 'assets'))
+            // Allow both legacy and versioned assets directories
+            vscode.Uri.file(path.join(context.extensionPath, 'assets')),
+            vscode.Uri.file(path.join(context.extensionPath, 'assets', '1.11'))
           ]
         }
       );
@@ -5064,13 +5122,8 @@ export function activate(context: vscode.ExtensionContext) {
       // --- Check for syntax/reference errors BEFORE wrapping in setup ---
       new Function(code); // syntax/reference check
 
-      // Only wrap if no errors
-      const hasSetup = /\bfunction\s+setup\s*\(/.test(code);
-      const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
-
-      if (!hasSetup && !hasDraw) {
-        code = `function setup() {\n${code}\n}`;
-      }
+      // Only wrap/massage top-level statements if no errors
+      code = wrapInSetupIfNeeded(code);
       // Block sketch when configured and warnings exist; otherwise run as usual
       const cfgUD = vscode.workspace.getConfiguration('P5Studio');
       const warnSemi_UD = hasSemicolonWarnings(document);
@@ -5315,8 +5368,11 @@ export function activate(context: vscode.ExtensionContext) {
         const sketchFilePath = editor.document.fileName;
         const sketchDir = path.dirname(sketchFilePath);
         const includeDir = path.join(sketchDir, 'include');
+        // Allow webview to load assets from the selected version folder (no hard-coded 1.11 when 2.1 is chosen)
+        const selectedP5VersionForRoots = vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11';
         let localResourceRoots = [
           vscode.Uri.file(path.join(context.extensionPath, 'assets')),
+          vscode.Uri.file(path.join(context.extensionPath, 'assets', selectedP5VersionForRoots)),
           vscode.Uri.file(path.join(context.extensionPath, 'images')),
           vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'common')),
           vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'import')),
@@ -5411,6 +5467,37 @@ export function activate(context: vscode.ExtensionContext) {
         const fileName = path.basename(editor.document.fileName);
         const outputChannel = getOrCreateOutputChannel(docUri, fileName);
         showAndTrackOutputChannel(outputChannel); // <--- replaced direct show
+        // --- LOG ACTIVE p5.js VERSION + RESOLVED ASSET PATHS ---
+        try {
+          const selectedP5Version = vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11';
+          let resolvedVersionLabel = selectedP5Version;
+          let p5PathFs = path.join(context.extensionPath, 'assets', selectedP5Version, 'p5.min.js');
+          if (!fs.existsSync(p5PathFs)) {
+            if (selectedP5Version === '1.11') {
+              const legacy = path.join(context.extensionPath, 'assets', 'p5.min.js');
+              p5PathFs = legacy;
+              resolvedVersionLabel = 'legacy (unversioned fallback for 1.11)';
+            } else {
+              // No fallback to 1.11 when 2.1 is selected
+              resolvedVersionLabel = selectedP5Version + ' (missing)';
+            }
+          }
+          // Provide a relative path (trim extension root) for readability
+          let displayPath = p5PathFs;
+          const extRoot = context.extensionPath.replace(/\\/g, '/');
+          const normDisplay = p5PathFs.replace(/\\/g, '/');
+          if (normDisplay.startsWith(extRoot)) {
+            displayPath = normDisplay.substring(extRoot.length + 1);
+          }
+          outputChannel.appendLine(`${getTime()} [ℹ️INFO] Using p5.js version ${resolvedVersionLabel}`);
+          // If the selected version's p5types are missing (2.1+), warn and note that editor types are disabled
+          try {
+            const typesDir = path.join(context.extensionPath, 'assets', selectedP5Version, 'p5types');
+            if (selectedP5Version !== '1.11' && !fs.existsSync(typesDir)) {
+              outputChannel.appendLine(`${getTime()} [⚠️WARN] No p5types found for version ${selectedP5Version}; editor type definitions will be disabled.`);
+            }
+          } catch { }
+        } catch { /* ignore logging errors */ }
 
         webviewPanelMap.set(docUri, panel);
         captureVisibleMap.set(docUri, false);
@@ -6415,19 +6502,40 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage('Setting up new P5 project...');
         // creates a jsconfig that tells vscode where to find the types file
         const now = new Date();
+        // Resolve p5types global.d.ts & p5helper.d.ts in versioned assets if present
+        const selectedP5VersionCJ = vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11';
+        const p5typesCandidatesCJ = (
+          selectedP5VersionCJ === '1.11'
+            ? [path.join(context.extensionPath, 'assets', '1.11', 'p5types', 'global.d.ts')]
+            : [path.join(context.extensionPath, 'assets', selectedP5VersionCJ, 'p5types', 'global.d.ts')]
+        );
+        const p5helperCandidatesCJ = (
+          selectedP5VersionCJ === '1.11'
+            ? [path.join(context.extensionPath, 'assets', '1.11', 'p5types', 'p5helper.d.ts')]
+            : [path.join(context.extensionPath, 'assets', selectedP5VersionCJ, 'p5types', 'p5helper.d.ts')]
+        );
+        const resolvedGlobalCJ = p5typesCandidatesCJ.find(p => { try { return fs.existsSync(p); } catch { return false; } });
+        const resolvedHelperCJ = p5helperCandidatesCJ.find(p => { try { return fs.existsSync(p); } catch { return false; } });
         const jsconfig = {
           createdAt: toLocalISOString(now),
-          include: [
-            "*.js",
-            "**/*.js",
-            "*.ts",
-            "**/.ts",
-            "common/*.js",
-            "import/*.js",
-            path.join(context.extensionPath, "p5types", "global.d.ts"),
-            path.join(context.extensionPath, "p5types", "p5helper.d.ts"),
-          ]
+          include: ((): (string)[] => {
+            const base = [
+              "*.js",
+              "**/*.js",
+              "*.ts",
+              "**/.ts",
+              "common/*.js",
+              "import/*.js",
+            ];
+            if (resolvedGlobalCJ) base.push(resolvedGlobalCJ);
+            if (resolvedHelperCJ) base.push(resolvedHelperCJ);
+            return base;
+          })()
         };
+        // If 2.1 selected and types missing, log a warning (no popup)
+        if (selectedP5VersionCJ !== '1.11' && (!resolvedGlobalCJ || !resolvedHelperCJ)) {
+          console.warn('[P5Studio] No p5types found for version', selectedP5VersionCJ, '- jsconfig will omit type definitions.');
+        }
         fs.mkdirSync(workspaceFolder.uri.fsPath + "/common", { recursive: true });
         fs.mkdirSync(workspaceFolder.uri.fsPath + "/import", { recursive: true });
         fs.mkdirSync(workspaceFolder.uri.fsPath + "/media", { recursive: true });
@@ -6605,20 +6713,39 @@ text("P5", 50, 52);`;
         }
         // Recreate jsconfig.json with current settings
         const now2 = new Date();
+        const selectedP5VersionRJ = vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11';
+        const p5typesCandidatesRJ = (
+          selectedP5VersionRJ === '1.11'
+            ? [path.join(context.extensionPath, 'assets', '1.11', 'p5types', 'global.d.ts')]
+            : [path.join(context.extensionPath, 'assets', selectedP5VersionRJ, 'p5types', 'global.d.ts')]
+        );
+        const p5helperCandidatesRJ = (
+          selectedP5VersionRJ === '1.11'
+            ? [path.join(context.extensionPath, 'assets', '1.11', 'p5types', 'p5helper.d.ts')]
+            : [path.join(context.extensionPath, 'assets', selectedP5VersionRJ, 'p5types', 'p5helper.d.ts')]
+        );
+        const resolvedGlobalRJ = p5typesCandidatesRJ.find(p => { try { return fs.existsSync(p); } catch { return false; } });
+        const resolvedHelperRJ = p5helperCandidatesRJ.find(p => { try { return fs.existsSync(p); } catch { return false; } });
         const jsconfig = {
           createdAt: toLocalISOString(now2),
-          include: [
-            "*.js",
-            "**/*.js",
-            "*.ts",
-            "**/.ts",
-            "common/*.js",
-            "import/*.js",
-            path.join(context.extensionPath, "p5types", "global.d.ts"),
-            path.join(context.extensionPath, "p5types", "p5helper.d.ts"),
-          ]
+          include: ((): (string)[] => {
+            const base = [
+              "*.js",
+              "**/*.js",
+              "*.ts",
+              "**/.ts",
+              "common/*.js",
+              "import/*.js",
+            ];
+            if (resolvedGlobalRJ) base.push(resolvedGlobalRJ);
+            if (resolvedHelperRJ) base.push(resolvedHelperRJ);
+            return base;
+          })()
         };
         writeFileSync(jsconfigPath, JSON.stringify(jsconfig, null, 2));
+        if (selectedP5VersionRJ !== '1.11' && (!resolvedGlobalRJ || !resolvedHelperRJ)) {
+          console.warn('[P5Studio] No p5types found for version', selectedP5VersionRJ, '- jsconfig will omit type definitions.');
+        }
         //  vscode.window.showInformationMessage('LIVE P5: Created fresh jsconfig.json');
       }
     } catch (e) {
@@ -6841,12 +6968,86 @@ text("P5", 50, 52);`;
 
 // Helper: Wrap code in setup() if no setup/draw present
 function wrapInSetupIfNeeded(code: string): string {
+  // If user already defines setup(), we leave code untouched.
   const hasSetup = /\bfunction\s+setup\s*\(/.test(code);
-  const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
-  if (!hasSetup && !hasDraw) {
-    return `function setup() {\n${code}\n}`;
+  if (hasSetup) return code;
+
+  // Parse AST and collect top-level non-function, non-class, non-import statements to move.
+  // Even if draw() exists, we still want those imperative statements to run inside setup() so p5 APIs are available.
+  try {
+    const acorn = require('acorn');
+    const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
+    const b = recast.types.builders;
+    const body: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
+    const moved: any[] = [];
+    const retained: any[] = [];
+
+    const P5_CALL_NAMES = new Set([
+      'createCanvas', 'resizeCanvas', 'noCanvas', 'createGraphics', 'createCapture', 'createVideo', 'createAudio', 'background',
+      'colorMode', 'image', 'loadImage', 'loadJSON', 'loadTable', 'loadXML', 'loadFont', 'loadSound', 'createDiv', 'createSpan', 'createP', 'createImg'
+    ]);
+
+    function containsP5Call(node: any): boolean {
+      let found = false;
+      recast.types.visit(node, {
+        visitCallExpression(p) {
+          try {
+            const cal = p.value.callee;
+            if (cal && cal.type === 'Identifier' && P5_CALL_NAMES.has(cal.name)) { found = true; return false; }
+          } catch { }
+          this.traverse(p);
+        }
+      });
+      return found;
+    }
+
+    for (const stmt of body) {
+      if (!stmt) continue;
+      const t = stmt.type;
+      // Always retain declarations (functions/classes/import/export) & variable declarations so globals still detected.
+      if (t === 'FunctionDeclaration' || t === 'ClassDeclaration' || t === 'ImportDeclaration' || t === 'ExportNamedDeclaration' || t === 'ExportDefaultDeclaration') {
+        retained.push(stmt);
+        continue;
+      }
+      if (t === 'VariableDeclaration') {
+        const orig: any = stmt;
+        const newDecls: any[] = [];
+        let kind: 'var' | 'let' | 'const' = orig.kind || 'var';
+        let changedKindToVar = false;
+        for (const d of (orig.declarations || [])) {
+          if (!d || d.type !== 'VariableDeclarator' || !d.id) { newDecls.push(d); continue; }
+          if (d.init && containsP5Call(d.init)) {
+            // Move initializer into setup as an assignment, and keep declaration without init at top-level.
+            newDecls.push(Object.assign({}, d, { init: null }));
+            moved.push(b.expressionStatement(b.assignmentExpression('=', d.id, d.init)));
+            if (kind !== 'var') { changedKindToVar = true; }
+          } else {
+            newDecls.push(d);
+          }
+        }
+        const retainedDecl = b.variableDeclaration(changedKindToVar ? 'var' : kind, newDecls);
+        retained.push(retainedDecl);
+        continue;
+      }
+      // Move executable/non-declaration statements (expressions, loops, etc.) into setup.
+      moved.push(stmt);
+    }
+
+    // If there is nothing to move (e.g., only draw() function defined) we still synthesize an empty setup so p5 creates its environment first.
+    const setupBody = moved.length > 0 ? moved : [];
+    // Ensure we still signal _p5SetupDone like rewriteUserCodeWithWindowGlobals will append later.
+    const setupFn = b.functionDeclaration(b.identifier('setup'), [], b.blockStatement(setupBody));
+    ast.program.body = [setupFn, ...retained];
+    return recast.print(ast).code;
+  } catch {
+    // Fallback: naive wrap only if no setup and no draw, preserving previous behavior.
+    const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
+    if (!hasDraw) {
+      return `function setup() {\n${code}\n}`;
+    }
+    // If draw exists but parse failed, prepend empty setup.
+    return `function setup() { }\n${code}`;
   }
-  return code;
 }
 
 // Helper: Format syntax error message to include "on line N" and remove (N:M)
