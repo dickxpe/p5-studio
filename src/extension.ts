@@ -2850,23 +2850,31 @@ export function activate(context: vscode.ExtensionContext) {
   // These must be defined at the extension activation scope
   // so they can be accessed from message handlers and the provider
   let latestGlobalVars: { name: string, value: any, type: string }[] = [];
+  // Track variables per sketch (doc URI) so switching tabs updates the VARIABLES panel accordingly
+  const latestGlobalVarsByDoc = new Map<string, { name: string, value: any, type: string }[]>();
   let variablesPanelView: vscode.WebviewView | undefined;
   function updateVariablesPanel() {
-    if (variablesPanelView) {
+    if (!variablesPanelView) return;
+    try {
+      const panel = getActiveP5Panel();
+      let vars: { name: string, value: any, type: string }[] = [];
+      if (panel) {
+        const docUri = getDocUriForPanel(panel)?.toString();
+        if (docUri && latestGlobalVarsByDoc.has(docUri)) {
+          vars = latestGlobalVarsByDoc.get(docUri) || [];
+        }
+        // Keep legacy cache in sync for any code still reading it
+        latestGlobalVars = vars;
+      } else {
+        // No active P5 panel; show empty state in VARIABLES panel
+        latestGlobalVars = [];
+      }
       variablesPanelView.webview.postMessage({ type: 'setGlobalVars', variables: latestGlobalVars });
-    }
+    } catch { }
   }
   // Helper: find active P5 panel
   function getActiveP5Panel(): vscode.WebviewPanel | undefined {
-    // Prefer the last known active panel
-    if (activeP5Panel) return activeP5Panel;
-    // If an editor is active, find by its URI
-    const activeEditor = vscode.window.activeTextEditor;
-    if (activeEditor) {
-      const p = webviewPanelMap.get(activeEditor.document.uri.toString());
-      if (p) return p;
-    }
-    // If a webview tab is focused, resolve by matching the tab label to a panel title
+    // 1) If a webview tab is focused, resolve by matching the tab label to a panel title
     try {
       const activeTab = vscode.window.tabGroups.activeTabGroup?.activeTab;
       const activeLabel = activeTab && activeTab.label ? String(activeTab.label) : '';
@@ -2876,6 +2884,14 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
     } catch { }
+    // 2) If an editor is active, find by its URI
+    const activeEditor = vscode.window.activeTextEditor;
+    if (activeEditor) {
+      const p = webviewPanelMap.get(activeEditor.document.uri.toString());
+      if (p) return p;
+    }
+    // 3) Fall back to the last known active panel
+    if (activeP5Panel) return activeP5Panel || undefined;
     return undefined;
   }
 
@@ -3008,13 +3024,17 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.executeCommand('setContext', 'p5DebugPrimed', primed);
         const cap = uri ? !!captureVisibleMap.get(uri.toString()) : false;
         vscode.commands.executeCommand('setContext', 'p5CaptureVisible', cap);
+        // Update VARIABLES panel content to match the newly focused webpanel
+        updateVariablesPanel();
       } else {
         vscode.commands.executeCommand('setContext', 'p5DebugPrimed', false);
         vscode.commands.executeCommand('setContext', 'p5CaptureVisible', false);
+        updateVariablesPanel();
       }
     } else {
       vscode.commands.executeCommand('setContext', 'p5DebugPrimed', false);
       vscode.commands.executeCommand('setContext', 'p5CaptureVisible', false);
+      updateVariablesPanel();
     }
   }
 
@@ -3202,7 +3222,7 @@ export function activate(context: vscode.ExtensionContext) {
         var tableDiv = document.getElementById('vars-table');
         if (!tableDiv) return;
         if (!vars.length) {
-          tableDiv.innerHTML = '<span class="muted">Loading variables...</span>';
+          tableDiv.innerHTML = '<span class="muted">No global variables</span>';
           _varsRendered = true; _varsIndex = new Map();
           return;
         }
@@ -3307,28 +3327,33 @@ export function activate(context: vscode.ExtensionContext) {
         // Attach message listener for updates coming from VARIABLES panel
         webviewView.webview.onDidReceiveMessage((msg) => {
           if (msg && msg.type === 'updateGlobalVar' && msg.name) {
-            // 1) Immediately update our cached variables and refresh the VARIABLES panel
+            // 1) Immediately update our cached variables for the ACTIVE sketch and refresh the VARIABLES panel
             try {
               const name = String(msg.name);
               const value = msg.value;
-              const idx = latestGlobalVars.findIndex(v => v.name === name);
-              if (idx >= 0) {
-                // preserve type from cache; only change value
-                latestGlobalVars[idx] = { ...latestGlobalVars[idx], value };
-              } else {
-                // infer a basic type for new entries
-                const t = typeof value;
-                const type = (t === 'boolean' || t === 'number') ? t : 'string';
-                latestGlobalVars.push({ name, value, type });
+              const panel = getActiveP5Panel();
+              const docUri = panel ? getDocUriForPanel(panel)?.toString() : undefined;
+              if (docUri) {
+                const list = latestGlobalVarsByDoc.get(docUri) || [];
+                const idx = list.findIndex(v => v.name === name);
+                if (idx >= 0) {
+                  // preserve type; only change value
+                  list[idx] = { ...list[idx], value };
+                } else {
+                  // infer a basic type for new entries
+                  const t = typeof value;
+                  const type = (t === 'boolean' || t === 'number') ? t : 'string';
+                  list.push({ name, value, type });
+                }
+                latestGlobalVarsByDoc.set(docUri, list);
               }
               updateVariablesPanel();
             } catch { }
 
-            // Relay to ALL open P5 webviews
-            for (const [, panel] of webviewPanelMap) {
-              if (panel && panel.webview) {
-                panel.webview.postMessage({ type: 'updateGlobalVar', name: msg.name, value: msg.value });
-              }
+            // Relay ONLY to the ACTIVE P5 webview (the one the VARIABLES panel is showing)
+            const activePanel = getActiveP5Panel();
+            if (activePanel && activePanel.webview) {
+              activePanel.webview.postMessage({ type: 'updateGlobalVar', name: msg.name, value: msg.value });
             }
           }
         });
@@ -5590,31 +5615,56 @@ export function activate(context: vscode.ExtensionContext) {
           await moveToOrderEnd(editor.document.fileName);
         } catch { }
         activeP5Panel = panel;
+        try {
+          panel.onDidChangeViewState(() => {
+            try {
+              if (panel.active) {
+                activeP5Panel = panel;
+                // Keep VARIABLES panel in sync with the newly active webview tab
+                updateVariablesPanel();
+              }
+            } catch { }
+          });
+        } catch { }
         vscode.commands.executeCommand('setContext', 'hasP5Webview', true);
         // Initialize primed state for this sketch
         debugPrimedMap.set(docUri, false);
         panel.onDidDispose(() => {
           debugPrimedMap.delete(docUri);
           captureVisibleMap.delete(docUri);
+          try { latestGlobalVarsByDoc.delete(docUri); } catch { }
           if (activeP5Panel === panel) {
             vscode.commands.executeCommand('setContext', 'p5DebugPrimed', false);
             vscode.commands.executeCommand('setContext', 'p5CaptureVisible', false);
+            // If the disposed panel was active, refresh VARIABLES panel to reflect no active sketch
+            updateVariablesPanel();
           }
         });
 
         panel.webview.onDidReceiveMessage(async msg => {
           if (msg.type === 'setGlobalVars') {
             // Relay to VARIABLES panel
-            latestGlobalVars = Array.isArray(msg.variables) ? msg.variables : [];
-            updateVariablesPanel();
+            try {
+              const thisDocUri = editor.document.uri.toString();
+              const list = Array.isArray(msg.variables) ? msg.variables : [];
+              latestGlobalVarsByDoc.set(thisDocUri, list);
+              if (activeP5Panel === panel) {
+                updateVariablesPanel();
+              }
+            } catch { updateVariablesPanel(); }
             return;
           } else if (msg.type === 'updateGlobalVar') {
             // Forward update to VARIABLES panel (for live value update)
-            const idx = latestGlobalVars.findIndex(v => v.name === msg.name);
-            if (idx !== -1) {
-              latestGlobalVars[idx] = { ...latestGlobalVars[idx], value: msg.value };
-              updateVariablesPanel();
-            }
+            try {
+              const thisDocUri = editor.document.uri.toString();
+              const arr = latestGlobalVarsByDoc.get(thisDocUri) || [];
+              const idx = arr.findIndex(v => v.name === msg.name);
+              if (idx !== -1) {
+                arr[idx] = { ...arr[idx], value: msg.value };
+                latestGlobalVarsByDoc.set(thisDocUri, arr);
+                if (activeP5Panel === panel) updateVariablesPanel();
+              }
+            } catch { updateVariablesPanel(); }
             return;
           }
           // Focus the script tab if requested from the webview
