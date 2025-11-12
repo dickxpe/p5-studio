@@ -998,9 +998,6 @@ async function createHtml(
 <html>
 <head>
 ${scriptTags}
-<script id="user-code-script" data-user-code="true">
-${escapedCode}
-</script>
 <script>
 // Provide the sketch filename (without extension) to the webview
 window._p5SketchFileName = ${JSON.stringify(sketchFileName)};
@@ -1759,6 +1756,8 @@ window.addEventListener("message", e => {
       break;
     case 'requestGlobalsSnapshot':
       try {
+        // If we've already posted final values after setup, skip duplicate snapshot
+        if (window._p5PostedAfterSetup) break;
         if (window._p5GlobalVarTypes) {
           Object.keys(window._p5GlobalVarTypes).forEach(name => {
             try {
