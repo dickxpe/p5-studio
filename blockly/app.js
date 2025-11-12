@@ -278,6 +278,36 @@
     window.vscode = acquireVsCodeApi();
   }
 
+  // Patch Blockly JavaScript generator to place function definitions at the bottom.
+  // By default, Blockly prepends definitions (procedures) before the main code.
+  // We override finish() to append collected definitions after the generated code instead.
+  (function patchGeneratorFinishToAppendDefinitions() {
+    try {
+      const gen = javascript && javascript.javascriptGenerator ? javascript.javascriptGenerator : null;
+      if (!gen) return;
+      gen.finish = function (code) {
+        // Collect definitions accumulated during generation
+        let defsText = '';
+        try {
+          const defs = this.definitions_ || Object.create(null);
+          const parts = [];
+          for (const k in defs) {
+            if (Object.prototype.hasOwnProperty.call(defs, k) && defs[k]) {
+              parts.push(String(defs[k]));
+            }
+          }
+          // Reset for next generation pass
+          this.definitions_ = Object.create(null);
+          if (parts.length) {
+            // Ensure a blank line separation
+            defsText = '\n' + parts.join('\n');
+          }
+        } catch (e) { /* ignore */ }
+        return String(code || '') + defsText;
+      };
+    } catch (e) { /* ignore */ }
+  })();
+
   function getGeneratedCode() {
     // Temporarily inject a statement prefix that tags each top-level statement with its originating block id.
     const gen = javascript.javascriptGenerator;

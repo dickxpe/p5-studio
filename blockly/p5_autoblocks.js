@@ -2,17 +2,17 @@
  * Auto-generate Blockly blocks for all p5.js functions available in global mode.
  * Enumerates a temporary p5 instance and creates blocks: p5_auto_<name>
  */
-(function(){
+(function () {
   // Build an allowlist Set from window.ALLOWED_BLOCKS if present
   var _ALLOWED_SET = null;
   try {
     if (window && Array.isArray(window.ALLOWED_BLOCKS)) {
       _ALLOWED_SET = new Set(window.ALLOWED_BLOCKS);
     }
-  } catch(_) {}
-  function isAllowedBlock(type){
+  } catch (_) { }
+  function isAllowedBlock(type) {
     if (!_ALLOWED_SET) return true; // no filter
-    try { return _ALLOWED_SET.has(type); } catch(_) { return true; }
+    try { return _ALLOWED_SET.has(type); } catch (_) { return true; }
   }
   // --- Always register setup and draw blocks ---
   if (typeof Blockly !== 'undefined' && Blockly.Blocks) {
@@ -31,7 +31,7 @@
       const blockType = `p5_${fn}`;
       if (!Blockly.Blocks[blockType]) {
         Blockly.Blocks[blockType] = {
-          init: function() {
+          init: function () {
             this.appendDummyInput().appendField(fn + '()');
             this.appendStatementInput('DO').setCheck(null);
             this.setNextStatement(true, null);
@@ -43,7 +43,7 @@
       }
     });
     Blockly.Blocks['p5_draw'] = {
-      init: function() {
+      init: function () {
         this.appendDummyInput().appendField('draw');
         this.appendStatementInput('DO').setCheck(null);
         this.setNextStatement(true, null);
@@ -53,9 +53,9 @@
       }
     };
     Blockly.Blocks['p5_setup'] = {
-      init: function() {
-  this.appendDummyInput().appendField('setup');
-  this.appendStatementInput('DO').setCheck(null);
+      init: function () {
+        this.appendDummyInput().appendField('setup');
+        this.appendStatementInput('DO').setCheck(null);
         this.setNextStatement(true, null);
         this.setColour('#BA68C8');
         this.setTooltip('p5.js setup() function');
@@ -63,9 +63,9 @@
       }
     };
     Blockly.Blocks['p5_auto_draw'] = {
-      init: function() {
-  this.appendDummyInput().appendField('draw');
-  this.appendStatementInput('DO').setCheck(null);
+      init: function () {
+        this.appendDummyInput().appendField('draw');
+        this.appendStatementInput('DO').setCheck(null);
         this.setNextStatement(true, null);
         this.setColour('#BA68C8');
         this.setTooltip('p5.js draw() function');
@@ -74,7 +74,7 @@
     };
     try {
       console.log('[B5] Explicitly registered p5_setup and p5_draw blocks');
-    } catch(_) {}
+    } catch (_) { }
   }
   // Debug: log registration status of key blocks
   const keyBlocks = ['p5_draw', 'p5_setup', 'p5_createCanvas', 'p5_background'];
@@ -86,25 +86,25 @@
     }
   });
   // Prefer the function list from the type map provided by the host
-  function enumerateFromTypeMap(){
+  function enumerateFromTypeMap() {
     try {
       const catMap = (window && window.P5_CATEGORY_MAP) || {};
       const names = Object.keys(catMap || {});
       return names.filter(n => typeof n === 'string' && /^[a-z][A-Za-z0-9_]*$/.test(n));
-    } catch(_) { return []; }
+    } catch (_) { return []; }
   }
 
   const exclude = new Set([
-    'constructor','_setup','_draw','_onresize','_onmousedown','_onmouseup','_onmousemove','_onkeydown','_onkeyup','_onkeypress',
+    'constructor', '_setup', '_draw', '_onresize', '_onmousedown', '_onmouseup', '_onmousemove', '_onkeydown', '_onkeyup', '_onkeypress',
     // noisy or internal-ish
-    '__defineSetter__','__defineGetter__','__lookupGetter__','__lookupSetter__','hasOwnProperty','isPrototypeOf','propertyIsEnumerable','toLocaleString','toString','valueOf'
+    '__defineSetter__', '__defineGetter__', '__lookupGetter__', '__lookupSetter__', 'hasOwnProperty', 'isPrototypeOf', 'propertyIsEnumerable', 'toLocaleString', 'toString', 'valueOf'
   ]);
   const names = enumerateFromTypeMap();
 
   // Filter to likely p5 API: lowercase names, exclude internal/underscored
   const api = names.filter(n => typeof n === 'string' && /^[a-z][A-Za-z0-9_]*$/.test(n) && !n.startsWith('_') && !exclude.has(n));
   api.sort();
-  try { console.log('[B5] p5 auto-blocks: discovered functions =', api.length); } catch(_) {}
+  try { console.log('[B5] p5 auto-blocks: discovered functions =', api.length); } catch (_) { }
 
   // Build blocks and generators dynamically
   const blocks = [];
@@ -158,13 +158,13 @@
       };
       const inputNames = [];
       for (let i = 0; i < arity; i++) {
-        const label = (paramNames[i] || ('arg' + (i+1))).replace(/_/g, ' ');
+        const label = (paramNames[i] || ('arg' + (i + 1))).replace(/_/g, ' ');
         const keyM = 'message' + (i + 1);
         const keyA = 'args' + (i + 1);
         blockDef[keyM] = label + ' %1';
         const inpName = 'ARG' + i;
         inputNames.push(inpName);
-        blockDef[keyA] = [ { type: 'input_value', name: inpName } ];
+        blockDef[keyA] = [{ type: 'input_value', name: inpName }];
       }
       blocks.push(blockDef);
 
@@ -174,7 +174,7 @@
         if (!(window.javascript && javascript.javascriptGenerator)) return;
         const gen = javascript.javascriptGenerator;
         const Order = gen.Order || javascript.Order;
-        gen.forBlock[type] = function(block, generator){
+        gen.forBlock[type] = function (block, generator) {
           const args = [];
           // Only use inputs that actually exist on the block
           for (let i = 0; i < 32; i++) {
@@ -198,11 +198,11 @@
         // Defer registration until javascriptGenerator is loaded
         (window._p5AutoBlockGenQueue = window._p5AutoBlockGenQueue || []).push(registerGenerator);
       }
-// If any generators were queued before javascriptGenerator loaded, register them now
-if (window._p5AutoBlockGenQueue && window.javascript && javascript.javascriptGenerator) {
-  window._p5AutoBlockGenQueue.forEach(fn => { try { fn(); } catch(_) {} });
-  window._p5AutoBlockGenQueue = [];
-}
+      // If any generators were queued before javascriptGenerator loaded, register them now
+      if (window._p5AutoBlockGenQueue && window.javascript && javascript.javascriptGenerator) {
+        window._p5AutoBlockGenQueue.forEach(fn => { try { fn(); } catch (_) { } });
+        window._p5AutoBlockGenQueue = [];
+      }
 
       // Toolbox entry (respect allowlist)
       const inputs = {};
@@ -219,21 +219,21 @@ if (window._p5AutoBlockGenQueue && window.javascript && javascript.javascriptGen
         const category = catMap[name] || 'Uncategorized';
         if (!groupedContents[category]) groupedContents[category] = [];
         if (isAllowedBlock(type)) groupedContents[category].push(entry);
-      } catch(_) {}
-    } catch(_) {}
+      } catch (_) { }
+    } catch (_) { }
   });
 
-  try { if (blocks.length) Blockly.defineBlocksWithJsonArray(blocks); } catch(_) {}
+  try { if (blocks.length) Blockly.defineBlocksWithJsonArray(blocks); } catch (_) { }
 
   // ---- Globals and constants ----
   const NUM_GLOBALS = [
-    'width','height','frameCount','frameRate','deltaTime','mouseX','mouseY','pmouseX','pmouseY',
-    'winMouseX','winMouseY','pwinMouseX','pwinMouseY','accelerationX','accelerationY','accelerationZ',
-    'pAccelerationX','pAccelerationY','pAccelerationZ','rotationX','rotationY','rotationZ','pRotationX',
-    'pRotationY','pRotationZ','movedX','movedY','movedZ','displayWidth','displayHeight','windowWidth','windowHeight'
+    'width', 'height', 'frameCount', 'frameRate', 'deltaTime', 'mouseX', 'mouseY', 'pmouseX', 'pmouseY',
+    'winMouseX', 'winMouseY', 'pwinMouseX', 'pwinMouseY', 'accelerationX', 'accelerationY', 'accelerationZ',
+    'pAccelerationX', 'pAccelerationY', 'pAccelerationZ', 'rotationX', 'rotationY', 'rotationZ', 'pRotationX',
+    'pRotationY', 'pRotationZ', 'movedX', 'movedY', 'movedZ', 'displayWidth', 'displayHeight', 'windowWidth', 'windowHeight'
   ];
-  const BOOL_GLOBALS = [ 'mouseIsPressed','keyIsPressed' ];
-  const STR_GLOBALS = [ 'key','mouseButton' ];
+  const BOOL_GLOBALS = ['mouseIsPressed', 'keyIsPressed'];
+  const STR_GLOBALS = ['key', 'mouseButton'];
 
   // Do not filter known globals by current existence; many are defined after setup() or first draw.
   // Provide them unconditionally so users can wire them where appropriate.
@@ -249,13 +249,13 @@ if (window._p5AutoBlockGenQueue && window.javascript && javascript.javascriptGen
       try {
         if (/^[A-Z0-9_]+$/.test(n) && typeof window[n] !== 'function') {
           const val = window[n];
-          if (['number','string','boolean'].includes(typeof val)) CONSTS.push(n);
+          if (['number', 'string', 'boolean'].includes(typeof val)) CONSTS.push(n);
         }
-      } catch(_) {}
+      } catch (_) { }
     });
-  } catch(_) {}
+  } catch (_) { }
   // ensure some known ones
-  ['PI','TWO_PI','HALF_PI','QUARTER_PI','TAU','DEGREES','RADIANS','DEG_TO_RAD','RAD_TO_DEG'].forEach(n => { if (!CONSTS.includes(n)) CONSTS.push(n); });
+  ['PI', 'TWO_PI', 'HALF_PI', 'QUARTER_PI', 'TAU', 'DEGREES', 'RADIANS', 'DEG_TO_RAD', 'RAD_TO_DEG'].forEach(n => { if (!CONSTS.includes(n)) CONSTS.push(n); });
   CONSTS.sort();
   const constOpts = CONSTS.map(n => [n, n]);
 
@@ -263,43 +263,43 @@ if (window._p5AutoBlockGenQueue && window.javascript && javascript.javascriptGen
   if (numOpts.length) extraBlocks.push({
     type: 'p5_global_number',
     message0: 'p5 number %1',
-    args0: [ { type: 'field_dropdown', name: 'NAME', options: numOpts } ],
+    args0: [{ type: 'field_dropdown', name: 'NAME', options: numOpts }],
     output: 'Number',
-    colour: 30,
+    colour: '#ffd180',
     tooltip: 'p5 numeric global',
   });
   if (boolOpts.length) extraBlocks.push({
     type: 'p5_global_boolean',
     message0: 'p5 boolean %1',
-    args0: [ { type: 'field_dropdown', name: 'NAME', options: boolOpts } ],
+    args0: [{ type: 'field_dropdown', name: 'NAME', options: boolOpts }],
     output: 'Boolean',
-    colour: 30,
+    colour: '#ffd180',
     tooltip: 'p5 boolean global',
   });
   if (strOpts.length) extraBlocks.push({
     type: 'p5_global_string',
     message0: 'p5 string %1',
-    args0: [ { type: 'field_dropdown', name: 'NAME', options: strOpts } ],
+    args0: [{ type: 'field_dropdown', name: 'NAME', options: strOpts }],
     output: 'String',
-    colour: 30,
+    colour: '#ffd180',
     tooltip: 'p5 string global',
   });
   if (constOpts.length) extraBlocks.push({
     type: 'p5_constant',
     message0: 'p5 constant %1',
-    args0: [ { type: 'field_dropdown', name: 'NAME', options: constOpts } ],
+    args0: [{ type: 'field_dropdown', name: 'NAME', options: constOpts }],
     output: null,
-    colour: 10,
+    colour: '#ffd180',
     tooltip: 'p5 constant',
   });
 
-  try { if (extraBlocks.length) Blockly.defineBlocksWithJsonArray(extraBlocks); } catch(_) {}
+  try { if (extraBlocks.length) Blockly.defineBlocksWithJsonArray(extraBlocks); } catch (_) { }
   if (window.javascript && javascript.javascriptGenerator) {
     const gen = javascript.javascriptGenerator;
-    gen.forBlock['p5_global_number'] = (b)=> [b.getFieldValue('NAME') || '0', gen.ORDER_ATOMIC];
-    gen.forBlock['p5_global_boolean'] = (b)=> [b.getFieldValue('NAME') || 'false', gen.ORDER_ATOMIC];
-    gen.forBlock['p5_global_string'] = (b)=> [b.getFieldValue('NAME') || "''", gen.ORDER_ATOMIC];
-    gen.forBlock['p5_constant'] = (b)=> [b.getFieldValue('NAME') || '0', gen.ORDER_ATOMIC];
+    gen.forBlock['p5_global_number'] = (b) => [b.getFieldValue('NAME') || '0', gen.ORDER_ATOMIC];
+    gen.forBlock['p5_global_boolean'] = (b) => [b.getFieldValue('NAME') || 'false', gen.ORDER_ATOMIC];
+    gen.forBlock['p5_global_string'] = (b) => [b.getFieldValue('NAME') || "''", gen.ORDER_ATOMIC];
+    gen.forBlock['p5_constant'] = (b) => [b.getFieldValue('NAME') || '0', gen.ORDER_ATOMIC];
   }
 
   // Add a toolbox category at the end
@@ -330,12 +330,12 @@ if (window._p5AutoBlockGenQueue && window.javascript && javascript.javascriptGen
                 .map(t => ({ kind: 'block', type: t }));
             }
             contents.push(entry);
-          } catch(_) {}
+          } catch (_) { }
         });
         window.toolbox.contents = contents;
         // Update toolbox if workspace exists
-        try { const ws = Blockly.getMainWorkspace && Blockly.getMainWorkspace(); if (ws && ws.updateToolbox) ws.updateToolbox(window.toolbox); } catch(_) {}
-      } catch(_) {}
+        try { const ws = Blockly.getMainWorkspace && Blockly.getMainWorkspace(); if (ws && ws.updateToolbox) ws.updateToolbox(window.toolbox); } catch (_) { }
+      } catch (_) { }
       return;
     }
     // Grouped categories based on p5 reference
@@ -360,7 +360,7 @@ if (window._p5AutoBlockGenQueue && window.javascript && javascript.javascriptGen
       'Constants': '#E0E0E0'
     };
     const orderedCategoryNames = [
-      'Structure','Color','Shape','Transform','Environment','Rendering','Image','Typography','Math','Data','IO','DOM','Events','Utilities','WebGL','Core','Uncategorized'
+      'Structure', 'Color', 'Shape', 'Transform', 'Environment', 'Rendering', 'Image', 'Typography', 'Math', 'Data', 'IO', 'DOM', 'Events', 'Utilities', 'WebGL', 'Core', 'Uncategorized'
     ];
     // Create categories in a stable order, skipping empties
     orderedCategoryNames.forEach(cat => {
@@ -383,7 +383,7 @@ if (window._p5AutoBlockGenQueue && window.javascript && javascript.javascriptGen
     //   contents: categoryContents
     // });
     // Globals/constants category
- //   const globalsCategory = { kind: 'category', name: 'p5 globals & constants', colour: '#ffd180', contents: [] };
+    //   const globalsCategory = { kind: 'category', name: 'p5 globals & constants', colour: '#ffd180', contents: [] };
     // if (numOpts.length && isAllowedBlock('p5_global_number')) globalsCategory.contents.push({ kind: 'block', type: 'p5_global_number' });
     // if (boolOpts.length && isAllowedBlock('p5_global_boolean')) globalsCategory.contents.push({ kind: 'block', type: 'p5_global_boolean' });
     // if (strOpts.length && isAllowedBlock('p5_global_string')) globalsCategory.contents.push({ kind: 'block', type: 'p5_global_string' });
@@ -396,7 +396,7 @@ if (window._p5AutoBlockGenQueue && window.javascript && javascript.javascriptGen
         const existingNames = new Set();
         try {
           window.toolbox.contents.forEach(c => { if (c && c.kind === 'category' && c.name) existingNames.add(c.name); });
-        } catch(_) {}
+        } catch (_) { }
         extras.forEach(cat => {
           try {
             if (!cat || typeof cat.name !== 'string') return;
@@ -414,10 +414,10 @@ if (window._p5AutoBlockGenQueue && window.javascript && javascript.javascriptGen
               .map(t => ({ kind: 'block', type: t }));
             window.toolbox.contents.push(entry);
             existingNames.add(cat.name);
-          } catch(_) {}
+          } catch (_) { }
         });
       }
-    } catch(_) {}
+    } catch (_) { }
 
     // Reorder categories to match the JSON order if provided
     try {
@@ -448,7 +448,7 @@ if (window._p5AutoBlockGenQueue && window.javascript && javascript.javascriptGen
         nonCats.forEach(nc => newContents.push(nc));
         window.toolbox.contents = newContents;
       }
-    } catch(_) {}
+    } catch (_) { }
 
     // Apply JSON category swatch colors (override existing category colours when provided)
     try {
@@ -461,10 +461,10 @@ if (window._p5AutoBlockGenQueue && window.javascript && javascript.javascriptGen
             if (cat && cat.kind === 'category' && cat.name && colorByName.has(cat.name)) {
               cat.colour = colorByName.get(cat.name);
             }
-          } catch(_) {}
+          } catch (_) { }
         });
       }
-    } catch(_) {}
+    } catch (_) { }
     // Filter any pre-existing static toolbox blocks by allowlist
     try {
       if (_ALLOWED_SET && window.toolbox && Array.isArray(window.toolbox.contents)) {
@@ -473,11 +473,11 @@ if (window._p5AutoBlockGenQueue && window.javascript && javascript.javascriptGen
           cat.contents = cat.contents.filter(e => !e || e.kind !== 'block' || isAllowedBlock(e.type));
         });
       }
-    } catch(_) {}
+    } catch (_) { }
     // If a workspace already exists, update its toolbox now
     try {
       const ws = Blockly.getMainWorkspace && Blockly.getMainWorkspace();
       if (ws && ws.updateToolbox) ws.updateToolbox(window.toolbox);
-    } catch(_) {}
-  } catch(_) {}
+    } catch (_) { }
+  } catch (_) { }
 })();

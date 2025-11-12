@@ -57,11 +57,9 @@ function applyStepHighlight(editor: vscode.TextEditor, line: number) {
   const lineIdx = Math.max(0, Math.min(editor.document.lineCount - 1, line - 1));
   const range = new vscode.Range(lineIdx, 0, lineIdx, editor.document.lineAt(lineIdx).text.length);
   editor.setDecorations(deco, [range]);
-  try {
-    if (vscode.window.activeTextEditor && vscode.window.activeTextEditor === editor) {
-      editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
-    }
-  } catch { }
+  // Always scroll the editor to reveal the highlighted line, even if the editor isn't the active one.
+  // This updates the view in place without stealing focus.
+  try { editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport); } catch { }
 }
 
 function showAndTrackOutputChannel(ch: vscode.OutputChannel) {
@@ -3091,6 +3089,12 @@ export function activate(context: vscode.ExtensionContext) {
       updateP5WebviewTabContext();
     })
   );
+  // Also listen for active tab group changes (captures focus changes between webviews)
+  context.subscriptions.push(
+    vscode.window.tabGroups.onDidChangeTabGroups(() => {
+      updateP5WebviewTabContext();
+    })
+  );
   // Listen for active editor changes (for when webview is focused)
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(() => {
@@ -4686,6 +4690,10 @@ export function activate(context: vscode.ExtensionContext) {
         // nothing else to cleanup here
         try { await removeFromRestore(RESTORE_BLOCKLY_KEY, doc.fileName); } catch { }
       });
+      // When Blockly panel gains focus, recompute context keys so debug buttons are hidden.
+      blocklyPanel.onDidChangeViewState(() => {
+        try { updateP5WebviewTabContext(); } catch { }
+      });
       blocklyPanel.webview.html = getBlocklyHtml(blocklyPanel);
       // After setting HTML, send the resolved theme to the webview so it can apply
       try {
@@ -5203,6 +5211,12 @@ export function activate(context: vscode.ExtensionContext) {
     if (!panel) return;
     const fileName = path.basename(document.fileName);
     const outputChannel = getOrCreateOutputChannel(docUri, fileName);
+
+    // Proactively clear any Blockly block highlight for this document before reloading
+    try {
+      const blk = blocklyPanelForDocument.get(docUri);
+      if (blk) blk.webview.postMessage({ type: 'clearBlocklyHighlight' });
+    } catch { }
 
     // Capture and clear the pending reason (typing/save/command)
     const reason = _pendingReloadReason;
@@ -5871,6 +5885,11 @@ export function activate(context: vscode.ExtensionContext) {
             if (ed && ed.document && ed.document.uri.toString() === editor.document.uri.toString()) {
               clearStepHighlight(ed);
             }
+            // Also clear any Blockly block highlight tied to this document
+            try {
+              const blk = blocklyPanelForDocument.get(editor.document.uri.toString());
+              if (blk) blk.webview.postMessage({ type: 'clearBlocklyHighlight' });
+            } catch { }
             (panel as any)._steppingActive = false;
             if ((panel as any)._autoStepTimer) {
               try { clearInterval((panel as any)._autoStepTimer); } catch { }
@@ -6489,6 +6508,11 @@ export function activate(context: vscode.ExtensionContext) {
           try {
             const edToClear = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === docUri);
             if (edToClear) clearStepHighlight(edToClear);
+          } catch { }
+          // Also clear any Blockly block highlight for this document when the LIVE P5 panel closes
+          try {
+            const blk = blocklyPanelForDocument.get(docUri);
+            if (blk) blk.webview.postMessage({ type: 'clearBlocklyHighlight' });
           } catch { }
           (panel as any)._steppingActive = false;
           // Stop auto-step timer if running
