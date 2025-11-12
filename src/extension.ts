@@ -191,6 +191,8 @@ const RESERVED_GLOBALS = new Set([
   "RGB", "HSB", "HSL",
   // Geometry modes
   "CENTER", "CORNER", "CORNERS", "RADIUS",
+  //Arc mode
+  "OPEN", "CHORD", "PIE",
   //Close
   "CLOSE",
   // Text alignment and vertical alignment
@@ -884,15 +886,8 @@ async function createHtml(
   const showDebugButton = vscode.workspace.getConfiguration('P5Studio').get<boolean>('ShowDebugButton', true);
   const showFPS = vscode.workspace.getConfiguration('P5Studio').get<boolean>('showFPS', false);
 
-  const showReloadButton = vscode.workspace.getConfiguration('P5Studio').get<boolean>('showReloadButton', true);
-
-  // Add: showRecordButton setting
-  // const showRecordButton = vscode.workspace
-  //   .getConfiguration('P5Studio')
-  //   .get<boolean>('showRecordButton', true);
-
-  // Show record button based on setting only (no longer require draw())
-  const showRecordButton = vscode.workspace.getConfiguration('P5Studio').get<boolean>('showRecordButton', true);
+  // Note: The in-webview toolbar has been removed; showReloadButton/showRecordButton settings are deprecated
+  // and no longer read. Buttons are provided via VS Code title bar commands instead.
 
   // Determine initial capture visibility for this panel from saved state
   let initialCaptureVisible = false;
@@ -956,9 +951,9 @@ async function createHtml(
 
   // In createHtml, get debounceDelay from config and pass to webview
   const debounceDelay = vscode.workspace.getConfiguration('P5Studio').get<number>('debounceDelay', 500);
-  const varControlDebounceDelay = vscode.workspace.getConfiguration('P5Studio').get<number>('varControlDebounceDelay', 300);
-  // Get varDrawerDefaultState from config
-  const varDrawerDefaultState = vscode.workspace.getConfiguration('P5Studio').get<string>('varDrawerDefaultState', 'open');
+  // Use the new setting key only (no backward compatibility)
+  const cfgVarDelay = vscode.workspace.getConfiguration('P5Studio');
+  const varControlDebounceDelay = cfgVarDelay.get<number>('variablePanelDebounceDelay', 500);
 
   // Get the webview URI for the media folder (if it exists)
   let mediaWebviewUriPrefix = '';
@@ -1386,7 +1381,6 @@ function debounceWebview(fn, delay) {
 }
 window._p5DebounceDelay = ${debounceDelay};
 window._p5VarControlDebounceDelay = ${varControlDebounceDelay};
-window._p5VarDrawerDefaultState = "${varDrawerDefaultState}";
 
 // Notify extension that webview is loaded
 window.addEventListener('DOMContentLoaded', () => {
@@ -4063,16 +4057,27 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.openP5Ref', () => {
-      vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/`));
+      try {
+        const version = vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11';
+        const base = (version === '2.1') ? 'https://beta.p5js.org/reference/' : 'https://p5js.org/reference/';
+        vscode.env.openExternal(vscode.Uri.parse(base));
+      } catch {
+        vscode.env.openExternal(vscode.Uri.parse('https://p5js.org/reference/'));
+      }
     })
   );
 
-  // Convenience: open the JSON that defines the Blockly toolbox
+  // Convenience: open the JSON that defines the Blockly toolbox (version-aware)
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.open-blockly-json', async () => {
       try {
-        const jsonPath = path.join(context.extensionPath, 'blockly', 'blockly_categories.json');
-        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(jsonPath));
+        const selectedP5Version = vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11';
+        // Prefer assets/<version>/blockly_categories.json; fallback to assets/1.11; finally attempt legacy path if present
+        const versioned = path.join(context.extensionPath, 'assets', selectedP5Version, 'blockly_categories.json');
+        const fallbackV1 = path.join(context.extensionPath, 'assets', '1.11', 'blockly_categories.json');
+        const legacy = path.join(context.extensionPath, 'blockly', 'blockly_categories.json');
+        const chosen = fs.existsSync(versioned) ? versioned : (fs.existsSync(fallbackV1) ? fallbackV1 : legacy);
+        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(chosen));
         await vscode.window.showTextDocument(doc, { preview: false });
       } catch (e) {
         vscode.window.showErrorMessage('Could not open blockly_categories.json');
@@ -4249,12 +4254,16 @@ export function activate(context: vscode.ExtensionContext) {
       ? webview.asWebviewUri(vscode.Uri.file(path.join(vendorBlocklyRoot, 'msg', 'en.js'))).toString()
       : 'https://unpkg.com/blockly/msg/en.js';
 
-    // Try to read the exported allowlist of blocks and extra categories from blockly_categories.json
+    // Try to read the exported allowlist of blocks and extra categories from assets/<version>/blockly_categories.json
     let allowedBlocksScript = '';
     let extraCategoriesScript = '';
     try {
-      const allowPath = path.join(context.extensionPath, 'blockly', 'blockly_categories.json');
-      if (fs.existsSync(allowPath)) {
+      const selectedP5Version = vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11';
+      const versioned = path.join(context.extensionPath, 'assets', selectedP5Version, 'blockly_categories.json');
+      const fallbackV1 = path.join(context.extensionPath, 'assets', '1.11', 'blockly_categories.json');
+      const legacy = path.join(context.extensionPath, 'blockly', 'blockly_categories.json');
+      const allowPath = fs.existsSync(versioned) ? versioned : (fs.existsSync(fallbackV1) ? fallbackV1 : legacy);
+      if (allowPath && fs.existsSync(allowPath)) {
         const txt = fs.readFileSync(allowPath, 'utf8');
         try {
           const obj = JSON.parse(txt);
@@ -4276,8 +4285,8 @@ export function activate(context: vscode.ExtensionContext) {
             extraCats = obj.categories;
           }
           const arr = Array.from(allowed);
-          allowedBlocksScript = `<script nonce="${nonce}">\nwindow.ALLOWED_BLOCKS = ${JSON.stringify(arr)};\n</script>`;
-          extraCategoriesScript = `<script nonce="${nonce}">\nwindow.EXTRA_TOOLBOX_CATEGORIES = ${JSON.stringify(extraCats)};\n</script>`;
+          allowedBlocksScript = `<script nonce="${nonce}">\nwindow.ALLOWED_BLOCKS = ${JSON.stringify(arr)};\n<\/script>`;
+          extraCategoriesScript = `<script nonce="${nonce}">\nwindow.EXTRA_TOOLBOX_CATEGORIES = ${JSON.stringify(extraCats)};\n<\/script>`;
         } catch { /* ignore parse errors */ }
       }
     } catch { /* ignore file errors */ }
@@ -4675,7 +4684,8 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.Uri.file(path.join(context.extensionPath, 'vendor')),
             // Allow both legacy and versioned assets directories
             vscode.Uri.file(path.join(context.extensionPath, 'assets')),
-            vscode.Uri.file(path.join(context.extensionPath, 'assets', '1.11'))
+            vscode.Uri.file(path.join(context.extensionPath, 'assets', '1.11')),
+            vscode.Uri.file(path.join(context.extensionPath, 'assets', (vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11')))
           ]
         }
       );
@@ -6703,7 +6713,13 @@ export function activate(context: vscode.ExtensionContext) {
       const editor = vscode.window.activeTextEditor;
       if (editor && editor.selection && !editor.selection.isEmpty) {
         const search = encodeURIComponent(editor.document.getText(editor.selection));
-        vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/p5/${search}`));
+        try {
+          const version = vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11';
+          const base = (version === '2.1') ? 'https://beta.p5js.org/reference/' : 'https://p5js.org/reference/';
+          vscode.env.openExternal(vscode.Uri.parse(`${base}p5/${search}`));
+        } catch {
+          vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/p5/${search}`));
+        }
       }
     })
   );
@@ -6857,8 +6873,8 @@ text("P5", 50, 52);`;
     if (e.affectsConfiguration('P5Studio.debounceDelay')) {
       debounceMap.clear();
     }
-    if (e.affectsConfiguration('P5Studio.varControlDebounceDelay')) {
-      const newDelay = vscode.workspace.getConfiguration('P5Studio').get<number>('varControlDebounceDelay', 300);
+    if (e.affectsConfiguration('P5Studio.variablePanelDebounceDelay')) {
+      const newDelay = vscode.workspace.getConfiguration('P5Studio').get<number>('variablePanelDebounceDelay', 500);
       for (const [, panel] of webviewPanelMap.entries()) {
         panel.webview.postMessage({ type: 'updateVarDebounceDelay', value: newDelay });
       }

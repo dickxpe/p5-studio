@@ -42,7 +42,7 @@ LIVE P5 LAUNCHER is a Visual Studio Code extension that brings live coding and r
 
 3. **Live Coding:**
    - Edit your code and see changes instantly in the webview panel.
-   - Adjust global variables using the controls at the bottom of the panel.
+   - Adjust global variables from the VARIABLES panel.
    - Errors will appear as overlays and in a dedicated output channel per sketch.
 
 4. **Reload Options:**
@@ -68,10 +68,8 @@ All settings are under the `P5 Studio` namespace. You can configure these in you
 | `P5Studio.reloadOnSave` | boolean | `true` | Automatically reload the P5 webpanel when saving the file. |
 | `P5Studio.reloadWhileTyping` | boolean | `true` | Automatically reload the P5 webpanel as you type. |
 | `P5Studio.debounceDelay` | number | `300` | Debounce delay in milliseconds for live reload while typing. |
-| `P5Studio.varDrawerDefaultState` | string (`open`, `collapsed`, `hidden`) | `collapsed` | Default state of the global variable drawer in the P5 panel. |
-| `P5Studio.varControlDebounceDelay` | number | `500` | Debounce delay (ms) for global variable drawer input changes before applying them to the sketch. |
-| `P5Studio.showReloadButton` | boolean | `true` | Show the reload button in the webview toolbar. |
-| `P5Studio.showRecordButton` | boolean | `false` | Show the record (capture) button in the webview toolbar. |
+| `P5Studio.showRecordButton` | boolean | `true` | Show the Record (Toggle Capture Panel) button in the editor title bar for LIVE P5 panels. |
+| `P5Studio.variablePanelDebounceDelay` | number | `500` | Debounce delay (ms) for VARIABLE panel input changes before applying them to the sketch. |
 | `P5Studio.SingleP5Panel` | boolean | `true` | If enabled, only one P5 webpanel can be open at a time. Opening a new panel closes all others. |
 | `P5Studio.showSetupNotification` | boolean | `true` | Show a setup prompt when the workspace has no P5 marker (`.p5`). |
 | `P5Studio.oscRemoteAddress` | string | `127.0.0.1` | OSC remote address (host to send OSC messages to). |

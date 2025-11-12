@@ -1,0 +1,489 @@
+{
+  "categories": [
+       {
+      "name": "p5 · Quick Start",
+      "colour": "#64B5F6",
+      "blocks": [
+        "p5_setup",
+        "p5_draw",
+        "p5_auto_createCanvas",
+        "p5_auto_background",
+        "p5_auto_line",
+        "p5_auto_circle",
+        "p5_auto_rect",
+        "p5_auto_fill",
+        "p5_auto_stroke",
+        "p5_auto_noFill",
+        "p5_auto_noStroke",
+        "p5_auto_strokeWeight"
+      ]
+    },
+     {
+      "name": "p5 · Globals & Constants",
+      "colour": "#ffd180",
+      "blocks": [
+        "p5_global_number",
+        "p5_global_boolean",
+        "p5_global_string",
+        "p5_constant"
+      ]
+    },
+    {
+      "name": "p5 · Events",
+      "colour": "#FF8A65",
+      "blocks": [
+        "p5_setup",
+        "p5_draw",
+        "p5_windowResized",
+           { "type": "p5_auto_keyPressed", "event": true },
+         { "type": "p5_auto_keyReleased", "event": true },
+         { "type": "p5_auto_keyTyped", "event": true },
+         { "type": "p5_auto_mouseClicked", "event": true },
+         { "type": "p5_auto_mouseDragged", "event": true },
+         { "type": "p5_auto_mouseMoved", "event": true },
+         { "type": "p5_auto_mousePressed", "event": true },
+         { "type": "p5_auto_mouseReleased", "event": true },
+         { "type": "p5_auto_mouseWheel", "event": true },
+        { "type": "p5_auto_doubleClicked", "event": true }
+      ]
+    },
+    {
+      "name": "Logic",
+  "colour": "#5b80a5",
+      "blocks": [
+        "controls_if",
+        "logic_compare",
+        "logic_operation",
+        "logic_negate",
+        "logic_ternary"
+      ]
+    },
+    {
+      "name": "Loops",
+     "colour": "#5ba55b",
+      "blocks": [
+        "controls_repeat_ext",
+        "controls_whileUntil",
+        "controls_for",
+        "controls_forEach",
+        "controls_flow_statements"
+      ]
+    },
+    {
+      "name": "Math",
+     "colour": "#5b67a5",
+      "blocks": [
+        "math_arithmetic",
+        "math_single",
+        "math_trig",
+        "math_constant",
+        "math_number_property",
+        "math_round",
+        "math_on_list",
+        "math_modulo",
+        "math_constrain",
+        "math_random_int",
+        "math_random_float",
+        "math_atan2"
+      ]
+    },
+    {
+      "name": "Text",
+    "colour": "#5ba58c",
+      "blocks": [
+        "text_join",
+        "text_append",
+        "text_length",
+        "text_isEmpty",
+        "text_indexOf",
+        "text_charAt",
+        "text_getSubstring",
+        "text_changeCase",
+        "text_trim",
+        "text_count",
+        "text_replace",
+        "text_reverse"
+      ]
+    },
+    {
+      "name": "Lists",
+      "colour": "#745ba5",
+      "blocks": [
+        "lists_create_with",
+        "lists_create_with",
+        "lists_repeat",
+        "lists_length",
+        "lists_isEmpty",
+        "lists_indexOf",
+        "lists_getIndex",
+        "lists_setIndex",
+        "lists_getSublist",
+        "lists_split",
+        "lists_sort",
+        "lists_reverse"
+      ]
+    },
+    {
+      "name": "Values",
+"colour": "#5ec453",
+      "blocks": [
+        "math_number",
+        "text",
+        "logic_boolean"
+      ]
+    },
+    {
+      "name": "Variables",
+     "colour": "#a55b80",
+      "custom": "VARIABLE",
+      "blocks": []
+    },
+    {
+      "name": "Functions",
+  "colour": "#995ba5",
+      "custom": "PROCEDURE",
+      "blocks": []
+    },
+    {
+      "name": "Debug",
+      "colour": "#ec43f5",
+      "blocks": [
+        "output",
+        "inputprompt"
+      ]
+    },
+    {
+      "name": "p5 · Color",
+      "colour": "#F06292",
+      "blocks": [
+        "p5_auto_alpha",
+        "p5_auto_background",
+        "p5_auto_blue",
+        "p5_auto_brightness",
+        "p5_auto_clear",
+        "p5_auto_color",
+        "p5_auto_colorMode",
+        "p5_auto_erase",
+        "p5_auto_fill",
+        "p5_auto_green",
+        "p5_auto_hue",
+        "p5_auto_lerpColor",
+        "p5_auto_lightness",
+        "p5_auto_noErase",
+        "p5_auto_noFill",
+        "p5_auto_noStroke",
+        "p5_auto_red",
+        "p5_auto_saturation",
+        "p5_auto_stroke"
+      ]
+    },
+    {
+      "name": "p5 · Shape",
+      "colour": "#64B5F6",
+      "blocks": [
+        "p5_auto_arc",
+        "p5_auto_beginContour",
+        "p5_auto_beginShape",
+        "p5_auto_bezier",
+        "p5_auto_bezierDetail",
+        "p5_auto_bezierPoint",
+        "p5_auto_bezierTangent",
+        "p5_auto_bezierVertex",
+        "p5_auto_circle",
+        "p5_auto_curve",
+        "p5_auto_curveDetail",
+        "p5_auto_curvePoint",
+        "p5_auto_curveTangent",
+        "p5_auto_curveTightness",
+        "p5_auto_curveVertex",
+        "p5_auto_ellipse",
+        "p5_auto_ellipseMode",
+        "p5_auto_endContour",
+        "p5_auto_endShape",
+        "p5_auto_line",
+        "p5_auto_noSmooth",
+        "p5_auto_point",
+        "p5_auto_quad",
+        "p5_auto_quadraticVertex",
+        "p5_auto_rect",
+        "p5_auto_rectMode",
+        "p5_auto_smooth",
+        "p5_auto_square",
+        "p5_auto_strokeCap",
+        "p5_auto_strokeJoin",
+        "p5_auto_strokeWeight",
+        "p5_auto_triangle",
+        "p5_auto_vertex"
+      ]
+    },
+    {
+      "name": "p5 · Image",
+      "colour": "#A1887F",
+      "blocks": [
+        "p5_auto_blend",
+        "p5_auto_copy",
+        "p5_auto_createImage",
+        "p5_auto_filter",
+        "p5_auto_get",
+        "p5_auto_image",
+        "p5_auto_imageMode",
+        "p5_auto_loadImage",
+        "p5_auto_loadPixels",
+        "p5_auto_noTint",
+        "p5_auto_saveCanvas",
+        "p5_auto_saveFrames",
+        "p5_auto_set",
+        "p5_auto_tint",
+        "p5_auto_updatePixels"
+      ]
+    },
+    {
+      "name": "p5 · Typography",
+      "colour": "#4FC3F7",
+      "blocks": [
+        "p5_auto_loadFont",
+        "p5_auto_text",
+        "p5_auto_textAlign",
+        "p5_auto_textAscent",
+        "p5_auto_textDescent",
+        "p5_auto_textFont",
+        "p5_auto_textLeading",
+        "p5_auto_textSize",
+        "p5_auto_textStyle",
+        "p5_auto_textWidth"
+      ]
+    },
+    {
+      "name": "p5 · Math",
+      "colour": "#9575CD",
+      "blocks": [
+        "p5_auto_abs",
+        "p5_auto_acos",
+        "p5_auto_angleMode",
+        "p5_auto_asin",
+        "p5_auto_atan",
+        "p5_auto_atan2",
+        "p5_auto_ceil",
+        "p5_auto_constrain",
+        "p5_auto_cos",
+        "p5_auto_createVector",
+        "p5_auto_degrees",
+        "p5_auto_dist",
+        "p5_auto_exp",
+        "p5_auto_floor",
+        "p5_auto_fract",
+        "p5_auto_lerp",
+        "p5_auto_log",
+        "p5_auto_mag",
+        "p5_auto_map",
+        "p5_auto_max",
+        "p5_auto_min",
+        "p5_auto_noise",
+        "p5_auto_noiseDetail",
+        "p5_auto_noiseSeed",
+        "p5_auto_norm",
+        "p5_auto_pow",
+        "p5_auto_radians",
+        "p5_auto_random",
+        "p5_auto_randomGaussian",
+        "p5_auto_randomSeed",
+        "p5_auto_round",
+        "p5_auto_sin",
+        "p5_auto_sq",
+        "p5_auto_sqrt",
+        "p5_auto_tan"
+      ]
+    },
+    {
+      "name": "p5 · Data",
+      "colour": "#FFD54F",
+      "blocks": [
+        "p5_auto_clearStorage",
+        "p5_auto_createNumberDict",
+        "p5_auto_createStringDict",
+        "p5_auto_getItem",
+        "p5_auto_removeItem",
+        "p5_auto_storeItem"
+      ]
+    },
+    {
+      "name": "p5 · IO",
+      "colour": "#90A4AE",
+      "blocks": [
+        "p5_auto_createWriter",
+        "p5_auto_httpDo",
+        "p5_auto_httpGet",
+        "p5_auto_httpPost",
+        "p5_auto_loadBytes",
+        "p5_auto_loadJSON",
+        "p5_auto_loadStrings",
+        "p5_auto_loadTable",
+        "p5_auto_loadXML",
+        "p5_auto_save",
+        "p5_auto_saveJSON",
+        "p5_auto_saveStrings",
+        "p5_auto_saveTable"
+      ]
+    },
+    {
+      "name": "p5 · DOM",
+      "colour": "#FFB74D",
+      "blocks": [
+        "p5_auto_addClass",
+        "p5_auto_attribute",
+        "p5_auto_center",
+        "p5_auto_changed",
+        "p5_auto_child",
+        "p5_auto_createA",
+        "p5_auto_createAudio",
+        "p5_auto_createButton",
+        "p5_auto_createCapture",
+        "p5_auto_createCheckbox",
+        "p5_auto_createColorPicker",
+        "p5_auto_createDiv",
+        "p5_auto_createElement",
+        "p5_auto_createFileInput",
+        "p5_auto_createImg",
+        "p5_auto_createInput",
+        "p5_auto_createP",
+        "p5_auto_createRadio",
+        "p5_auto_createSelect",
+        "p5_auto_createSlider",
+        "p5_auto_createSpan",
+        "p5_auto_createVideo",
+        "p5_auto_drop",
+        "p5_auto_hasClass",
+        "p5_auto_hide",
+        "p5_auto_html",
+        "p5_auto_input",
+        "p5_auto_position",
+        "p5_auto_remove",
+        "p5_auto_removeAttribute",
+        "p5_auto_removeClass",
+        "p5_auto_removeElements",
+        "p5_auto_select",
+        "p5_auto_selectAll",
+        "p5_auto_show",
+        "p5_auto_size",
+        "p5_auto_style",
+        "p5_auto_toggleClass",
+        "p5_auto_value"
+      ]
+    },
+    {
+      "name": "p5 · Input",
+      "colour": "#FF8A65",
+      "blocks": [
+         { "type": "p5_auto_deviceMoved", "event": true },
+         { "type": "p5_auto_deviceShaken", "event": true },
+         { "type": "p5_auto_deviceTurned", "event": true },
+         { "type": "p5_auto_keyPressed", "event": true },
+         { "type": "p5_auto_keyReleased", "event": true },
+         { "type": "p5_auto_keyTyped", "event": true },
+         { "type": "p5_auto_mouseClicked", "event": true },
+         { "type": "p5_auto_mouseDragged", "event": true },
+         { "type": "p5_auto_mouseMoved", "event": true },
+         { "type": "p5_auto_mousePressed", "event": true },
+         { "type": "p5_auto_mouseReleased", "event": true },
+         { "type": "p5_auto_mouseWheel", "event": true, "params": ["event"] },
+        { "type": "p5_auto_doubleClicked", "event": true },
+         { "type": "p5_auto_touchEnded", "event": true },
+         { "type": "p5_auto_touchMoved", "event": true },
+         { "type": "p5_auto_touchStarted", "event": true },
+        "p5_auto_exitPointerLock",
+        "p5_auto_keyIsDown",
+        "p5_auto_requestPointerLock",
+        "p5_auto_setMoveThreshold",
+        "p5_auto_setShakeThreshold"
+      ]
+    },
+    {
+      "name": "p5 · Utilities",
+      "colour": "#4DB6AC",
+      "blocks": [
+        "p5_auto_append",
+        "p5_auto_arrayCopy",
+        "p5_auto_boolean",
+        "p5_auto_byte",
+        "p5_auto_char",
+        "p5_auto_concat",
+        "p5_auto_day",
+        "p5_auto_float",
+        "p5_auto_hex",
+        "p5_auto_hour",
+        "p5_auto_int",
+        "p5_auto_join",
+        "p5_auto_match",
+        "p5_auto_matchAll",
+        "p5_auto_millis",
+        "p5_auto_minute",
+        "p5_auto_month",
+        "p5_auto_nf",
+        "p5_auto_nfc",
+        "p5_auto_nfp",
+        "p5_auto_nfs",
+        "p5_auto_reverse",
+        "p5_auto_second",
+        "p5_auto_shorten",
+        "p5_auto_shuffle",
+        "p5_auto_sort",
+        "p5_auto_splice",
+        "p5_auto_split",
+        "p5_auto_splitTokens",
+        "p5_auto_str",
+        "p5_auto_subset",
+        "p5_auto_trim",
+        "p5_auto_unchar",
+        "p5_auto_unhex",
+        "p5_auto_year"
+      ]
+    },
+    
+    {
+      "name": "p5 · Core",
+      "colour": "#90CAF9",
+      "blocks": [
+        "p5_auto_applyMatrix",
+        "p5_auto_blendMode",
+        "p5_auto_createCanvas",
+        "p5_auto_createGraphics",
+        "p5_auto_cursor",
+        "p5_auto_displayDensity",
+        "p5_auto_frameRate",
+        "p5_auto_fullscreen",
+        "p5_auto_getURL",
+        "p5_auto_getURLParams",
+        "p5_auto_getURLPath",
+        "p5_auto_isLooping",
+        "p5_auto_loop",
+        "p5_auto_noCanvas",
+        "p5_auto_noCursor",
+        "p5_auto_noLoop",
+        "p5_auto_p5",
+        "p5_auto_pixelDensity",
+        "p5_auto_pop",
+        "p5_auto_print",
+        "p5_auto_push",
+        "p5_auto_redraw",
+        "p5_auto_resetMatrix",
+        "p5_auto_resizeCanvas",
+        "p5_auto_rotate",
+        "p5_auto_rotateX",
+        "p5_auto_rotateY",
+        "p5_auto_rotateZ",
+        "p5_auto_scale",
+        "p5_auto_shearX",
+        "p5_auto_shearY",
+        "p5_auto_translate"
+      ]
+    },
+    {
+      "name": "OSC",
+      "colour": "#90A4AE",
+      "blocks": [
+        "p5_sendOSC",
+        { "type": "p5_receivedOSC", "event": true }
+      ]
+    }
+  ]
+}
