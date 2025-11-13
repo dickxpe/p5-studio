@@ -20,11 +20,12 @@ import { registerVariablesView } from './views/variablesView';
 import { registerBlockly, BlocklyApi } from './blockly/blocklyPanel';
 import { registerLinting, LintApi } from './lint';
 import { registerRestoreManager, RESTORE_BLOCKLY_KEY, RESTORE_LIVE_KEY, RESTORE_LIVE_ORDER_KEY } from './restore/restoreManager';
+import { registerAutoReload, AutoReloadApi } from './reload/autoReload';
 
 const webviewPanelMap = new Map<string, vscode.WebviewPanel>();
 let activeP5Panel: vscode.WebviewPanel | null = null;
 
-const autoReloadListenersMap = new Map<string, { changeListener?: vscode.Disposable; saveListener?: vscode.Disposable }>();
+// Auto-reload moved to ./reload/autoReload
 
 const outputChannelMap = new Map<string, vscode.OutputChannel>();
 let lastActiveOutputChannel: vscode.OutputChannel | null = null; // <--- NEW
@@ -770,7 +771,7 @@ export function activate(context: vscode.ExtensionContext) {
     } else {
       vscode.commands.executeCommand('setContext', 'hasP5Webview', false);
     }
-    if (editor) updateAutoReloadListeners(editor);
+    if (editor && autoReload) autoReload.setupAutoReloadForDoc(editor);
     // Track the last editor for highlight clearing
     _lastStepHighlightEditor = editor;
     // Focus the output channel for the active sketch
@@ -894,13 +895,8 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
-  const debounceMap = new Map<string, Function>();
-  // Debounce document updates to avoid excessive reloads
-  function debounceDocumentUpdate(document: vscode.TextDocument, forceLog = false) {
-    const docUri = document.uri.toString();
-    if (!debounceMap.has(docUri)) debounceMap.set(docUri, debounce((doc, log) => updateDocumentPanel(doc, log), getDebounceDelay()));
-    debounceMap.get(docUri)!(document, forceLog);
-  }
+  // Auto-reload API instance (initialized after updateDocumentPanel is declared)
+  let autoReload: AutoReloadApi;
 
   // Flag to ignore logs after a syntax error
   let ignoreLogs = false;
@@ -1095,72 +1091,13 @@ export function activate(context: vscode.ExtensionContext) {
     }
   }
 
-  // Track reloadWhileTyping and reloadOnSave settings
-  let reloadWhileTyping = vscode.workspace.getConfiguration('P5Studio').get<boolean>('reloadWhileTyping', true);
-  let reloadOnSave = vscode.workspace.getConfiguration('P5Studio').get<boolean>('reloadOnSave', true);
-
-  // Update reloadWhileTyping/reloadOnSave variables and context key
-
-  async function updateReloadWhileTypingVarsAndContext() {
-    reloadWhileTyping = vscode.workspace.getConfiguration('P5Studio').get<boolean>('reloadWhileTyping', true);
-    reloadOnSave = vscode.workspace.getConfiguration('P5Studio').get<boolean>('reloadOnSave', true);
-    await vscode.commands.executeCommand('setContext', 'liveP5ReloadWhileTypingEnabled', reloadWhileTyping);
-  }
-
-  // Re-apply auto-reload listeners for all open editors/panels
-  function refreshAutoReloadListenersForAllOpenEditors() {
-    try {
-      const editors = vscode.window.visibleTextEditors || [];
-      const seen = new Set<string>();
-      for (const ed of editors) {
-        if (!ed || !ed.document) continue;
-        const uri = ed.document.uri.toString();
-        seen.add(uri);
-        updateAutoReloadListeners(ed);
-      }
-      // Dispose listeners for any document that no longer has a visible editor
-      for (const [docUri, listeners] of autoReloadListenersMap.entries()) {
-        if (!seen.has(docUri)) {
-          try { listeners.changeListener?.dispose(); } catch { }
-          try { listeners.saveListener?.dispose(); } catch { }
-          autoReloadListenersMap.delete(docUri);
-        }
-      }
-    } catch { /* ignore */ }
-  }
-
-  // --- Ensure context key is set on activation ---
-  updateReloadWhileTypingVarsAndContext();
-
-  // Set up listeners for reload-on-typing and reload-on-save per document
-  function updateAutoReloadListeners(editor: vscode.TextEditor) {
-    const docUri = editor.document.uri.toString();
-    const existing = autoReloadListenersMap.get(docUri);
-    existing?.changeListener?.dispose();
-    existing?.saveListener?.dispose();
-
-    let changeListener: vscode.Disposable | undefined;
-    let saveListener: vscode.Disposable | undefined;
-
-
-    if (reloadWhileTyping) {
-      changeListener = vscode.workspace.onDidChangeTextDocument(e => {
-        if (e.document.uri.toString() === docUri) {
-          _pendingReloadReason = 'typing';
-          debounceDocumentUpdate(e.document, true);
-        }
-      });
-    }
-    if (reloadOnSave) {
-      saveListener = vscode.workspace.onDidSaveTextDocument(doc => {
-        if (doc.uri.toString() === docUri) {
-          _pendingReloadReason = 'save';
-          debounceDocumentUpdate(doc, true);
-        }
-      });
-    }
-    autoReloadListenersMap.set(docUri, { changeListener, saveListener });
-  }
+  // Initialize auto-reload module now that updateDocumentPanel exists
+  autoReload = registerAutoReload(context, {
+    updateDocumentPanel: (doc, log) => updateDocumentPanel(doc, log),
+    setPendingReason: (r) => { _pendingReloadReason = r; }
+  });
+  // Ensure context key is set on activation
+  (async () => { try { await autoReload.updateConfig(); } catch { } })();
 
   // ----------------------------
   // LIVE P5 panel command
@@ -2140,10 +2077,7 @@ export function activate(context: vscode.ExtensionContext) {
           webviewPanelMap.delete(docUri);
           if (activeP5Panel === panel) activeP5Panel = null;
           vscode.commands.executeCommand('setContext', 'hasP5Webview', false);
-          const listeners = autoReloadListenersMap.get(docUri);
-          listeners?.changeListener?.dispose();
-          listeners?.saveListener?.dispose();
-          autoReloadListenersMap.delete(docUri);
+          try { autoReload.disposeForDoc(docUri); } catch { }
           allP5Panels.delete(panel);
           try { removePanelForPath(p5PanelsByPath, (panel as any)._sketchFilePath || editor.document.fileName, panel); } catch { }
           try {
@@ -2280,7 +2214,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       updateP5Context(editor);
-      if (editor) updateAutoReloadListeners(editor);
+      if (editor && autoReload) autoReload.setupAutoReloadForDoc(editor);
     })
   );
 
@@ -2301,7 +2235,7 @@ export function activate(context: vscode.ExtensionContext) {
               lintApi.logUndeclaredWarningsForDocument(doc);
               lintApi.logVarWarningsForDocument(doc);
               _pendingReloadReason = 'command';
-              debounceDocumentUpdate(doc, false);
+              autoReload.debounceUpdate(doc, false);
             }
           }
         }
@@ -2312,7 +2246,7 @@ export function activate(context: vscode.ExtensionContext) {
       lintApi.logUndeclaredWarningsForDocument(editor.document);
       lintApi.logVarWarningsForDocument(editor.document);
       _pendingReloadReason = 'command';
-      debounceDocumentUpdate(editor.document, false); // use false to match typing
+      autoReload.debounceUpdate(editor.document, false); // use false to match typing
     })
   );
 
@@ -2321,8 +2255,8 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('P5Studio.toggleReloadWhileTypingOn', async () => {
       const config = vscode.workspace.getConfiguration('P5Studio');
       await config.update('reloadWhileTyping', false, vscode.ConfigurationTarget.Global);
-      await updateReloadWhileTypingVarsAndContext();
-      refreshAutoReloadListenersForAllOpenEditors();
+      await autoReload.updateConfig();
+      autoReload.refreshAll();
       vscode.window.showInformationMessage('Reload on typing is now disabled.');
     })
   );
@@ -2331,8 +2265,8 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('P5Studio.toggleReloadWhileTypingOff', async () => {
       const config = vscode.workspace.getConfiguration('P5Studio');
       await config.update('reloadWhileTyping', true, vscode.ConfigurationTarget.Global);
-      await updateReloadWhileTypingVarsAndContext();
-      refreshAutoReloadListenersForAllOpenEditors();
+      await autoReload.updateConfig();
+      autoReload.refreshAll();
       vscode.window.showInformationMessage('Reload on typing is now enabled.');
     })
   );
@@ -2493,7 +2427,7 @@ text("P5", 50, 52);`;
   // Listen for debounceDelay config changes and update debounce logic
   vscode.workspace.onDidChangeConfiguration(e => {
     if (e.affectsConfiguration('P5Studio.debounceDelay')) {
-      debounceMap.clear();
+      try { autoReload.clearDebounceCache(); } catch { }
     }
     if (e.affectsConfiguration('P5Studio.variablePanelDebounceDelay')) {
       const newDelay = vscode.workspace.getConfiguration('P5Studio').get<number>('variablePanelDebounceDelay', 500);
@@ -2503,8 +2437,8 @@ text("P5", 50, 52);`;
     }
     // --- Sync reloadWhileTyping/reloadOnSave if changed via settings UI ---
     if (e.affectsConfiguration('P5Studio.reloadWhileTyping') || e.affectsConfiguration('P5Studio.reloadOnSave')) {
-      updateReloadWhileTypingVarsAndContext();
-      refreshAutoReloadListenersForAllOpenEditors();
+      (async () => { try { await autoReload.updateConfig(); } catch { } })();
+      autoReload.refreshAll();
     }
     // Toolbar in webview removed; no need to sync showReloadButton/ShowDebugButton settings to webview DOM.
 
