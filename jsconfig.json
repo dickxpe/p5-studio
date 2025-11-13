@@ -1,5 +1,5 @@
 {
-  "createdAt": "2025-11-13T08:22:04.649",
+  "createdAt": "2025-11-13T09:24:41.356",
   "include": [
     "*.js",
     "**/*.js",
@@ -7,7 +7,7 @@
     "**/.ts",
     "common/*.js",
     "import/*.js",
-    "c:\\Users\\Peter\\.vscode\\extensions\\peterdickx.p5-studio-1.0.0\\p5types\\global.d.ts",
-    "c:\\Users\\Peter\\.vscode\\extensions\\peterdickx.p5-studio-1.0.0\\p5types\\p5helper.d.ts"
+    "c:\\Users\\Peter\\.vscode\\extensions\\peterdickx.live-p5-launcher-1.4.3\\p5types\\global.d.ts",
+    "c:\\Users\\Peter\\.vscode\\extensions\\peterdickx.live-p5-launcher-1.4.3\\p5types\\p5helper.d.ts"
   ]
 }

@@ -19,6 +19,7 @@ import { initOsc, OscServiceApi } from './osc/oscService';
 import { registerVariablesView } from './views/variablesView';
 import { registerBlockly, BlocklyApi } from './blockly/blocklyPanel';
 import { registerLinting, LintApi } from './lint';
+import { registerRestoreManager, RESTORE_BLOCKLY_KEY, RESTORE_LIVE_KEY, RESTORE_LIVE_ORDER_KEY } from './restore/restoreManager';
 
 const webviewPanelMap = new Map<string, vscode.WebviewPanel>();
 let activeP5Panel: vscode.WebviewPanel | null = null;
@@ -351,15 +352,14 @@ export function activate(context: vscode.ExtensionContext) {
       }
     })
   );
-  // Previously, we closed restored LIVE/Blockly webviews on reopen to avoid empty tabs.
-  // That behavior is now disabled per request; let VS Code handle restoration normally.
+  // Note: we proactively close any auto-restored LIVE/Blockly tabs on activation below
+  // so we can fully control restore order and tracking in our custom flow.
 
   // --- Lightweight restore: reopen relevant webviews on activation without serialization ---
   // We remember which documents had a LIVE P5 webview or a Blockly webview open
   // and simply re-run the corresponding open command for those files on startup.
-  const RESTORE_LIVE_KEY = 'P5Studio.restoreLiveDocs';
-  const RESTORE_LIVE_ORDER_KEY = 'P5Studio.restoreLiveDocsOrder';
-  const RESTORE_BLOCKLY_KEY = 'P5Studio.restoreBlocklyDocs';
+  // Restore keys moved to src/restore/restoreManager
+  const restore = registerRestoreManager(context);
 
   // Workspace-aware helpers (avoid cross-project restore)
   function workspaceRoots(): string[] {
@@ -374,64 +374,14 @@ export function activate(context: vscode.ExtensionContext) {
       return roots.some(r => norm.startsWith(r.replace(/\\/g, '/').toLowerCase() + '/'));
     } catch { return false; }
   }
-  function getRestoreList(key: string): string[] {
-    try { return context.workspaceState.get<string[]>(key, []) || []; } catch { return []; }
-  }
-  async function setRestoreList(key: string, list: string[]) {
-    try { await context.workspaceState.update(key, Array.from(new Set(list))); } catch { /* ignore */ }
-  }
-  async function addToRestore(key: string, fsPath: string) {
-    if (!isInWorkspace(fsPath)) return;
-    const list = getRestoreList(key);
-    if (!list.includes(fsPath)) list.push(fsPath);
-    await setRestoreList(key, list);
-  }
-  async function removeFromRestore(key: string, fsPath: string) {
-    const list = getRestoreList(key).filter(p => p !== fsPath);
-    await setRestoreList(key, list);
-  }
-  async function moveToOrderEnd(fsPath: string) {
-    try {
-      if (!isInWorkspace(fsPath)) return;
-      const curr = getRestoreList(RESTORE_LIVE_ORDER_KEY);
-      const filtered = curr.filter(p => p !== fsPath);
-      filtered.push(fsPath);
-      await setRestoreList(RESTORE_LIVE_ORDER_KEY, filtered);
-    } catch { }
-  }
-  async function removeFromOrder(fsPath: string) {
-    try {
-      const curr = getRestoreList(RESTORE_LIVE_ORDER_KEY).filter(p => p !== fsPath);
-      await setRestoreList(RESTORE_LIVE_ORDER_KEY, curr);
-    } catch { }
-  }
+  // Restore helpers moved to src/restore/restoreManager
 
-  // One-time migration: move any previous globalState restore lists into workspaceState (filtered to current workspace)
-  try {
-    const migrateKey = 'P5Studio.restoreMigratedToWorkspace';
-    const already = context.workspaceState.get<boolean>(migrateKey, false);
-    if (!already) {
-      const roots = workspaceRoots();
-      const inWs = (p: string) => !!p && fs.existsSync(p) && isInWorkspace(p);
-      const fromGlobal = (k: string) => (context.globalState.get<string[]>(k, []) || []).filter(inWs);
-      const live = fromGlobal(RESTORE_LIVE_KEY);
-      const liveOrder = fromGlobal(RESTORE_LIVE_ORDER_KEY);
-      const blk = fromGlobal(RESTORE_BLOCKLY_KEY);
-      if (live.length) context.workspaceState.update(RESTORE_LIVE_KEY, Array.from(new Set(live)));
-      if (liveOrder.length) context.workspaceState.update(RESTORE_LIVE_ORDER_KEY, Array.from(new Set(liveOrder)));
-      if (blk.length) context.workspaceState.update(RESTORE_BLOCKLY_KEY, Array.from(new Set(blk)));
-      // Clear global to prevent cross-project bleed in future
-      context.globalState.update(RESTORE_LIVE_KEY, []);
-      context.globalState.update(RESTORE_LIVE_ORDER_KEY, []);
-      context.globalState.update(RESTORE_BLOCKLY_KEY, []);
-      context.workspaceState.update(migrateKey, true);
-    }
-  } catch { /* ignore migration issues */ }
+  // One-time restore migration handled later in restore IIFE
 
   // Register Blockly feature and obtain API hooks
   const blocklyApi: BlocklyApi = registerBlockly(context, {
-    addToRestore,
-    removeFromRestore,
+    addToRestore: restore.addToRestore,
+    removeFromRestore: restore.removeFromRestore,
     RESTORE_BLOCKLY_KEY,
     updateP5WebviewTabContext,
   });
@@ -703,6 +653,8 @@ export function activate(context: vscode.ExtensionContext) {
   // Attempt to restore previously open webviews (without using webview serialization)
   (async () => {
     try {
+      // Ensure restore migration has run before reading lists
+      try { await restore.migrate(); } catch { }
       // Pre-sweep: close any auto-restored P5/Blockly tabs so we fully control restore and tracking
       try {
         const groups: readonly vscode.TabGroup[] = (vscode.window.tabGroups as any).all || [vscode.window.tabGroups.activeTabGroup];
@@ -724,13 +676,13 @@ export function activate(context: vscode.ExtensionContext) {
       } catch { /* ignore */ }
       _restoringPanels = true;
       // Restore LIVE P5 panels
-      const liveDocs = getRestoreList(RESTORE_LIVE_KEY)
+      const liveDocs = restore.getRestoreList(RESTORE_LIVE_KEY)
         .filter(p => typeof p === 'string' && p)
         .filter(p => fs.existsSync(p) && isInWorkspace(p));
       const uniqueLive = Array.from(new Set(liveDocs));
       if (uniqueLive.length) {
         // Reorder by saved order (preserve any unknowns at the end in original order)
-        const savedOrder = getRestoreList(RESTORE_LIVE_ORDER_KEY).filter(p => fs.existsSync(p) && isInWorkspace(p));
+        const savedOrder = restore.getRestoreList(RESTORE_LIVE_ORDER_KEY).filter(p => fs.existsSync(p) && isInWorkspace(p));
         const orderIndex = new Map<string, number>();
         savedOrder.forEach((p, i) => orderIndex.set(p, i));
         uniqueLive.sort((a, b) => {
@@ -780,7 +732,7 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       // Restore Blockly panels
-      const blkDocs = getRestoreList(RESTORE_BLOCKLY_KEY)
+      const blkDocs = restore.getRestoreList(RESTORE_BLOCKLY_KEY)
         .filter(p => typeof p === 'string' && p)
         .filter(p => fs.existsSync(p) && isInWorkspace(p));
       const uniqueBlk = Array.from(new Set(blkDocs));
@@ -1418,8 +1370,8 @@ export function activate(context: vscode.ExtensionContext) {
         webviewPanelMap.set(docUri, panel);
         captureVisibleMap.set(docUri, false);
         try {
-          await addToRestore(RESTORE_LIVE_KEY, editor.document.fileName);
-          await moveToOrderEnd(editor.document.fileName);
+          await restore.addToRestore(RESTORE_LIVE_KEY, editor.document.fileName);
+          await restore.moveToOrderEnd(editor.document.fileName);
         } catch { }
         activeP5Panel = panel;
         try {
@@ -2195,8 +2147,8 @@ export function activate(context: vscode.ExtensionContext) {
           allP5Panels.delete(panel);
           try { removePanelForPath(p5PanelsByPath, (panel as any)._sketchFilePath || editor.document.fileName, panel); } catch { }
           try {
-            await removeFromRestore(RESTORE_LIVE_KEY, editor.document.fileName);
-            await removeFromOrder(editor.document.fileName);
+            await restore.removeFromRestore(RESTORE_LIVE_KEY, editor.document.fileName);
+            await restore.removeFromOrder(editor.document.fileName);
           } catch { }
           // Clear any step highlight when panel is closed
           try {
@@ -2225,7 +2177,7 @@ export function activate(context: vscode.ExtensionContext) {
             const channel = outputChannelMap.get(docUri);
             if (channel) showAndTrackOutputChannel(channel); // <--- in panel.onDidChangeViewState
             // Update restore order to reflect recent activation
-            try { await moveToOrderEnd(editor.document.fileName); } catch { }
+            try { await restore.moveToOrderEnd(editor.document.fileName); } catch { }
           }
         });
 
