@@ -2,7 +2,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import * as recast from 'recast';
-import * as osc from 'osc';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
 import { exec } from 'child_process';
@@ -13,6 +12,13 @@ import { RESERVED_GLOBALS, P5_NUMERIC_IDENTIFIERS, P5_EVENT_HANDLERS } from './c
 import { extractGlobalVariablesWithConflicts, extractGlobalVariables, rewriteUserCodeWithWindowGlobals } from './processing/codeRewriter';
 import { detectTopLevelInputs, hasNonTopInputUsage, preprocessTopLevelInputs, hasCachedInputsForKey, getCachedInputsForKey, setCachedInputsForKey, TopInputItem } from './processing/topInputs';
 import { createHtml } from './webview/createHtml';
+// New modularized imports
+import { ensureStepHighlightDecoration, clearStepHighlight, applyStepHighlight } from './editors/stepHighlight';
+import { instrumentSetupWithDelays, instrumentSetupForSingleStep } from './processing/instrumentation';
+import { initOsc, OscServiceApi } from './osc/oscService';
+import { registerVariablesView } from './views/variablesView';
+import { registerBlockly, BlocklyApi } from './blockly/blocklyPanel';
+import { registerLinting, LintApi } from './lint';
 
 const webviewPanelMap = new Map<string, vscode.WebviewPanel>();
 let activeP5Panel: vscode.WebviewPanel | null = null;
@@ -21,8 +27,6 @@ const autoReloadListenersMap = new Map<string, { changeListener?: vscode.Disposa
 
 const outputChannelMap = new Map<string, vscode.OutputChannel>();
 let lastActiveOutputChannel: vscode.OutputChannel | null = null; // <--- NEW
-// Global OSC diagnostics output channel
-const oscOutputChannel: vscode.OutputChannel = vscode.window.createOutputChannel('LIVE P5: OSC');
 
 // Track whether a given sketch's debug has been "primed" (after first single-step)
 const debugPrimedMap = new Map<string, boolean>();
@@ -37,36 +41,7 @@ let _restoringPanels = false;
 // During restore, remember the intended top-row right-hand target column for LIVE P5 panels
 let _restoreP5TargetColumn: vscode.ViewColumn | undefined;
 
-// Single-step highlight decoration (one at a time per editor)
-let stepHighlightDecoration: vscode.TextEditorDecorationType | null = null;
-function ensureStepHighlightDecoration() {
-  if (!stepHighlightDecoration) {
-    stepHighlightDecoration = vscode.window.createTextEditorDecorationType({
-      isWholeLine: true,
-      backgroundColor: 'rgba(255,215,0,0.25)',
-      overviewRulerColor: 'rgba(255,215,0,0.8)',
-      overviewRulerLane: vscode.OverviewRulerLane.Full,
-      border: '1px solid rgba(255,215,0,0.7)'
-    });
-  }
-  return stepHighlightDecoration;
-}
-function clearStepHighlight(editor?: vscode.TextEditor) {
-  if (!stepHighlightDecoration) return;
-  const ed = editor || vscode.window.activeTextEditor;
-  if (ed && ed.document) {
-    ed.setDecorations(stepHighlightDecoration, []);
-  }
-}
-function applyStepHighlight(editor: vscode.TextEditor, line: number) {
-  const deco = ensureStepHighlightDecoration();
-  const lineIdx = Math.max(0, Math.min(editor.document.lineCount - 1, line - 1));
-  const range = new vscode.Range(lineIdx, 0, lineIdx, editor.document.lineAt(lineIdx).text.length);
-  editor.setDecorations(deco, [range]);
-  // Always scroll the editor to reveal the highlighted line, even if the editor isn't the active one.
-  // This updates the view in place without stealing focus.
-  try { editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport); } catch { }
-}
+// Step highlight helpers moved to ./editors/stepHighlight
 
 function showAndTrackOutputChannel(ch: vscode.OutputChannel) {
   ch.show(true);
@@ -115,746 +90,9 @@ function getInitialCaptureVisible(panel: vscode.WebviewPanel): boolean {
 
 // Instrument setup() to insert `await __sleep(delayMs)` between top-level statements/blocks.
 // Returns original code if setup() cannot be found.
-function instrumentSetupWithDelays(code: string, delayMs: number): string {
-  try {
-    const acorn = require('acorn');
-    const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
+// Instrumentation helpers moved to ./processing/instrumentation
 
-    let changed = false;
-    recast.types.visit(ast, {
-      visitFunctionDeclaration(path) {
-        const node: any = path.value;
-        if (node.id && node.id.name === 'setup' && node.body && Array.isArray(node.body.body)) {
-          // Ensure async
-          node.async = true;
-          const b = recast.types.builders;
-          // const __sleep = (ms) => new Promise(r => setTimeout(r, ms));
-          const sleepDecl = b.variableDeclaration('const', [
-            b.variableDeclarator(
-              b.identifier('__sleep'),
-              b.arrowFunctionExpression(
-                [b.identifier('ms')],
-                b.newExpression(
-                  b.identifier('Promise'),
-                  [b.arrowFunctionExpression(
-                    [b.identifier('r')],
-                    b.callExpression(
-                      b.identifier('setTimeout'),
-                      [b.identifier('r'), b.identifier('ms')]
-                    )
-                  )]
-                )
-              )
-            )
-          ]);
-          const makeAwaitStmt = () => b.expressionStatement(
-            b.awaitExpression(
-              b.callExpression(b.identifier('__sleep'), [b.literal(delayMs)])
-            )
-          );
-
-          // Add an await at the start of every loop body inside setup(), but do not descend into nested functions
-          recast.types.visit(node.body, {
-            visitFunctionDeclaration(p) { return false; },
-            visitFunctionExpression(p) { return false; },
-            visitArrowFunctionExpression(p) { return false; },
-            visitForStatement(p) {
-              const loop: any = p.value;
-              if (loop.body && loop.body.type === 'BlockStatement') {
-                loop.body.body.unshift(makeAwaitStmt());
-              } else if (loop.body) {
-                loop.body = b.blockStatement([makeAwaitStmt(), loop.body]);
-              }
-              this.traverse(p);
-            },
-            visitWhileStatement(p) {
-              const loop: any = p.value;
-              if (loop.body && loop.body.type === 'BlockStatement') {
-                loop.body.body.unshift(makeAwaitStmt());
-              } else if (loop.body) {
-                loop.body = b.blockStatement([makeAwaitStmt(), loop.body]);
-              }
-              this.traverse(p);
-            },
-            visitDoWhileStatement(p) {
-              const loop: any = p.value;
-              if (loop.body && loop.body.type === 'BlockStatement') {
-                loop.body.body.unshift(makeAwaitStmt());
-              } else if (loop.body) {
-                loop.body = b.blockStatement([makeAwaitStmt(), loop.body]);
-              }
-              this.traverse(p);
-            },
-            visitForInStatement(p) {
-              const loop: any = p.value;
-              if (loop.body && loop.body.type === 'BlockStatement') {
-                loop.body.body.unshift(makeAwaitStmt());
-              } else if (loop.body) {
-                loop.body = b.blockStatement([makeAwaitStmt(), loop.body]);
-              }
-              this.traverse(p);
-            },
-            visitForOfStatement(p) {
-              const loop: any = p.value;
-              if (loop.body && loop.body.type === 'BlockStatement') {
-                loop.body.body.unshift(makeAwaitStmt());
-              } else if (loop.body) {
-                loop.body = b.blockStatement([makeAwaitStmt(), loop.body]);
-              }
-              this.traverse(p);
-            },
-          });
-
-          const orig = node.body.body.slice();
-          const interleaved: any[] = [sleepDecl];
-          for (let i = 0; i < orig.length; i++) {
-            interleaved.push(orig[i]);
-            interleaved.push(makeAwaitStmt());
-          }
-          node.body.body = interleaved;
-          changed = true;
-          return false; // do not traverse into this function further
-        }
-        this.traverse(path);
-      }
-    });
-    if (!changed) return code;
-    return recast.print(ast).code;
-  } catch (e) {
-    return code;
-  }
-}
-
-// Instrument setup() for single-step execution. Before each statement in setup() (and inside loop/if blocks),
-// insert a call to __highlight(line/col) and `await __waitStep()` so each click advances to the next statement.
-function instrumentSetupForSingleStep(code: string, lineOffset: number, opts?: { disableTopLevelPreSteps?: boolean }): string {
-  try {
-    const acorn = require('acorn');
-    const ast = recast.parse(code, {
-      parser: {
-        parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script', locations: true })
-      }
-    });
-
-    const b = recast.types.builders;
-    let changed = false;
-
-    // Collect names of user-defined functions (exclude setup/draw) so we can await their calls to enable step-into
-    const userFunctionNames = new Set<string>();
-    try {
-      const body: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
-      for (const n of body) {
-        if (n && n.type === 'FunctionDeclaration' && n.id && typeof n.id.name === 'string') {
-          const nm = n.id.name;
-          if (nm !== 'setup' && nm !== 'draw') userFunctionNames.add(nm);
-        }
-      }
-    } catch { /* ignore */ }
-
-    // Collect top-level statements (non-function) to highlight before entering setup()
-    // We don't re-execute them (they already ran on load); we only highlight + await
-    const topLevelPreSteps: any[] = [];
-    try {
-      if (!opts || !opts.disableTopLevelPreSteps) {
-        const programBody: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
-        for (const stmt of programBody) {
-          if (!stmt || typeof stmt.type !== 'string') continue;
-          // Skip function declarations (including setup/draw and helpers)
-          if (stmt.type === 'FunctionDeclaration') continue;
-          // Skip empty statements
-          if (stmt.type === 'EmptyStatement') continue;
-          // Include directives (e.g., 'use strict') as a single highlight step
-          const hi = ((): any => {
-            const loc = stmt && (stmt as any).loc ? (stmt as any).loc : null;
-            if (!loc) return null;
-            const start = loc.start || { line: 1, column: 0 };
-            const end = loc.end || start;
-            return b.expressionStatement(
-              b.callExpression(b.identifier('__highlight'), [
-                b.literal(start.line),
-                b.literal(start.column + 1),
-                b.literal(end.line),
-                b.literal(end.column + 1)
-              ])
-            );
-          })();
-          if (hi) {
-            topLevelPreSteps.push(hi);
-            // await gate to advance to next top-level statement
-            topLevelPreSteps.push(
-              b.expressionStatement(b.awaitExpression(b.callExpression(b.identifier('__waitStep'), [])))
-            );
-          }
-        }
-      }
-    } catch { /* ignore */ }
-
-    // Determine whether a setup() function exists
-    let hasSetupFunction = false;
-    try {
-      const body: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
-      hasSetupFunction = body.some(n => n && n.type === 'FunctionDeclaration' && n.id && n.id.name === 'setup');
-    } catch { hasSetupFunction = false; }
-
-    const makeHighlightFor = (node: any) => {
-      const loc = node && node.loc ? node.loc : null;
-      if (!loc) return null;
-      const start = loc.start || { line: 1, column: 0 };
-      const end = loc.end || start;
-      return b.expressionStatement(
-        b.callExpression(b.identifier('__highlight'), [
-          b.literal(start.line), b.literal(start.column + 1), b.literal(end.line), b.literal(end.column + 1)
-        ])
-      );
-    };
-    // Global helper calls guarded by stepping flag
-    const makeGlobalHighlightFor = (node: any) => {
-      const loc = node && node.loc ? node.loc : null;
-      if (!loc) return null;
-      const start = loc.start || { line: 1, column: 0 };
-      const end = loc.end || start;
-      return b.ifStatement(
-        b.memberExpression(b.identifier('window'), b.identifier('__liveP5Stepping')),
-        b.blockStatement([
-          b.expressionStatement(
-            b.callExpression(
-              b.memberExpression(b.identifier('window'), b.identifier('__liveP5Highlight')),
-              [b.literal(start.line), b.literal(start.column + 1), b.literal(end.line), b.literal(end.column + 1)]
-            )
-          )
-        ])
-      );
-    };
-    const makeAwaitStep = () => b.expressionStatement(b.awaitExpression(b.callExpression(b.identifier('__waitStep'), [])));
-    const makeGlobalAwaitStep = () => b.ifStatement(
-      b.memberExpression(b.identifier('window'), b.identifier('__liveP5Stepping')),
-      b.blockStatement([
-        b.expressionStatement(
-          b.awaitExpression(
-            b.callExpression(
-              b.memberExpression(b.identifier('window'), b.identifier('__liveP5WaitStep')),
-              []
-            )
-          )
-        )
-      ])
-    );
-
-    function instrumentBlock(block: any): any {
-      if (!block || block.type !== 'BlockStatement' || !Array.isArray(block.body)) return block;
-      const newBody: any[] = [];
-      for (const stmt of block.body) {
-        // Don't instrument nested function declarations
-        if (stmt && (stmt.type === 'FunctionDeclaration' || stmt.type === 'FunctionExpression')) {
-          newBody.push(stmt);
-          continue;
-        }
-        const hi = makeHighlightFor(stmt);
-        if (hi) newBody.push(hi);
-        newBody.push(makeAwaitStep());
-        newBody.push(instrumentNode(stmt));
-      }
-      block.body = newBody;
-      return block;
-    }
-    function instrumentBlockGlobal(block: any): any {
-      if (!block || block.type !== 'BlockStatement' || !Array.isArray(block.body)) return block;
-      const newBody: any[] = [];
-      for (const stmt of block.body) {
-        if (stmt && (stmt.type === 'FunctionDeclaration' || stmt.type === 'FunctionExpression')) {
-          newBody.push(stmt);
-          continue;
-        }
-        const hi = makeGlobalHighlightFor(stmt);
-        if (hi) newBody.push(hi);
-        newBody.push(makeGlobalAwaitStep());
-        newBody.push(instrumentNodeGlobal(stmt));
-      }
-      block.body = newBody;
-      return block;
-    }
-
-    function ensureBlockGlobal(node: any, prop: string) {
-      if (!node[prop]) return;
-      if (node[prop].type !== 'BlockStatement') {
-        node[prop] = b.blockStatement([node[prop]]);
-      }
-      node[prop] = instrumentBlockGlobal(node[prop]);
-    }
-
-    function instrumentNodeGlobal(node: any): any {
-      if (!node || typeof node.type !== 'string') return node;
-      switch (node.type) {
-        case 'BlockStatement':
-          return instrumentBlockGlobal(node);
-        case 'IfStatement':
-          if (node.consequent) {
-            if (node.consequent.type !== 'BlockStatement') node.consequent = b.blockStatement([node.consequent]);
-            node.consequent = instrumentBlockGlobal(node.consequent);
-          }
-          if (node.alternate) {
-            if (node.alternate.type !== 'BlockStatement' && node.alternate.type !== 'IfStatement') {
-              node.alternate = b.blockStatement([node.alternate]);
-            }
-            if (node.alternate.type === 'BlockStatement') node.alternate = instrumentBlockGlobal(node.alternate);
-            else node.alternate = instrumentNodeGlobal(node.alternate);
-          }
-          return node;
-        case 'ForStatement':
-        case 'WhileStatement':
-        case 'DoWhileStatement':
-        case 'ForInStatement':
-        case 'ForOfStatement':
-          ensureBlockGlobal(node, 'body');
-          return node;
-        case 'SwitchStatement':
-          if (Array.isArray(node.cases)) {
-            for (const c of node.cases) {
-              if (Array.isArray(c.consequent)) {
-                const newCons: any[] = [];
-                for (const s of c.consequent) {
-                  const hi = makeGlobalHighlightFor(s);
-                  if (hi) newCons.push(hi);
-                  newCons.push(makeGlobalAwaitStep());
-                  newCons.push(instrumentNodeGlobal(s));
-                }
-                c.consequent = newCons;
-              }
-            }
-          }
-          return node;
-        default:
-          return node;
-      }
-    }
-
-    function ensureBlock(node: any, prop: string) {
-      if (!node[prop]) return;
-      if (node[prop].type !== 'BlockStatement') {
-        node[prop] = b.blockStatement([node[prop]]);
-      }
-      node[prop] = instrumentBlock(node[prop]);
-    }
-
-    function instrumentNode(node: any): any {
-      if (!node || typeof node.type !== 'string') return node;
-      switch (node.type) {
-        case 'BlockStatement':
-          return instrumentBlock(node);
-        case 'ExpressionStatement': {
-          // If this is a direct call to a known user-defined function, rewrite to `await func(...)` to step-into
-          try {
-            const expr = node.expression;
-            if (expr && expr.type === 'CallExpression' && expr.callee && expr.callee.type === 'Identifier') {
-              const name = expr.callee.name;
-              if (userFunctionNames.has(name)) {
-                // Wrap call in await
-                const awaited = b.expressionStatement(
-                  b.awaitExpression(
-                    b.callExpression(b.identifier(name), expr.arguments || [])
-                  )
-                );
-                return awaited;
-              }
-            }
-          } catch { /* fallthrough to default instrumentation */ }
-          return node;
-        }
-        case 'IfStatement':
-          if (node.consequent) {
-            if (node.consequent.type !== 'BlockStatement') node.consequent = b.blockStatement([node.consequent]);
-            node.consequent = instrumentBlock(node.consequent);
-          }
-          if (node.alternate) {
-            if (node.alternate.type !== 'BlockStatement' && node.alternate.type !== 'IfStatement') {
-              node.alternate = b.blockStatement([node.alternate]);
-            }
-            if (node.alternate.type === 'BlockStatement') node.alternate = instrumentBlock(node.alternate);
-            else node.alternate = instrumentNode(node.alternate);
-          }
-          return node;
-        case 'ForStatement':
-        case 'WhileStatement':
-        case 'DoWhileStatement':
-        case 'ForInStatement':
-        case 'ForOfStatement':
-          ensureBlock(node, 'body');
-          return node;
-        case 'SwitchStatement':
-          if (Array.isArray(node.cases)) {
-            for (const c of node.cases) {
-              if (Array.isArray(c.consequent)) {
-                const newCons: any[] = [];
-                for (const s of c.consequent) {
-                  const hi = makeHighlightFor(s);
-                  if (hi) newCons.push(hi);
-                  newCons.push(makeAwaitStep());
-                  newCons.push(instrumentNode(s));
-                }
-                c.consequent = newCons;
-              }
-            }
-          }
-          return node;
-        default:
-          return node;
-      }
-    }
-
-    recast.types.visit(ast, {
-      visitFunctionDeclaration(path) {
-        const node: any = path.value;
-        if (node.id && (node.id.name === 'setup' || node.id.name === 'draw') && node.body && Array.isArray(node.body.body)) {
-          node.async = true;
-          // Controller helpers at the top of setup/draw
-          const highlightDecl = b.variableDeclaration('const', [
-            b.variableDeclarator(
-              b.identifier('__highlight'),
-              b.arrowFunctionExpression(
-                [b.identifier('l'), b.identifier('c'), b.identifier('el'), b.identifier('ec')],
-                b.blockStatement([
-                  b.tryStatement(
-                    b.blockStatement([
-                      b.expressionStatement(
-                        b.callExpression(b.memberExpression(b.identifier('vscode'), b.identifier('postMessage')),
-                          [b.objectExpression([
-                            b.property('init', b.identifier('type'), b.literal('highlightLine')),
-                            // Apply line offset from wrapper if present; clamp in extension when applying
-                            b.property('init', b.identifier('line'), b.binaryExpression('-', b.identifier('l'), b.literal(lineOffset || 0))),
-                            b.property('init', b.identifier('column'), b.identifier('c')),
-                            b.property('init', b.identifier('endLine'), b.identifier('el')),
-                            b.property('init', b.identifier('endColumn'), b.identifier('ec'))
-                          ])]
-                        )
-                      )
-                    ]),
-                    b.catchClause(b.identifier('_'), null, b.blockStatement([])),
-                    null
-                  )
-                ])
-              )
-            )
-          ]);
-          const clearDecl = b.variableDeclaration('const', [
-            b.variableDeclarator(
-              b.identifier('__clearHighlight'),
-              b.arrowFunctionExpression(
-                [],
-                b.blockStatement([
-                  b.tryStatement(
-                    b.blockStatement([
-                      b.expressionStatement(
-                        b.callExpression(
-                          b.memberExpression(b.identifier('vscode'), b.identifier('postMessage')),
-                          [b.objectExpression([b.property('init', b.identifier('type'), b.literal('clearHighlight'))])]
-                        )
-                      )
-                    ]),
-                    b.catchClause(b.identifier('_'), null, b.blockStatement([])),
-                    null
-                  )
-                ])
-              )
-            )
-          ]);
-          const waitDecl = b.variableDeclaration('const', [
-            b.variableDeclarator(
-              b.identifier('__waitStep'),
-              b.arrowFunctionExpression([],
-                b.newExpression(b.identifier('Promise'), [
-                  b.arrowFunctionExpression([b.identifier('rs')],
-                    b.blockStatement([
-                      b.expressionStatement(
-                        b.assignmentExpression('=',
-                          b.memberExpression(b.identifier('window'), b.identifier('__liveP5StepResolve')),
-                          b.identifier('rs')
-                        )
-                      )
-                    ])
-                  )
-                ])
-              )
-            )
-          ]);
-          const advanceDecl = b.expressionStatement(
-            b.assignmentExpression('=',
-              b.memberExpression(b.identifier('window'), b.identifier('__liveP5StepAdvance')),
-              b.functionExpression(null, [],
-                b.blockStatement([
-                  b.variableDeclaration('const', [
-                    b.variableDeclarator(
-                      b.identifier('r'),
-                      b.memberExpression(b.identifier('window'), b.identifier('__liveP5StepResolve'))
-                    )
-                  ]),
-                  b.expressionStatement(
-                    b.assignmentExpression('=',
-                      b.memberExpression(b.identifier('window'), b.identifier('__liveP5StepResolve')),
-                      b.literal(null)
-                    )
-                  ),
-                  b.ifStatement(
-                    b.identifier('r'),
-                    b.blockStatement([b.expressionStatement(b.callExpression(b.identifier('r'), []))])
-                  )
-                ])
-              )
-            )
-          );
-
-          const original = node.body.body.slice();
-          const prelude = [highlightDecl, clearDecl, waitDecl, advanceDecl];
-          // Mark stepping session active so user functions can step-in
-          prelude.push(
-            b.expressionStatement(
-              b.assignmentExpression('=',
-                b.memberExpression(b.identifier('window'), b.identifier('__liveP5Stepping')),
-                b.literal(true)
-              )
-            )
-          );
-          // Export helpers on window so other functions can use them during stepping
-          prelude.push(
-            b.expressionStatement(
-              b.assignmentExpression('=',
-                b.memberExpression(b.identifier('window'), b.identifier('__liveP5Highlight')),
-                b.identifier('__highlight')
-              )
-            )
-          );
-          prelude.push(
-            b.expressionStatement(
-              b.assignmentExpression('=',
-                b.memberExpression(b.identifier('window'), b.identifier('__liveP5ClearHighlight')),
-                b.identifier('__clearHighlight')
-              )
-            )
-          );
-          prelude.push(
-            b.expressionStatement(
-              b.assignmentExpression('=',
-                b.memberExpression(b.identifier('window'), b.identifier('__liveP5WaitStep')),
-                b.identifier('__waitStep')
-              )
-            )
-          );
-          // Gate: prevent draw() from running before setup() has fully finished stepping
-          const setGateSetup = b.expressionStatement(
-            b.assignmentExpression('=',
-              b.memberExpression(b.identifier('window'), b.identifier('__liveP5Gate')),
-              b.literal('setup')
-            )
-          );
-          const clearGate = b.expressionStatement(
-            b.assignmentExpression('=',
-              b.memberExpression(b.identifier('window'), b.identifier('__liveP5Gate')),
-              b.literal(null)
-            )
-          );
-          // If any gate is set (e.g., top-level stepping or setup stepping), skip draw() this frame
-          const drawGateGuard = b.ifStatement(
-            b.memberExpression(b.identifier('window'), b.identifier('__liveP5Gate')),
-            b.blockStatement([b.returnStatement(null)])
-          );
-          const drawBusyGuard = b.ifStatement(
-            b.memberExpression(b.identifier('window'), b.identifier('__liveP5DrawBusy')),
-            b.blockStatement([b.returnStatement(null)])
-          );
-          const setDrawBusy = b.expressionStatement(
-            b.assignmentExpression('=',
-              b.memberExpression(b.identifier('window'), b.identifier('__liveP5DrawBusy')),
-              b.literal(true)
-            )
-          );
-          const clearDrawBusy = b.expressionStatement(
-            b.assignmentExpression('=',
-              b.memberExpression(b.identifier('window'), b.identifier('__liveP5DrawBusy')),
-              b.literal(false)
-            )
-          );
-          // frame counter: init in setup, increment in accepted draw frames
-          const initFrameCounter = b.expressionStatement(
-            b.assignmentExpression('=',
-              b.memberExpression(b.identifier('window'), b.identifier('__liveP5FrameCounter')),
-              b.literal(0)
-            )
-          );
-          const incFrameCounter = b.expressionStatement(
-            b.assignmentExpression('=',
-              b.memberExpression(b.identifier('window'), b.identifier('__liveP5FrameCounter')),
-              b.binaryExpression('+',
-                b.logicalExpression('||',
-                  b.memberExpression(b.identifier('window'), b.identifier('__liveP5FrameCounter')),
-                  b.literal(0)
-                ),
-                b.literal(1)
-              )
-            )
-          );
-          // Instrument the original body statements
-          const instrumentedBlock = instrumentBlock(b.blockStatement(original));
-          // If setup() has no statements, still start stepping at setup by inserting an entry highlight/await
-          const entryStep: any[] = [];
-          if (node.id && node.id.name === 'setup' && (!instrumentedBlock.body || instrumentedBlock.body.length === 0)) {
-            const hiAtFunc = makeHighlightFor(node);
-            if (hiAtFunc) {
-              entryStep.push(hiAtFunc);
-              entryStep.push(makeAwaitStep());
-            }
-          }
-          // Append a final clear highlight call when function finishes (setup or draw)
-          const callClear = b.expressionStatement(b.callExpression(b.identifier('__clearHighlight'), []));
-          if (node.id && node.id.name === 'setup') {
-            // setup(): set gate before any stepping, show top-level highlights first, then clear gate at the very end
-            node.body.body = [...prelude, initFrameCounter, setGateSetup, ...topLevelPreSteps, ...entryStep, ...instrumentedBlock.body, clearGate, callClear];
-          } else {
-            // draw(): optionally show top-level highlights once when no setup() exists; otherwise honor setup gate
-            const topOnceGuard = b.ifStatement(
-              b.unaryExpression('!',
-                b.memberExpression(b.identifier('window'), b.identifier('__liveP5TopPreDone'))
-              ),
-              b.blockStatement([
-                ...topLevelPreSteps,
-                b.expressionStatement(
-                  b.assignmentExpression('=',
-                    b.memberExpression(b.identifier('window'), b.identifier('__liveP5TopPreDone')),
-                    b.literal(true)
-                  )
-                )
-              ])
-            );
-            // Ensure that when there is no setup(), the top-level pre-steps are also protected
-            // by the draw-busy guard to avoid overlapping awaits across frames.
-            node.body.body = hasSetupFunction
-              ? [...prelude, drawGateGuard, drawBusyGuard, setDrawBusy, incFrameCounter, ...entryStep, ...instrumentedBlock.body, clearDrawBusy]
-              : [...prelude, drawBusyGuard, setDrawBusy, topOnceGuard, incFrameCounter, ...entryStep, ...instrumentedBlock.body, clearDrawBusy];
-          }
-          changed = true;
-          return false;
-        }
-        // Instrument user-defined functions (non-setup/draw) to enable stepping into them
-        try {
-          if (node.body && Array.isArray(node.body.body)) {
-            node.async = true;
-            node.body = instrumentBlockGlobal(node.body);
-            changed = true;
-            return false;
-          }
-        } catch { }
-        this.traverse(path);
-      }
-      ,
-      visitFunctionExpression(path) {
-        const node: any = path.value;
-        try {
-          if (node.body) {
-            // Ensure block body for consistent instrumentation
-            if (node.body.type !== 'BlockStatement') {
-              node.body = b.blockStatement([b.returnStatement(node.body)]);
-            }
-            node.async = true;
-            node.body = instrumentBlockGlobal(node.body);
-            changed = true;
-            return false;
-          }
-        } catch { }
-        this.traverse(path);
-      }
-      ,
-      visitArrowFunctionExpression(path) {
-        const node: any = path.value;
-        try {
-          if (node.body) {
-            if (node.body.type !== 'BlockStatement') {
-              node.body = b.blockStatement([b.returnStatement(node.body)]);
-            }
-            node.async = true;
-            node.body = instrumentBlockGlobal(node.body);
-            changed = true;
-            return false;
-          }
-        } catch { }
-        this.traverse(path);
-      }
-    });
-
-    if (!changed) return code;
-    return recast.print(ast).code;
-  } catch (e) {
-    return code;
-  }
-}
-
-// --- OSC SETUP ---
-// Read from config, fallback to defaults if not set
-function getOscConfig() {
-  const config = vscode.workspace.getConfiguration('P5Studio');
-  return {
-    localAddress: config.get<string>('oscLocalAddress', '127.0.0.1'),
-    remoteAddress: config.get<string>('oscRemoteAddress', '127.0.0.1'),
-    remotePort: config.get<number>('oscRemotePort', 57120),
-    localPort: config.get<number>('oscLocalPort', 57121)
-  };
-}
-
-let oscPort: osc.UDPPort | null = null;
-let currentOscConfig: { localAddress: string; remoteAddress: string; localPort: number; remotePort: number } | null = null;
-function onOscMessage(oscMsg: any) {
-  try {
-    oscOutputChannel.appendLine(`${getTime()} [OSC] RX ${oscMsg.address} ${JSON.stringify(oscMsg.args)}`);
-    oscOutputChannel.appendLine(`[DEBUG] Broadcasting OSC to ${webviewPanelMap.size} panels`);
-  } catch { }
-  // Broadcast to all open P5 panels
-  for (const [uri, panel] of webviewPanelMap.entries()) {
-    try {
-      oscOutputChannel.appendLine(`[DEBUG] Sending OSC to panel for ${uri}`);
-      panel.webview.postMessage({
-        type: "oscReceive",
-        address: oscMsg.address,
-        args: oscMsg.args
-      });
-    } catch (e) {
-      oscOutputChannel.appendLine(`[DEBUG] Failed to send OSC to panel for ${uri}: ${e}`);
-    }
-  }
-}
-// Setup OSC UDP port for sending/receiving OSC messages
-function setupOscPort() {
-  if (oscPort) {
-    try { oscPort.close(); } catch { }
-    oscPort = null;
-  }
-  let { localAddress, remoteAddress, remotePort, localPort } = getOscConfig();
-  // If localAddress is 127.0.0.1, bind to 0.0.0.0 to allow all localhost and LAN traffic
-  const bindAddress = (localAddress === '127.0.0.1') ? '0.0.0.0' : localAddress;
-  currentOscConfig = { localAddress, remoteAddress, localPort, remotePort };
-  oscPort = new osc.UDPPort({
-    localAddress: bindAddress, // Bind to all interfaces if needed
-    localPort,
-    remoteAddress,
-    remotePort,
-    metadata: true
-  });
-  oscOutputChannel.appendLine(`[DEBUG] Opening OSC port on ${localAddress}:${localPort}, remote ${remoteAddress}:${remotePort}`);
-  oscPort.open();
-
-  oscPort.on("ready", function () {
-    // Enable loopback for self-sent messages (for some platforms, not always needed)
-    // No-op: osc.js will deliver messages sent to remoteAddress:remotePort if that matches localAddress:localPort
-    try {
-      const cfg = getOscConfig();
-      oscOutputChannel.appendLine(`${getTime()} [OSC] Listening on ${cfg.localAddress}:${cfg.localPort} | Remote target ${cfg.remoteAddress}:${cfg.remotePort}`);
-    } catch { }
-  });
-  oscPort.on("message", onOscMessage);
-
-  try {
-    (oscPort as any).on && (oscPort as any).on('error', (err: any) => {
-      try { oscOutputChannel.appendLine(`${getTime()} [OSC] Error: ${err && err.message ? err.message : String(err)}`); } catch { }
-    });
-  } catch { }
-}
-setupOscPort();
+// --- OSC moved to ./osc/oscService ---
 
 
 // Command to clear highlight, for use with keybinding
@@ -875,29 +113,18 @@ export function activate(context: vscode.ExtensionContext) {
   // --- VARIABLES PANEL RELAY LOGIC ---
   // These must be defined at the extension activation scope
   // so they can be accessed from message handlers and the provider
-  let latestGlobalVars: { name: string, value: any, type: string }[] = [];
   // Track variables per sketch (doc URI) so switching tabs updates the VARIABLES panel accordingly
   const latestGlobalVarsByDoc = new Map<string, { name: string, value: any, type: string }[]>();
-  let variablesPanelView: vscode.WebviewView | undefined;
-  function updateVariablesPanel() {
-    if (!variablesPanelView) return;
-    try {
-      const panel = getActiveP5Panel();
-      let vars: { name: string, value: any, type: string }[] = [];
-      if (panel) {
-        const docUri = getDocUriForPanel(panel)?.toString();
-        if (docUri && latestGlobalVarsByDoc.has(docUri)) {
-          vars = latestGlobalVarsByDoc.get(docUri) || [];
-        }
-        // Keep legacy cache in sync for any code still reading it
-        latestGlobalVars = vars;
-      } else {
-        // No active P5 panel; show empty state in VARIABLES panel
-        latestGlobalVars = [];
-      }
-      variablesPanelView.webview.postMessage({ type: 'setGlobalVars', variables: latestGlobalVars });
-    } catch { }
-  }
+  // Initialize OSC service with broadcast to all open P5 panels
+  let oscService: OscServiceApi | null = null;
+  const broadcastOscToPanels = (address: string, args: any[]) => {
+    for (const [, panel] of webviewPanelMap.entries()) {
+      try {
+        panel.webview.postMessage({ type: 'oscReceive', address, args });
+      } catch { }
+    }
+  };
+  oscService = initOsc(broadcastOscToPanels);
   // Helper: find active P5 panel
   function getActiveP5Panel(): vscode.WebviewPanel | undefined {
     // 1) If a webview tab is focused, resolve by matching the tab label to a panel title
@@ -945,6 +172,14 @@ export function activate(context: vscode.ExtensionContext) {
     }
     return undefined;
   }
+
+  // Register VARIABLES view provider (moved to views/variablesView)
+  const { updateVariablesPanel } = registerVariablesView(context, {
+    getActiveP5Panel: () => getActiveP5Panel(),
+    getDocUriForPanel: (p) => getDocUriForPanel(p),
+    getVarsForDoc: (docUri: string) => latestGlobalVarsByDoc.get(docUri) || [],
+    setVarsForDoc: (docUri: string, list) => { latestGlobalVarsByDoc.set(docUri, list); }
+  });
 
   context.subscriptions.push(vscode.commands.registerCommand('P5Studio.stepRun', async () => {
     let editor = vscode.window.activeTextEditor;
@@ -1192,836 +427,40 @@ export function activate(context: vscode.ExtensionContext) {
       context.workspaceState.update(migrateKey, true);
     }
   } catch { /* ignore migration issues */ }
-  // Create output channel and register with context to ensure it appears in Output panel
-  // Register TEST panel view provider
+
+  // Register Blockly feature and obtain API hooks
+  const blocklyApi: BlocklyApi = registerBlockly(context, {
+    addToRestore,
+    removeFromRestore,
+    RESTORE_BLOCKLY_KEY,
+    updateP5WebviewTabContext,
+  });
+  // Variables view provider registered via registerVariablesView
+  // Linting: delegated to src/lint
+  const lintApi: LintApi = registerLinting(context, {
+    getOrCreateOutputChannel,
+    getPanelForDocUri: (docUri: string) => webviewPanelMap.get(docUri),
+    getTime,
+  });
+
+  // Cleanup: clear any pre-existing lint diagnostics for documents without a LIVE P5 panel
   try {
-    // (Declarations moved to top-level activate scope)
-    const provider: vscode.WebviewViewProvider = {
-      resolveWebviewView(webviewView: vscode.WebviewView) {
-        variablesPanelView = webviewView;
-        webviewView.webview.options = {
-          enableScripts: true,
-          localResourceRoots: [vscode.Uri.file(context.extensionPath)]
-        } as any;
-        webviewView.webview.html = `<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="UTF-8" />
-    <style>
-      body { margin: 0; font-family: monospace; color: var(--vscode-editor-foreground); background: transparent; }
-      .wrap { padding: 8px; }
-      .muted { opacity: 0.8; }
-      table { border-collapse: collapse; width: 100%; font-size: 15px; }
-  th, td { border: 1px solid #8884; padding: 4px 8px; text-align: left; }
-  th { background: #2222; color: #307dc1; }
-      /* Make inputs fill the table cell */
-      input[type="number"],
-      input[type="text"] {
-        width: 100%;
-        max-width: 100%;
-        box-sizing: border-box;
-        display: block;
-      }
-      input[type="checkbox"] { transform: scale(1.2); }
-    </style>
-  </head>
-  <body>
-    <div class="wrap">
-      <div id="vars-table"></div>
-    </div>
-    <script>
-      // Acquire VS Code API once and reuse
-      const vscode = window.acquireVsCodeApi ? acquireVsCodeApi() : null;
-      function sendVarUpdate(name, value) {
-        if (vscode) {
-          vscode.postMessage({ type: 'updateGlobalVar', name: name, value: value });
-        } else if (window.parent) {
-          parent.postMessage({ type: 'updateGlobalVar', name: name, value: value }, '*');
-        }
-      }
-      // Live-patch support to avoid rebuilding the table on each update
-      var _varsRendered = false;
-      var _varsIndex = new Map(); // name -> { type }
-      function normalizeForInput(type, v) {
-        if (type === 'number') {
-          var n = Number(v);
-          return Number.isNaN(n) ? '' : String(n);
-        }
-        if (type === 'boolean') return !!v;
-        return (v === undefined || v === null) ? '' : String(v);
-      }
-      function buildTable(vars) {
-        var tableDiv = document.getElementById('vars-table');
-        if (!tableDiv) return;
-        if (!vars.length) {
-          tableDiv.innerHTML = '<span class="muted">No global variables</span>';
-          _varsRendered = true; _varsIndex = new Map();
-          return;
-        }
-        var html = '<table><thead><tr><th>Name</th><th>Value</th><th>Type</th></tr></thead><tbody>';
-        _varsIndex = new Map();
-        for (var i = 0; i < vars.length; ++i) {
-          var v = vars[i];
-          _varsIndex.set(v.name, { type: v.type });
-          html += '<tr><td>' + v.name + '</td><td>';
-          if (v.type === 'boolean') {
-            html += '<input type="checkbox" data-var="' + v.name + '"' + (v.value ? ' checked' : '') + ' />';
-          } else if (v.type === 'number') {
-            html += '<input type="number" data-var="' + v.name + '" value="' + normalizeForInput('number', v.value) + '" step="any" />';
-          } else {
-            html += '<input type="text" data-var="' + v.name + '" value="' + normalizeForInput('text', v.value) + '" />';
-          }
-          html += '</td><td>' + v.type + '</td></tr>';
-        }
-        html += '</tbody></table>';
-        tableDiv.innerHTML = html;
-        var inputs = tableDiv.querySelectorAll('input[data-var]');
-        inputs.forEach(function(input) {
-          var name = input.getAttribute('data-var');
-          if (input.type === 'checkbox') {
-            // Checkbox: change is fine (no continuous intermediate states)
-            input.addEventListener('change', function() { sendVarUpdate(name, input.checked); });
-          } else if (input.type === 'number') {
-            // Number: send on every increment/decrement or typed change
-            let numDebounceTimer = null;
-            input.addEventListener('input', function() {
-              if (numDebounceTimer) clearTimeout(numDebounceTimer);
-              numDebounceTimer = setTimeout(function() {
-                if (input.value === '') { sendVarUpdate(name, ''); return; }
-                var num = Number(input.value);
-                if (!Number.isNaN(num)) sendVarUpdate(name, num); else sendVarUpdate(name, '');
-              }, 25);
-            });
-            // Also fire a final confirmation on blur (optional redundancy)
-            input.addEventListener('change', function() {
-              if (input.value === '') { sendVarUpdate(name, ''); return; }
-              var num = Number(input.value);
-              if (!Number.isNaN(num)) sendVarUpdate(name, num); else sendVarUpdate(name, '');
-            });
-          } else {
-            // Text: live updates while typing
-            let textDebounceTimer = null;
-            input.addEventListener('input', function() {
-              if (textDebounceTimer) clearTimeout(textDebounceTimer);
-              textDebounceTimer = setTimeout(function() {
-                sendVarUpdate(name, input.value);
-              }, 25);
-            });
-            // Optional final send on change (kept for consistency; cheap)
-            input.addEventListener('change', function() { sendVarUpdate(name, input.value); });
-          }
-        });
-        _varsRendered = true;
-      }
-      function patchValues(vars) {
-        var tableDiv = document.getElementById('vars-table');
-        if (!tableDiv) return;
-        var needRebuild = false;
-        // Fast check: if count differs, rebuild
-        if (_varsIndex.size !== vars.length) needRebuild = true;
-        for (var i = 0; i < vars.length && !needRebuild; ++i) {
-          var v = vars[i];
-          var meta = _varsIndex.get(v.name);
-          if (!meta || meta.type !== v.type) { needRebuild = true; break; }
-        }
-        if (needRebuild || !_varsRendered) { buildTable(vars); return; }
-        // Patch existing inputs
-        for (var j = 0; j < vars.length; ++j) {
-          var vv = vars[j];
-          var input = tableDiv.querySelector('input[data-var="' + vv.name + '"]');
-          if (!input) { needRebuild = true; break; }
-          if (input === document.activeElement) continue; // don't clobber while typing
-          if (vv.type === 'boolean') {
-            var chk = !!vv.value;
-            if (input.checked !== chk) input.checked = chk;
-          } else if (vv.type === 'number') {
-            var valStr = normalizeForInput('number', vv.value);
-            if (input.value !== valStr) input.value = valStr;
-          } else {
-            var tStr = normalizeForInput('text', vv.value);
-            if (input.value !== tStr) input.value = tStr;
-          }
-        }
-        if (needRebuild) buildTable(vars);
-      }
-      window.addEventListener('message', function(event) {
-        if (event.data && event.data.type === 'setGlobalVars') {
-          var vars = event.data.variables || [];
-          if (!_varsRendered) buildTable(vars); else patchValues(vars);
-        }
-      });
-    </script>
-  </body>
-</html>`;
-        // On first load, show latest vars if available
-        setTimeout(updateVariablesPanel, 100);
-
-        // Attach message listener for updates coming from VARIABLES panel
-        webviewView.webview.onDidReceiveMessage((msg) => {
-          if (msg && msg.type === 'updateGlobalVar' && msg.name) {
-            // 1) Immediately update our cached variables for the ACTIVE sketch and refresh the VARIABLES panel
-            try {
-              const name = String(msg.name);
-              const value = msg.value;
-              const panel = getActiveP5Panel();
-              const docUri = panel ? getDocUriForPanel(panel)?.toString() : undefined;
-              if (docUri) {
-                const list = latestGlobalVarsByDoc.get(docUri) || [];
-                const idx = list.findIndex(v => v.name === name);
-                if (idx >= 0) {
-                  // preserve type; only change value
-                  list[idx] = { ...list[idx], value };
-                } else {
-                  // infer a basic type for new entries
-                  const t = typeof value;
-                  const type = (t === 'boolean' || t === 'number') ? t : 'string';
-                  list.push({ name, value, type });
-                }
-                latestGlobalVarsByDoc.set(docUri, list);
-              }
-              updateVariablesPanel();
-            } catch { }
-
-            // Relay ONLY to the ACTIVE P5 webview (the one the VARIABLES panel is showing)
-            const activePanel = getActiveP5Panel();
-            if (activePanel && activePanel.webview) {
-              activePanel.webview.postMessage({ type: 'updateGlobalVar', name: msg.name, value: msg.value });
-            }
-          }
-        });
-      }
-    };
-    context.subscriptions.push(
-      vscode.window.registerWebviewViewProvider('p5studioVariablesView', provider)
-    );
-  } catch { }
-  // --- Simple Semicolon Linter (Problems panel) ---
-  const semicolonDiagnostics = vscode.languages.createDiagnosticCollection('semicolon-linter');
-  const undeclaredDiagnostics = vscode.languages.createDiagnosticCollection('undeclared-variable');
-  const noVarDiagnostics = vscode.languages.createDiagnosticCollection('no-var');
-  const equalityDiagnostics = vscode.languages.createDiagnosticCollection('loose-equality');
-  context.subscriptions.push(semicolonDiagnostics);
-  context.subscriptions.push(undeclaredDiagnostics);
-  context.subscriptions.push(noVarDiagnostics);
-  context.subscriptions.push(equalityDiagnostics);
-  // NOTE: We'll log semicolon warnings to the per-sketch output channel on run/reload only.
-
-  type StrictLevel = 'ignore' | 'warn' | 'block';
-  function getStrictLevel(kind: 'Semicolon' | 'Undeclared' | 'NoVar' | 'LooseEquality'): StrictLevel {
-    const cfg = vscode.workspace.getConfiguration('P5Studio');
-    const key = `Strict${kind}Warning` as const;
-    let level = cfg.get<string>(key, 'warn') as StrictLevel;
-    // Migration fallback: map legacy enable*/BlockOn* to a level when new setting missing or invalid
-    const valid = level === 'ignore' || level === 'warn' || level === 'block';
-    if (!valid) level = 'warn';
-    try {
-      if (level) return level;
-    } catch { }
-    // Fallback mapping
-    const enable = cfg.get<boolean>(
-      kind === 'Semicolon' ? 'enableSemicolonWarning' :
-        kind === 'Undeclared' ? 'enableUndeclaredWarning' :
-          kind === 'NoVar' ? 'enableNoVarWarning' : 'enableLooseEqualityWarning', true);
-    const block = cfg.get<boolean>(
-      kind === 'Semicolon' ? 'BlockOnSemicolon' :
-        kind === 'Undeclared' ? 'BlockOnUndeclared' :
-          kind === 'NoVar' ? 'BlockOnNoVar' : 'BlockOnLooseEquality', true);
-    if (!enable) return 'ignore';
-    return block ? 'block' : 'warn';
-  }
-
-  function lintSemicolons(document: vscode.TextDocument) {
-    // Only lint real files; skip output, git, etc.
-    if (document.uri.scheme !== 'file') return;
-    // Target common JS/TS-like files; keep it simple per request
-    const lang = document.languageId;
-    const isJsLike = lang === 'javascript' || lang === 'typescript' || lang === 'javascriptreact' || lang === 'typescriptreact';
-    if (!isJsLike) {
-      semicolonDiagnostics.delete(document.uri);
-      return;
-    }
-    // Honor merged strict setting
-    const level = getStrictLevel('Semicolon');
-    if (level === 'ignore') { semicolonDiagnostics.delete(document.uri); return; }
-
-    const text = document.getText();
-    const diagnostics: vscode.Diagnostic[] = [];
-
-    // Prefer a TypeScript AST for both TS and JS (handles JSX/TSX and multi-line chains)
-    let usedAst = false;
-    try {
-      const ts = require('typescript');
-      const scriptKind = ((): any => {
-        if (lang === 'typescript') return ts.ScriptKind.TS;
-        if (lang === 'typescriptreact') return ts.ScriptKind.TSX;
-        if (lang === 'javascriptreact') return ts.ScriptKind.JSX;
-        return ts.ScriptKind.JS;
-      })();
-      const sf = ts.createSourceFile(document.fileName, text, ts.ScriptTarget.Latest, true, scriptKind);
-      usedAst = true;
-      const wants = new Set<number>([
-        ts.SyntaxKind.ExpressionStatement,
-        ts.SyntaxKind.VariableStatement,
-        ts.SyntaxKind.ReturnStatement,
-        ts.SyntaxKind.ThrowStatement,
-        ts.SyntaxKind.BreakStatement,
-        ts.SyntaxKind.ContinueStatement
-      ]);
-      function addDiagAt(endIndex: number) {
-        if (endIndex > 0 && text[endIndex - 1] === ';') return;
-        const endPos = document.positionAt(endIndex);
-        const range = new vscode.Range(endPos, endPos);
-        const diag = new vscode.Diagnostic(range, 'Missing semicolon.', vscode.DiagnosticSeverity.Warning);
-        diag.source = 'Semicolon Linter';
-        diagnostics.push(diag);
-      }
-      function walk(node: any, parent: any = null) {
-        try {
-          if (!node) return;
-          const kind = node.kind;
-          if (wants.has(kind)) {
-            // Variable statements inside for-header appear as VariableDeclarationList, not VariableStatement
-            // So no special-case needed here.
-            const end = node.getEnd();
-            addDiagAt(end);
-          }
-        } catch { }
-        try { node.forEachChild((c: any) => walk(c, node)); } catch { }
-      }
-      walk(sf, null);
-    } catch {
-      usedAst = false;
-    }
-
-    // If TS failed and this is plain JS, try Acorn AST before heuristic fallback
-    if (!usedAst && (lang === 'javascript' || lang === 'javascriptreact')) {
-      try {
-        const acorn = require('acorn');
-        const ast: any = acorn.parse(text, { ecmaVersion: 2020, sourceType: 'script', ranges: true });
-        usedAst = true;
-        const wantsSemicolon = new Set(['ExpressionStatement', 'VariableDeclaration', 'ReturnStatement', 'ThrowStatement', 'BreakStatement', 'ContinueStatement']);
-        function addDiagAt(endIndex: number) {
-          if (endIndex > 0 && text[endIndex - 1] === ';') return;
-          const endPos = document.positionAt(endIndex);
-          const range = new vscode.Range(endPos, endPos);
-          const diag = new vscode.Diagnostic(range, 'Missing semicolon.', vscode.DiagnosticSeverity.Warning);
-          diag.source = 'Semicolon Linter';
-          diagnostics.push(diag);
-        }
-        function visit(node: any, parent: any = null) {
-          if (!node || typeof node.type !== 'string') return;
-          if (wantsSemicolon.has(node.type) && typeof node.end === 'number') {
-            if (node.type === 'VariableDeclaration' && parent && (
-              (parent.type === 'ForStatement' && parent.init === node) ||
-              (parent.type === 'ForInStatement' && parent.left === node) ||
-              (parent.type === 'ForOfStatement' && parent.left === node)
-            )) {
-              // skip
-            } else {
-              addDiagAt(node.end);
-            }
-          }
-          for (const key of Object.keys(node)) {
-            const child = (node as any)[key];
-            if (!child) continue;
-            if (Array.isArray(child)) {
-              for (const c of child) visit(c, node);
-            } else if (typeof child === 'object' && typeof child.type === 'string') {
-              visit(child, node);
-            }
-          }
-        }
-        visit(ast, null);
-      } catch { usedAst = false; }
-    }
-
-    // Heuristic fallback (works for TS/JS and when parse fails)
-    if (!usedAst) {
-      // Heuristic fallback: track open brackets/parentheses to avoid flagging continued lines
-      const lines = text.split(/\r?\n/);
-      let paren = 0, bracket = 0, brace = 0, inTemplate = false;
-      const isEscaped = (s: string, i: number) => i > 0 && s[i - 1] === '\\' && !isEscaped(s, i - 1);
-      for (let i = 0; i < lines.length; i++) {
-        let line = lines[i];
-        // Remove single-line comments
-        const slIdx = line.indexOf('//');
-        if (slIdx >= 0) line = line.slice(0, slIdx);
-        // Track brackets roughly
-        for (let j = 0; j < line.length; j++) {
-          const ch = line[j];
-          if (ch === '`' && !isEscaped(line, j)) inTemplate = !inTemplate;
-          if (inTemplate) continue;
-          if (ch === '(') paren++; else if (ch === ')') paren = Math.max(0, paren - 1);
-          else if (ch === '[') bracket++; else if (ch === ']') bracket = Math.max(0, bracket - 1);
-          else if (ch === '{') brace++; else if (ch === '}') brace = Math.max(0, brace - 1);
-        }
-        const trimmed = line.trimEnd();
-        if (trimmed.length === 0) continue;
-        const lower = trimmed.toLowerCase();
-        const endsWith = (s: string) => trimmed.endsWith(s);
-        const skipEndChars = [';', '{', '}', ',', ':', '(', ')', '[', ']', '`'];
-        const skipEndings = ['=>', '++', '--', '.', '?', '?.', '??', '||', '&&', '+', '-', '*', '/', '%', '=', '+=', '-=', '*=', '/=', '%=', '?:', ','];
-        const startsWithKeywords = ['if', 'for', 'while', 'switch', 'else', 'do', 'try', 'catch', 'finally', 'class', 'interface', 'enum'];
-        const startsWithTsTypes = ['type '];
-        const continued = (paren + bracket) > 0 || skipEndChars.some(c => endsWith(c)) || skipEndings.some(s => endsWith(s));
-        if (continued || startsWithKeywords.some(k => lower.startsWith(k + ' ')) || startsWithTsTypes.some(k => lower.startsWith(k))) {
-          continue;
-        }
-        if (!endsWith(';')) {
-          const eolPos = new vscode.Position(i, lines[i].length);
-          const range = new vscode.Range(eolPos, eolPos);
-          const diag = new vscode.Diagnostic(range, 'Missing semicolon.', vscode.DiagnosticSeverity.Warning);
-          diag.source = 'Semicolon Linter';
-          diagnostics.push(diag);
-        }
+    for (const doc of vscode.workspace.textDocuments || []) {
+      const uriStr = doc.uri.toString();
+      if (doc.uri.scheme === 'file' && !webviewPanelMap.has(uriStr)) {
+        try { lintApi.clearDiagnosticsForDocument(doc.uri); } catch { }
       }
     }
-
-    semicolonDiagnostics.set(document.uri, diagnostics);
-
-  }
+  } catch { /* ignore */ }
 
   function lintActiveEditor() {
     const ed = vscode.window.activeTextEditor;
-    if (ed) { lintSemicolons(ed.document); lintUndeclaredVariables(ed.document); lintNoVar(ed.document); lintLooseEquality(ed.document); }
-  }
-
-  function logSemicolonWarningsForDocument(document: vscode.TextDocument) {
-    // Ensure diagnostics are up to date for this document
-    lintSemicolons(document);
-    const diags = semicolonDiagnostics.get(document.uri) || [];
-    if (diags.length === 0) return;
-    const uniqLines = Array.from(new Set(diags.map(d => d.range.start.line + 1))).sort((a, b) => a - b);
-    const docUri = document.uri.toString();
-    const fileName = path.basename(document.fileName);
-    const outputChannel = getOrCreateOutputChannel(docUri, fileName);
-    const warningText = `Missing semicolon on line(s): ${uniqLines.join(', ')}`;
-    const fullWarning = `[⚠️WARNING in ${fileName}] ${warningText}`;
-    outputChannel.appendLine(`${getTime()} ${fullWarning}`);
-    // Also show the warning overlay in the corresponding webview (no timestamp)
-    const panel = webviewPanelMap.get(docUri);
-    const level = getStrictLevel('Semicolon');
-    if (panel && level === 'block') {
-      panel.webview.postMessage({ type: 'showWarning', message: fullWarning });
-    }
-  }
-
-  function hasSemicolonWarnings(document: vscode.TextDocument): { has: boolean; lines: number[] } {
-    lintSemicolons(document);
-    const diags = semicolonDiagnostics.get(document.uri) || [];
-    const lines = Array.from(new Set(diags.map(d => d.range.start.line + 1))).sort((a, b) => a - b);
-    return { has: diags.length > 0, lines };
-  }
-
-  // Undeclared variable helpers
-  function hasUndeclaredWarnings(document: vscode.TextDocument): { has: boolean; items: Array<{ name: string; line: number }> } {
-    lintUndeclaredVariables(document);
-    const diags = undeclaredDiagnostics.get(document.uri) || [];
-    const items: Array<{ name: string; line: number }> = [];
-    for (const d of diags) {
-      try {
-        const msg = String(d.message || '');
-        const m = msg.match(/Undeclared variable:\s*(.+)$/i);
-        const name = m && m[1] ? m[1].trim() : '';
-        items.push({ name, line: (d.range?.start?.line ?? 0) + 1 });
-      } catch { }
-    }
-    return { has: items.length > 0, items };
-  }
-
-  function logUndeclaredWarningsForDocument(document: vscode.TextDocument) {
-    lintUndeclaredVariables(document);
-    const diags = undeclaredDiagnostics.get(document.uri) || [];
-    if (diags.length === 0) return;
-    const docUri = document.uri.toString();
-    const fileName = path.basename(document.fileName);
-    const outputChannel = getOrCreateOutputChannel(docUri, fileName);
-    // Group by name -> lines
-    const map = new Map<string, number[]>();
-    for (const d of diags) {
-      try {
-        const msg = String(d.message || '');
-        const m = msg.match(/Undeclared variable:\s*(.+)$/i);
-        const name = m && m[1] ? m[1].trim() : '';
-        const line = (d.range?.start?.line ?? 0) + 1;
-        if (!map.has(name)) map.set(name, []);
-        map.get(name)!.push(line);
-      } catch { }
-    }
-    const parts: string[] = [];
-    for (const [name, lines] of map.entries()) {
-      const uniq = Array.from(new Set(lines)).sort((a, b) => a - b);
-      if (name) parts.push(`${name} (line${uniq.length > 1 ? 's' : ''}: ${uniq.join(', ')})`);
-    }
-    const warningText = parts.length > 0
-      ? `Undeclared variable(s): ${parts.join(', ')}`
-      : `Undeclared variable(s) detected.`;
-    const fullWarning = `[⚠️WARNING in ${fileName}] ${warningText}`;
-    outputChannel.appendLine(`${getTime()} ${fullWarning}`);
-    const panel = webviewPanelMap.get(docUri);
-    const level = getStrictLevel('Undeclared');
-    if (panel && level === 'block') {
-      panel.webview.postMessage({ type: 'showWarning', message: fullWarning });
-    }
-  }
-
-  // No-var helpers
-  function hasVarWarnings(document: vscode.TextDocument): { has: boolean; lines: number[] } {
-    lintNoVar(document);
-    const diags = noVarDiagnostics.get(document.uri) || [];
-    const lines = Array.from(new Set(diags.map(d => (d.range?.start?.line ?? 0) + 1))).sort((a, b) => a - b);
-    return { has: diags.length > 0, lines };
-  }
-
-  function logVarWarningsForDocument(document: vscode.TextDocument) {
-    lintNoVar(document);
-    const diags = noVarDiagnostics.get(document.uri) || [];
-    if (diags.length === 0) return;
-    const docUri = document.uri.toString();
-    const fileName = path.basename(document.fileName);
-    const outputChannel = getOrCreateOutputChannel(docUri, fileName);
-    const uniqLines = Array.from(new Set(diags.map(d => (d.range?.start?.line ?? 0) + 1))).sort((a, b) => a - b);
-    const warningText = `Avoid var; use let instead on line(s): ${uniqLines.join(', ')}`;
-    const fullWarning = `[⚠️WARNING in ${fileName}] ${warningText}`;
-    outputChannel.appendLine(`${getTime()} ${fullWarning}`);
-    const panel = webviewPanelMap.get(docUri);
-    const level = getStrictLevel('NoVar');
-    if (panel && level === 'block') {
-      panel.webview.postMessage({ type: 'showWarning', message: fullWarning });
-    }
-  }
-
-  // Loose equality helpers (non-blocking)
-  function hasEqualityWarnings(document: vscode.TextDocument): { has: boolean; eqLines: number[]; neqLines: number[] } {
-    lintLooseEquality(document);
-    const diags = equalityDiagnostics.get(document.uri) || [];
-    const eqLines: number[] = [];
-    const neqLines: number[] = [];
-    for (const d of diags) {
-      const line = (d.range?.start?.line ?? 0) + 1;
-      if (/!==/.test(d.message)) neqLines.push(line);
-      else if (/===/.test(d.message)) eqLines.push(line);
-    }
-    return { has: diags.length > 0, eqLines: Array.from(new Set(eqLines)).sort((a, b) => a - b), neqLines: Array.from(new Set(neqLines)).sort((a, b) => a - b) };
-  }
-
-  function logEqualityWarningsForDocument(document: vscode.TextDocument) {
-    lintLooseEquality(document);
-    const diags = equalityDiagnostics.get(document.uri) || [];
-    if (diags.length === 0) return;
-    const docUri = document.uri.toString();
-    const fileName = path.basename(document.fileName);
-    const outputChannel = getOrCreateOutputChannel(docUri, fileName);
-    const { eqLines, neqLines } = hasEqualityWarnings(document);
-    const level = getStrictLevel('LooseEquality');
-    if (level !== 'ignore') {
-      if (eqLines.length) outputChannel.appendLine(`${getTime()} [⚠️WARNING in ${fileName}] Use '===' instead of '==' on line(s): ${eqLines.join(', ')}`);
-      if (neqLines.length) outputChannel.appendLine(`${getTime()} [⚠️WARNING in ${fileName}] Use '!==' instead of '!=' on line(s): ${neqLines.join(', ')}`);
-    }
-  }
-
-  // Combined logger for blocking scenarios: compose both warnings into a single overlay message
-  function logBlockingWarningsForDocument(document: vscode.TextDocument) {
-    const docUri = document.uri.toString();
-    const fileName = path.basename(document.fileName);
-    const outputChannel = getOrCreateOutputChannel(docUri, fileName);
-    const semi = hasSemicolonWarnings(document);
-    const und = hasUndeclaredWarnings(document);
-    const nov = hasVarWarnings(document);
-    const lines = semi.lines;
-    const semiMsg = semi.has ? `[⚠️WARNING in ${fileName}] Missing semicolon on line(s): ${lines.join(', ')}` : '';
-    // Build undeclared text
-    const undParts: string[] = [];
-    for (const it of und.items) {
-      if (!it.name) continue;
-      undParts.push(`${it.name} (line ${it.line})`);
-    }
-    const undMsg = und.has ? `[⚠️WARNING in ${fileName}] Undeclared variable(s): ${undParts.join(', ')}` : '';
-    const novMsg = nov.has ? `[⚠️WARNING in ${fileName}] Avoid var; use let instead on line(s): ${nov.lines.join(', ')}` : '';
-    // Equality (non-blocking): compute but don't include in overlay
-    const eq = hasEqualityWarnings(document);
-    const eqMsgEq = eq.eqLines.length ? `[⚠️WARNING in ${fileName}] Use '===' instead of '==' on line(s): ${eq.eqLines.join(', ')}` : '';
-    const eqMsgNeq = eq.neqLines.length ? `[⚠️WARNING in ${fileName}] Use '!==' instead of '!=' on line(s): ${eq.neqLines.join(', ')}` : '';
-
-    // Output channel: write each non-empty message with timestamp
-    if (semiMsg) outputChannel.appendLine(`${getTime()} ${semiMsg}`);
-    if (undMsg) outputChannel.appendLine(`${getTime()} ${undMsg}`);
-    if (novMsg) outputChannel.appendLine(`${getTime()} ${novMsg}`);
-    if (eqMsgEq) outputChannel.appendLine(`${getTime()} ${eqMsgEq}`);
-    if (eqMsgNeq) outputChannel.appendLine(`${getTime()} ${eqMsgNeq}`);
-    // Overlay: combine into one message without timestamps
-    const panel = webviewPanelMap.get(docUri);
-    const lvlSemi = getStrictLevel('Semicolon');
-    const lvlUnd = getStrictLevel('Undeclared');
-    const lvlNoVar = getStrictLevel('NoVar');
-    const lvlLoose = getStrictLevel('LooseEquality');
-    const overlayParts = [
-      (lvlSemi === 'block') ? semiMsg : '',
-      (lvlUnd === 'block') ? undMsg : '',
-      (lvlNoVar === 'block') ? novMsg : '',
-      (lvlLoose === 'block') ? [eqMsgEq, eqMsgNeq].filter(Boolean).join('\n') : ''
-    ].filter(Boolean);
-    const overlay = overlayParts.join('\n');
-    if (panel && overlay) {
-      panel.webview.postMessage({ type: 'showWarning', message: overlay });
-    }
-  }
-
-  // --- Undeclared variable linter ---
-  function lintUndeclaredVariables(document: vscode.TextDocument) {
-    try {
-      if (document.uri.scheme !== 'file') return;
-      const lang = document.languageId;
-      const isJsLike = lang === 'javascript' || lang === 'typescript' || lang === 'javascriptreact' || lang === 'typescriptreact';
-      if (!isJsLike) { undeclaredDiagnostics.delete(document.uri); return; }
-      const level = getStrictLevel('Undeclared');
-      if (level === 'ignore') { undeclaredDiagnostics.delete(document.uri); return; }
-      const text = document.getText();
-      const diagnostics: vscode.Diagnostic[] = [];
-      // Parse with TS to get a robust AST
-      const ts = require('typescript');
-      const scriptKind = ((): any => {
-        if (lang === 'typescript') return ts.ScriptKind.TS;
-        if (lang === 'typescriptreact') return ts.ScriptKind.TSX;
-        if (lang === 'javascriptreact') return ts.ScriptKind.JSX;
-        return ts.ScriptKind.JS;
-      })();
-      const sf = ts.createSourceFile(document.fileName, text, ts.ScriptTarget.Latest, true, scriptKind);
-      // Collect declared identifiers (file-wide union to avoid false positives)
-      const declared = new Set<string>();
-      const addName = (id: any) => { try { if (id && id.escapedText) declared.add(String(id.escapedText)); } catch { } };
-      function addFromBindingName(name: any) {
-        try {
-          if (!name) return;
-          if (ts.isIdentifier(name)) addName(name);
-          else if (ts.isArrayBindingPattern(name)) name.elements.forEach((e: any) => addFromBindingName(e.name));
-          else if (ts.isObjectBindingPattern(name)) name.elements.forEach((e: any) => addFromBindingName(e.name));
-        } catch { }
+    if (ed) {
+      // Only lint documents that have an associated LIVE P5 panel
+      const docUri = ed.document.uri.toString();
+      if (webviewPanelMap.has(docUri)) {
+        lintApi.lintAll(ed.document);
       }
-      function collect(node: any) {
-        try {
-          if (!node) return;
-          switch (node.kind) {
-            case ts.SyntaxKind.VariableDeclarationList: {
-              // Covers declarations in for (let i = 0; ...) headers and similar
-              node.declarations?.forEach((d: any) => addFromBindingName(d.name));
-              break;
-            }
-            case ts.SyntaxKind.VariableStatement: {
-              node.declarationList?.declarations?.forEach((d: any) => addFromBindingName(d.name));
-              break;
-            }
-            case ts.SyntaxKind.FunctionDeclaration: {
-              if (node.name) addName(node.name);
-              node.parameters?.forEach((p: any) => addFromBindingName(p.name));
-              break;
-            }
-            case ts.SyntaxKind.FunctionExpression:
-            case ts.SyntaxKind.ArrowFunction: {
-              node.parameters?.forEach((p: any) => addFromBindingName(p.name));
-              break;
-            }
-            case ts.SyntaxKind.ClassDeclaration:
-            case ts.SyntaxKind.EnumDeclaration:
-            case ts.SyntaxKind.InterfaceDeclaration:
-            case ts.SyntaxKind.TypeAliasDeclaration:
-            case ts.SyntaxKind.ModuleDeclaration: {
-              if (node.name) addName(node.name);
-              break;
-            }
-            case ts.SyntaxKind.ImportDeclaration: {
-              try {
-                const clause = node.importClause;
-                if (clause) {
-                  if (clause.name) addName(clause.name);
-                  const ns = clause.namedBindings;
-                  if (ns && ts.isNamespaceImport(ns) && ns.name) addName(ns.name);
-                  if (ns && ts.isNamedImports(ns)) ns.elements?.forEach((el: any) => addName(el.name));
-                }
-              } catch { }
-              break;
-            }
-            case ts.SyntaxKind.CatchClause: {
-              try { if (node.variableDeclaration?.name) addFromBindingName(node.variableDeclaration.name); } catch { }
-              break;
-            }
-          }
-        } catch { }
-        try { node.forEachChild(collect); } catch { }
-      }
-      collect(sf);
-      // Additional ignores
-      const IGNORE_NAMES = new Set(['this', 'super', 'arguments']);
-      // Heuristic: skip identifiers in non-value positions
-      const skipParentKinds = new Set<number>([
-        ts.SyntaxKind.PropertyDeclaration,
-        ts.SyntaxKind.PropertySignature,
-        ts.SyntaxKind.MethodDeclaration,
-        ts.SyntaxKind.MethodSignature,
-        ts.SyntaxKind.PropertyAssignment, // key of { foo: bar }
-        ts.SyntaxKind.GetAccessor,
-        ts.SyntaxKind.SetAccessor,
-        ts.SyntaxKind.ImportSpecifier,
-        ts.SyntaxKind.ExportSpecifier,
-        ts.SyntaxKind.ShorthandPropertyAssignment, // handled separately (should be a reference)
-        ts.SyntaxKind.BindingElement,
-        ts.SyntaxKind.Parameter,
-        ts.SyntaxKind.TypeReference,
-        ts.SyntaxKind.TypeAliasDeclaration,
-        ts.SyntaxKind.InterfaceDeclaration,
-        ts.SyntaxKind.TypeLiteral,
-        ts.SyntaxKind.QualifiedName,
-        ts.SyntaxKind.EnumMember,
-        ts.SyntaxKind.ModuleDeclaration,
-        ts.SyntaxKind.LabeledStatement,
-      ]);
-      const reported = new Set<string>();
-      function maybeReport(id: any) {
-        try {
-          const name = String(id.escapedText || '');
-          if (!name) return;
-          if (IGNORE_NAMES.has(name)) return;
-          if (RESERVED_GLOBALS.has(name)) return;
-          const parent = id.parent;
-          // Ignore identifiers used as a callee in function calls or constructions
-          if (parent && (
-            (ts.isCallExpression(parent) && parent.expression === id) ||
-            (ts.isNewExpression(parent) && parent.expression === id) ||
-            (ts.isTaggedTemplateExpression(parent) && parent.tag === id)
-          )) { return; }
-          // Ignore property accesses obj.foo (foo part)
-          if (parent && ts.isPropertyAccessExpression(parent) && parent.name === id) return;
-          // Ignore property keys in assignment { foo: ... }
-          if (parent && parent.kind === ts.SyntaxKind.PropertyAssignment && parent.name === id) return;
-          // Ignore declaration positions and type positions
-          if (parent && skipParentKinds.has(parent.kind)) return;
-          // Shorthand {foo} is a usage
-          // If not declared: warn
-          if (!declared.has(name)) {
-            const start = id.getStart(sf);
-            const end = id.getEnd();
-            const key = `${start}:${end}:${name}`;
-            if (reported.has(key)) return;
-            reported.add(key);
-            const startPos = document.positionAt(start);
-            const endPos = document.positionAt(end);
-            const range = new vscode.Range(startPos, endPos);
-            const diag = new vscode.Diagnostic(range, `Undeclared variable: ${name}`, vscode.DiagnosticSeverity.Warning);
-            diag.source = 'Undeclared Variable';
-            diagnostics.push(diag);
-          }
-        } catch { }
-      }
-      function walkRefs(node: any) {
-        try {
-          if (ts.isIdentifier(node)) maybeReport(node);
-        } catch { }
-        try { node.forEachChild(walkRefs); } catch { }
-      }
-      walkRefs(sf);
-      undeclaredDiagnostics.set(document.uri, diagnostics);
-    } catch {
-      // On failure, clear diagnostics for this doc to avoid stale warnings
-      try { undeclaredDiagnostics.delete(document.uri); } catch { }
-    }
-  }
-
-  // --- No-var linter ---
-  function lintNoVar(document: vscode.TextDocument) {
-    try {
-      if (document.uri.scheme !== 'file') return;
-      const lang = document.languageId;
-      const isJsLike = lang === 'javascript' || lang === 'typescript' || lang === 'javascriptreact' || lang === 'typescriptreact';
-      if (!isJsLike) { noVarDiagnostics.delete(document.uri); return; }
-      const level = getStrictLevel('NoVar');
-      if (level === 'ignore') { noVarDiagnostics.delete(document.uri); return; }
-      const text = document.getText();
-      const diagnostics: vscode.Diagnostic[] = [];
-      const ts = require('typescript');
-      const scriptKind = ((): any => {
-        if (lang === 'typescript') return ts.ScriptKind.TS;
-        if (lang === 'typescriptreact') return ts.ScriptKind.TSX;
-        if (lang === 'javascriptreact') return ts.ScriptKind.JSX;
-        return ts.ScriptKind.JS;
-      })();
-      const sf = ts.createSourceFile(document.fileName, text, ts.ScriptTarget.Latest, true, scriptKind);
-      function maybeReportList(list: any) {
-        try {
-          if (!list) return;
-          // In TS AST, "var" is represented by the absence of Let/Const flags on the VariableDeclarationList
-          const isVar = (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0;
-          if (isVar) {
-            const start = list.getStart(sf);
-            const end = start + 3; // length of 'var'
-            const startPos = document.positionAt(start);
-            const endPos = document.positionAt(Math.min(end, text.length));
-            const range = new vscode.Range(startPos, endPos);
-            const diag = new vscode.Diagnostic(range, 'Avoid var; use let instead.', vscode.DiagnosticSeverity.Warning);
-            diag.source = 'No-var Linter';
-            diagnostics.push(diag);
-          }
-        } catch { }
-      }
-
-      function visit(node: any) {
-        try {
-          if (ts.isVariableStatement(node) && node.declarationList) {
-            maybeReportList(node.declarationList);
-          } else if (ts.isVariableDeclarationList(node)) {
-            maybeReportList(node);
-          }
-        } catch { }
-        try { node.forEachChild(visit); } catch { }
-      }
-      visit(sf);
-      noVarDiagnostics.set(document.uri, diagnostics);
-    } catch {
-      try { noVarDiagnostics.delete(document.uri); } catch { }
-    }
-  }
-
-  // --- Loose equality (==/!=) linter (non-blocking) ---
-  function lintLooseEquality(document: vscode.TextDocument) {
-    try {
-      if (document.uri.scheme !== 'file') return;
-      const lang = document.languageId;
-      const isJsLike = lang === 'javascript' || lang === 'typescript' || lang === 'javascriptreact' || lang === 'typescriptreact';
-      if (!isJsLike) { equalityDiagnostics.delete(document.uri); return; }
-      const level = getStrictLevel('LooseEquality');
-      if (level === 'ignore') { equalityDiagnostics.delete(document.uri); return; }
-      const text = document.getText();
-      const diagnostics: vscode.Diagnostic[] = [];
-      const ts = require('typescript');
-      const scriptKind = ((): any => {
-        if (lang === 'typescript') return ts.ScriptKind.TS;
-        if (lang === 'typescriptreact') return ts.ScriptKind.TSX;
-        if (lang === 'javascriptreact') return ts.ScriptKind.JSX;
-        return ts.ScriptKind.JS;
-      })();
-      const sf = ts.createSourceFile(document.fileName, text, ts.ScriptTarget.Latest, true, scriptKind);
-      function visit(node: any) {
-        try {
-          if (ts.isBinaryExpression(node)) {
-            const op = node.operatorToken?.kind;
-            if (op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken) {
-              const start = node.operatorToken.getStart(sf);
-              const end = node.operatorToken.getEnd();
-              const startPos = document.positionAt(start);
-              const endPos = document.positionAt(end);
-              const range = new vscode.Range(startPos, endPos);
-              const msg = op === ts.SyntaxKind.EqualsEqualsToken ? "Use '===' instead of '=='" : "Use '!==' instead of '!='";
-              const diag = new vscode.Diagnostic(range, msg, vscode.DiagnosticSeverity.Warning);
-              diag.source = 'Equality Linter';
-              diagnostics.push(diag);
-            }
-          }
-        } catch { }
-        try { node.forEachChild(visit); } catch { }
-      }
-      visit(sf);
-      equalityDiagnostics.set(document.uri, diagnostics);
-    } catch {
-      try { equalityDiagnostics.delete(document.uri); } catch { }
     }
   }
 
@@ -2074,9 +513,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Track all open panels to robustly close them on document close (even if untracked)
   const allP5Panels = new Set<vscode.WebviewPanel>();
-  const allBlocklyPanels = new Set<vscode.WebviewPanel>();
   const p5PanelsByPath = new Map<string, Set<vscode.WebviewPanel>>();
-  const blocklyPanelsByPath = new Map<string, Set<vscode.WebviewPanel>>();
 
   // Normalize filesystem paths for use as map keys (fix Windows drive-letter/case issues)
   function normalizeFsPath(p: string | undefined | null): string {
@@ -2095,15 +532,11 @@ export function activate(context: vscode.ExtensionContext) {
     try {
       const p5Set = p5PanelsByPath.get(fsPathNormalized);
       if (p5Set) { for (const p of Array.from(p5Set)) { try { p.dispose(); } catch { } } }
-      const blkSet = blocklyPanelsByPath.get(fsPathNormalized);
-      if (blkSet) { for (const p of Array.from(blkSet)) { try { p.dispose(); } catch { } } }
       // Fallback: scan all tracked panels and dispose any tagged with this path
       for (const p of Array.from(allP5Panels)) {
         try { const tag = normalizeFsPath((p as any)._sketchFilePath || ''); if (tag && tag === fsPathNormalized) { p.dispose(); } } catch { }
       }
-      for (const p of Array.from(allBlocklyPanels)) {
-        try { const tag = normalizeFsPath((p as any)._sketchFilePath || ''); if (tag && tag === fsPathNormalized) { p.dispose(); } } catch { }
-      }
+      try { blocklyApi.disposePanelsForFilePath(fsPathNormalized); } catch { }
     } catch { }
   }
 
@@ -2133,61 +566,6 @@ export function activate(context: vscode.ExtensionContext) {
     if (set.size === 0) map.delete(key);
   }
 
-  // Blockly Webview: command and panel
-  // Track which document opened which blockly panel (for multi-panel support)
-  const blocklyPanelForDocument = new Map<string, vscode.WebviewPanel>();
-  // When a blockly panel is open for a document, we keep track of outstanding extension-updates
-  const ignoreDocumentChangeForBlockly = new Set<string>();
-  const workspaceDebounceTimers = new Map<string, NodeJS.Timeout>();
-  // Map of document URI -> array of { line: number, blockId: string } from Blockly code generation
-  const blocklyLineMapForDocument = new Map<string, Array<{ line: number; blockId: string }>>();
-
-  function extractEmbeddedWorkspaceFromCode(code: string): string | null {
-    if (!code) return null;
-    try {
-      const m = code.match(/\/\*@BlocklyWorkspace\s*([\s\S]*?)\*\//);
-      if (m && m[1]) return m[1].trim();
-    } catch (e) { }
-    return null;
-  }
-
-  // Compute sidecar path for a given document file path.
-  // Sidecar files live in a sibling folder named `.blockly` next to the sketch.
-  // Each sidecar file will be named <original-base>.blockly (no .json extension).
-  function sidecarPathForFile(filePath: string) {
-    try {
-      const dir = path.dirname(filePath);
-      const base = path.basename(filePath);
-      const sidecarDir = path.join(dir, '.blockly');
-      const sidecarName = base + '.blockly';
-      return path.join(sidecarDir, sidecarName);
-    } catch (e) {
-      return null;
-    }
-  }
-
-  // Remove the parent .blockly folder if it becomes empty after removing a sidecar
-  function removeSidecarDirIfEmpty(sidePath: string | null) {
-    try {
-      if (!sidePath) return;
-      const dir = path.dirname(sidePath);
-      if (!fs.existsSync(dir)) return;
-      const files = fs.readdirSync(dir);
-      if (files.length === 0) {
-        try { fs.rmdirSync(dir); } catch { /* ignore */ }
-      }
-    } catch (e) { /* ignore */ }
-  }
-
-  function getNonce() {
-    let text = '';
-    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    for (let i = 0; i < 32; i++) {
-      text += possible.charAt(Math.floor(Math.random() * possible.length));
-    }
-    return text;
-  }
-
   // Check if a VS Code editor breakpoint exists on a given 1-based line for the provided document URI string
   function hasBreakpointOnLine(docUriStr: string, line1Based: number): boolean {
     try {
@@ -2207,338 +585,7 @@ export function activate(context: vscode.ExtensionContext) {
     return false;
   }
 
-  function getBlocklyHtml(panel: vscode.WebviewPanel): string {
-    const webview = panel.webview;
-    const nonce = getNonce();
-    const exampleRoot = vscode.Uri.file(path.join(context.extensionPath, 'blockly'));
-    const exampleRootUri = webview.asWebviewUri(exampleRoot);
-    const indexCss = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'index.css')));
-    const toolboxJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'toolbox.js')));
-    const blocksJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'blocks.js')));
-    const generatorsJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'generators.js')));
-    const appJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'app.js')));
-    const autoBlocksJs = webview.asWebviewUri(vscode.Uri.file(path.join(exampleRoot.fsPath, 'p5_autoblocks.js')));
-    // Prefer local Blockly distribution if present under vendor/blockly, else fall back to CDN
-    const vendorBlocklyRoot = path.join(context.extensionPath, 'vendor', 'blockly');
-    const hasLocalBlockly = (() => {
-      try {
-        return fs.existsSync(path.join(vendorBlocklyRoot, 'blockly_compressed.js')) &&
-          fs.existsSync(path.join(vendorBlocklyRoot, 'blocks_compressed.js')) &&
-          fs.existsSync(path.join(vendorBlocklyRoot, 'javascript_compressed.js')) &&
-          fs.existsSync(path.join(vendorBlocklyRoot, 'msg', 'en.js'));
-      } catch { return false; }
-    })();
-    const blkCore = hasLocalBlockly
-      ? webview.asWebviewUri(vscode.Uri.file(path.join(vendorBlocklyRoot, 'blockly_compressed.js'))).toString()
-      : 'https://unpkg.com/blockly/blockly_compressed.js';
-    const blkBlocks = hasLocalBlockly
-      ? webview.asWebviewUri(vscode.Uri.file(path.join(vendorBlocklyRoot, 'blocks_compressed.js'))).toString()
-      : 'https://unpkg.com/blockly/blocks_compressed.js';
-    const blkJsGen = hasLocalBlockly
-      ? webview.asWebviewUri(vscode.Uri.file(path.join(vendorBlocklyRoot, 'javascript_compressed.js'))).toString()
-      : 'https://unpkg.com/blockly/javascript_compressed.js';
-    const blkMsgEn = hasLocalBlockly
-      ? webview.asWebviewUri(vscode.Uri.file(path.join(vendorBlocklyRoot, 'msg', 'en.js'))).toString()
-      : 'https://unpkg.com/blockly/msg/en.js';
 
-    // Try to read the exported allowlist of blocks and extra categories from assets/<version>/blockly_categories.json
-    let allowedBlocksScript = '';
-    let extraCategoriesScript = '';
-    try {
-      const selectedP5Version = vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11';
-      const versioned = path.join(context.extensionPath, 'assets', selectedP5Version, 'blockly_categories.json');
-      const fallbackV1 = path.join(context.extensionPath, 'assets', '1.11', 'blockly_categories.json');
-      const legacy = path.join(context.extensionPath, 'blockly', 'blockly_categories.json');
-      const allowPath = fs.existsSync(versioned) ? versioned : (fs.existsSync(fallbackV1) ? fallbackV1 : legacy);
-      if (allowPath && fs.existsSync(allowPath)) {
-        const txt = fs.readFileSync(allowPath, 'utf8');
-        try {
-          const obj = JSON.parse(txt);
-          const allowed = new Set<string>();
-          let extraCats: any[] = [];
-          if (obj && Array.isArray(obj.categories)) {
-            for (const cat of obj.categories) {
-              if (cat && Array.isArray(cat.blocks)) {
-                for (const b of cat.blocks) {
-                  if (typeof b === 'string' && b.trim()) {
-                    allowed.add(b);
-                  } else if (b && typeof b === 'object' && typeof b.type === 'string' && b.type.trim()) {
-                    allowed.add(b.type);
-                  }
-                }
-              }
-            }
-            // Pass entire categories array to let the webview append completely new categories
-            extraCats = obj.categories;
-          }
-          const arr = Array.from(allowed);
-          allowedBlocksScript = `<script nonce="${nonce}">\nwindow.ALLOWED_BLOCKS = ${JSON.stringify(arr)};\n<\/script>`;
-          extraCategoriesScript = `<script nonce="${nonce}">\nwindow.EXTRA_TOOLBOX_CATEGORIES = ${JSON.stringify(extraCats)};\n<\/script>`;
-        } catch { /* ignore parse errors */ }
-      }
-    } catch { /* ignore file errors */ }
-
-    // Build a name->category map for p5 functions based on p5types/src folder structure
-    function buildP5CategoryMap(): Record<string, string> {
-      const map: Record<string, string> = {};
-      try {
-        // Resolve p5types location: prefer versioned under assets/<version>/p5types
-        const selectedP5Version = vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11';
-        const srcRoot = (
-          selectedP5Version === '1.11'
-            ? path.join(context.extensionPath, 'assets', '1.11', 'p5types', 'src')
-            : path.join(context.extensionPath, 'assets', selectedP5Version, 'p5types', 'src')
-        );
-        // If the versioned p5types are missing, return empty map (no fallback when not 1.11)
-        if (!fs.existsSync(srcRoot)) {
-          return map;
-        }
-        const topFolders = [
-          'color', 'core', 'data', 'dom', 'events', 'image', 'io', 'math', 'typography', 'utilities', 'webgl'
-        ];
-        const labelForFolder: Record<string, string> = {
-          color: 'Color',
-          core: 'Core',
-          data: 'Data',
-          dom: 'DOM',
-          events: 'Events',
-          image: 'Image',
-          io: 'IO',
-          math: 'Math',
-          typography: 'Typography',
-          utilities: 'Utilities',
-          webgl: 'WebGL',
-        };
-
-        function parseP5InstanceMethodsFromDts(text: string): string[] {
-          const out = new Set<string>();
-          // narrow to interface p5InstanceExtensions block if present
-          const ifaceIdx = text.indexOf('interface p5InstanceExtensions');
-          if (ifaceIdx >= 0) {
-            const tail = text.slice(ifaceIdx);
-            // crude block extraction: from first '{' after interface to next '\n}\n' or end
-            const braceStart = tail.indexOf('{');
-            if (braceStart >= 0) {
-              const body = tail.slice(braceStart + 1);
-              // match lines like: name( ... ): p5;
-              const rx = /\n\s*([a-zA-Z_][\w]*)\s*\(/g;
-              let m: RegExpExecArray | null;
-              while ((m = rx.exec(body))) {
-                const name = m[1];
-                if (!name) continue;
-                // ignore obvious non-methods
-                if (name === 'constructor') continue;
-                out.add(name);
-              }
-            }
-          }
-          return Array.from(out);
-        }
-
-        function addFile(filePath: string, label: string) {
-          try {
-            const text = fs.readFileSync(filePath, 'utf8');
-            const names = parseP5InstanceMethodsFromDts(text);
-            names.forEach(n => { if (!map[n]) map[n] = label; });
-          } catch { }
-        }
-
-        topFolders.forEach(folder => {
-          const abs = path.join(srcRoot, folder);
-          if (!fs.existsSync(abs)) return;
-          const label = labelForFolder[folder] || folder;
-          const entries = fs.readdirSync(abs);
-          entries.forEach(entry => {
-            const full = path.join(abs, entry);
-            const stat = fs.statSync(full);
-            if (stat.isDirectory()) {
-              // Specialize some core subfolders to p5 reference top-level categories
-              let subLabel = label;
-              if (folder === 'core') {
-                if (entry.toLowerCase().includes('shape')) subLabel = 'Shape';
-                else if (entry.toLowerCase().includes('structure')) subLabel = 'Structure';
-                else if (entry.toLowerCase().includes('transform')) subLabel = 'Transform';
-                else if (entry.toLowerCase().includes('environment')) subLabel = 'Environment';
-                else if (entry.toLowerCase().includes('render')) subLabel = 'Rendering';
-                else if (entry.toLowerCase().includes('constants')) subLabel = 'Constants';
-              } else if (folder === 'webgl') {
-                subLabel = 'WebGL';
-              }
-              const subFiles = fs.readdirSync(full);
-              subFiles.forEach(f => {
-                if (f.endsWith('.d.ts')) addFile(path.join(full, f), subLabel);
-              });
-            } else if (entry.endsWith('.d.ts')) {
-              // direct .d.ts under folder
-              addFile(full, label);
-            }
-          });
-        });
-      } catch { }
-      return map;
-    }
-    const p5CategoryMap = buildP5CategoryMap();
-
-    // Build a name->param names map and optional/type flags for p5 functions from p5types .d.ts
-    function buildP5ParamData(): { paramMap: Record<string, string[]>; optionalMap: Record<string, boolean[]>; typeMap: Record<string, string[]> } {
-      const paramMap: Record<string, string[]> = {};
-      const optionalMap: Record<string, boolean[]> = {};
-      const typeMap: Record<string, string[]> = {};
-      try {
-        // Resolve p5types location: prefer versioned under assets/<version>/p5types
-        const selectedP5Version = vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11';
-        const srcRoot = (
-          selectedP5Version === '1.11'
-            ? path.join(context.extensionPath, 'assets', '1.11', 'p5types', 'src')
-            : path.join(context.extensionPath, 'assets', selectedP5Version, 'p5types', 'src')
-        );
-        // If the versioned p5types are missing, return empty maps (no fallback when not 1.11)
-        if (!fs.existsSync(srcRoot)) {
-          return { paramMap, optionalMap, typeMap };
-        }
-        const folders = [
-          'color', 'core', 'data', 'dom', 'events', 'image', 'io', 'math', 'typography', 'utilities', 'webgl'
-        ];
-        const dtsFiles: string[] = [];
-        function collectDts(dir: string) {
-          if (!fs.existsSync(dir)) return;
-          const entries = fs.readdirSync(dir);
-          entries.forEach((e) => {
-            const full = path.join(dir, e);
-            const stat = fs.statSync(full);
-            if (stat.isDirectory()) collectDts(full);
-            else if (e.endsWith('.d.ts')) dtsFiles.push(full);
-          });
-        }
-        folders.forEach(f => collectDts(path.join(srcRoot, f)));
-
-        const ifaceStart = /interface\s+p5InstanceExtensions\b/;
-        const sigRx = /\n\s*([a-zA-Z_][\w]*)\s*\(([^)]*)\)\s*:/g; // name(paramList):
-        dtsFiles.forEach(file => {
-          try {
-            const text = fs.readFileSync(file, 'utf8');
-            const idx = text.search(ifaceStart);
-            if (idx < 0) return;
-            const part = text.slice(idx);
-            const braceStart = part.indexOf('{');
-            if (braceStart < 0) return;
-            // take a window of text to avoid scanning entire file
-            const windowText = part.slice(braceStart + 1, part.indexOf('\n}', braceStart + 1) > 0 ? part.indexOf('\n}', braceStart + 1) : part.length);
-            let m: RegExpExecArray | null;
-            while ((m = sigRx.exec(windowText))) {
-              const name = m[1];
-              const paramsStr = m[2].trim();
-              if (!name) continue;
-              // Extract param names, drop types and modifiers
-              const params: string[] = [];
-              const opts: boolean[] = [];
-              const kinds: string[] = [];
-              if (paramsStr.length > 0) {
-                paramsStr.split(',').forEach(raw => {
-                  let p = raw.trim();
-                  const beforeColon = (p.split(':')[0] || '').trim();
-                  const wasOptional = /\?$/.test(beforeColon);
-                  if (!p) return;
-                  // remove default value
-                  const eqIdx = p.indexOf('=');
-                  let preDefault = p;
-                  if (eqIdx >= 0) preDefault = p.slice(0, eqIdx).trim();
-                  // param may be like '...args: any[]' or 'x?: number' or 'x: number'
-                  // take identifier before ':' and capture type after ':'
-                  const colonIdx = preDefault.indexOf(':');
-                  let typeAnn = '';
-                  if (colonIdx >= 0) {
-                    typeAnn = preDefault.slice(colonIdx + 1).trim();
-                    p = preDefault.slice(0, colonIdx).trim();
-                  } else {
-                    p = preDefault.trim();
-                  }
-                  // strip decorators
-                  p = p.replace(/^\.{3}/, ''); // ...rest
-                  p = p.replace(/\?$/, ''); // optional marker
-                  // ensure a sane label (avoid empty)
-                  if (p && /^[a-zA-Z_][\w]*$/.test(p)) {
-                    params.push(p);
-                    opts.push(!!wasOptional);
-                    // classify basic type kind from type annotation
-                    let kind = 'other';
-                    const t = (typeAnn || '').toLowerCase();
-                    if (/\bnumber\b/.test(t)) kind = 'number';
-                    else if (/\bstring\b/.test(t)) kind = 'string';
-                    else if (/\bboolean\b/.test(t)) kind = 'boolean';
-                    kinds.push(kind);
-                  }
-                });
-              }
-              // choose the signature with the most params
-              const prev = paramMap[name];
-              if (!prev || (params && params.length > prev.length)) {
-                if (params && params.length) { paramMap[name] = params; optionalMap[name] = opts; typeMap[name] = kinds; }
-              }
-            }
-          } catch { }
-        });
-      } catch { }
-      return { paramMap, optionalMap, typeMap };
-    }
-    const { paramMap: p5ParamMap, optionalMap: p5ParamOptionalMap, typeMap: p5ParamTypeMap } = buildP5ParamData();
-
-    // Allow scripts from unpkg for the example; allow our own scripts via nonce
-    const csp = `default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}' https: 'unsafe-eval'; font-src ${webview.cspSource} https:; connect-src https:; media-src https: ${webview.cspSource}`;
-
-    // Add a unique storage key for this panel (based on the document URI)
-    const storageKey = panel.title.startsWith('BLOCKLY: ')
-      ? 'blockly_' + encodeURIComponent(panel.title.slice(9))
-      : 'blockly_default';
-
-    // Read the user's configured blockly theme and pass it into the webview
-    let configuredBlocklyTheme = 'dark';
-    try {
-      const cfg = vscode.workspace.getConfiguration('P5Studio');
-      const t = cfg.get<string>('blocklyTheme');
-      if (t) configuredBlocklyTheme = t;
-    } catch (e) { /* ignore */ }
-    return `<!doctype html>
-  <html>
-    <head>
-      <meta charset="utf-8" />
-      <meta http-equiv="Content-Security-Policy" content="${csp}">
-      <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <title>Blockly</title>
-      <link rel="stylesheet" href="${indexCss}" />
-  <script nonce="${nonce}" src="${blkCore}"></script>
-  <script nonce="${nonce}" src="${blkBlocks}"></script>
-  <script nonce="${nonce}" src="${blkJsGen}"></script>
-  <script nonce="${nonce}" src="${blkMsgEn}"></script>
-    </head>
-    <body>
-      <div id="pageContainer">
-        <div id="outputPane">
-          <pre id="generatedCode"><code></code></pre>
-          <div id="output"></div>
-        </div>
-        <div id="blocklyDiv"></div>
-      </div>
-
-    <script nonce="${nonce}" src="${toolboxJs}"></script>
-  ${allowedBlocksScript}
-  ${extraCategoriesScript}
-    <script nonce="${nonce}" src="${blocksJs}"></script>
-    <script nonce="${nonce}" src="${generatorsJs}"></script>
-    <script nonce="${nonce}">
-  window.P5_CATEGORY_MAP = ${JSON.stringify(p5CategoryMap)};
-  window.P5_PARAM_MAP = ${JSON.stringify(p5ParamMap)};
-  window.P5_PARAM_OPTIONAL = ${JSON.stringify(p5ParamOptionalMap)};
-  window.P5_PARAM_TYPE = ${JSON.stringify(p5ParamTypeMap)};
-  window.BLOCKLY_STORAGE_KEY = ${JSON.stringify(storageKey)};
-  window.BLOCKLY_THEME = ${JSON.stringify(configuredBlocklyTheme)};
-  window.BLOCKLY_JSON_ONLY = true;
-    </script>
-    <script nonce="${nonce}" src="${autoBlocksJs}"></script>
-      <script nonce="${nonce}" src="${appJs}"></script>
-    </body>
-    </html>`;
-  }
 
   // Rewrite references to global p5 frameCount so stepping can use a custom counter.
   // Replaces bare `frameCount` and `window.frameCount` with `window.__liveP5FrameCounter` in user code.
@@ -2608,220 +655,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
   }
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand('extension.open-blockly', async () => {
-      if (!hasP5Project) {
-        vscode.window.showInformationMessage('This feature is available in P5 projects. Create a project (adds .p5) via "P5 Studio Setup new project".');
-        return;
-      }
-      const originatingEditor = vscode.window.activeTextEditor;
-      if (!originatingEditor) {
-        vscode.window.showWarningMessage('No active editor to open Blockly for.');
-        return;
-      }
-      const doc = originatingEditor.document;
-      const docUri = doc.uri.toString();
-      const text = doc.getText();
-      const isEmpty = text.trim().length === 0;
-      // Require a sidecar file to open Blockly (or allow opening for empty files).
-      const sidecar = sidecarPathForFile(doc.fileName);
-      const hasSidecar = !!(sidecar && fs.existsSync(sidecar));
-      if (!isEmpty && !hasSidecar) {
-        vscode.window.showInformationMessage('Blockly was not opened: The file must be empty or have a .blockly sidecar file to open.');
-        return;
-      }
-
-      // If a panel already exists for this document, reveal it
-      const existingPanel = blocklyPanelForDocument.get(docUri);
-      if (existingPanel) {
-        existingPanel.reveal(vscode.ViewColumn.Active);
-        return;
-      }
-
-      const scriptName = path.basename(doc.fileName);
-      // Determine target column: always place Blockly in a bottom-row group.
-      let blocklyTargetColumn: vscode.ViewColumn = vscode.ViewColumn.Active;
-      try {
-        // Anchor to top-left, then go below; create bottom group if missing
-        await vscode.commands.executeCommand('workbench.action.focusFirstEditorGroup');
-        const before = vscode.window.tabGroups.activeTabGroup;
-        await vscode.commands.executeCommand('workbench.action.focusBelowGroup');
-        let after = vscode.window.tabGroups.activeTabGroup;
-        if (!after || (before && after.viewColumn === before.viewColumn)) {
-          try { await vscode.commands.executeCommand('workbench.action.newGroupBelow'); }
-          catch { /* older VS Code */ }
-          await vscode.commands.executeCommand('workbench.action.focusBelowGroup');
-          await new Promise(r => setTimeout(r, 100));
-          after = vscode.window.tabGroups.activeTabGroup;
-        }
-        if (after && typeof after.viewColumn === 'number') {
-          blocklyTargetColumn = after.viewColumn as vscode.ViewColumn;
-        }
-      } catch { /* keep default */ }
-
-      const blocklyPanel = vscode.window.createWebviewPanel(
-        'blocklyPanel',
-        `BLOCKLY: ${scriptName}`,
-        { viewColumn: blocklyTargetColumn, preserveFocus: true },
-        {
-          enableScripts: true,
-          retainContextWhenHidden: true,
-          localResourceRoots: [
-            vscode.Uri.file(path.join(context.extensionPath, 'blockly')),
-            vscode.Uri.file(path.join(context.extensionPath, 'vendor')),
-            // Allow both legacy and versioned assets directories
-            vscode.Uri.file(path.join(context.extensionPath, 'assets')),
-            vscode.Uri.file(path.join(context.extensionPath, 'assets', '1.11')),
-            vscode.Uri.file(path.join(context.extensionPath, 'assets', (vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11')))
-          ]
-        }
-      );
-      blocklyPanelForDocument.set(docUri, blocklyPanel);
-      (blocklyPanel as any)._sketchFilePath = normalizeFsPath(doc.fileName);
-      allBlocklyPanels.add(blocklyPanel);
-      addPanelForPath(blocklyPanelsByPath, doc.fileName, blocklyPanel);
-      try { await addToRestore(RESTORE_BLOCKLY_KEY, doc.fileName); } catch { }
-      // No longer block edits. Instead, we'll listen for document changes and, if the file
-      // contains an embedded workspace, forward it to the Blockly webview so the workspace
-      // can be restored/updated. See listener registration below.
-      blocklyPanel.onDidDispose(async () => {
-        blocklyPanelForDocument.delete(docUri);
-        allBlocklyPanels.delete(blocklyPanel);
-        try { removePanelForPath(blocklyPanelsByPath, (blocklyPanel as any)._sketchFilePath || doc.fileName, blocklyPanel); } catch { }
-        // nothing else to cleanup here
-        try { await removeFromRestore(RESTORE_BLOCKLY_KEY, doc.fileName); } catch { }
-      });
-      // When Blockly panel gains focus, recompute context keys so debug buttons are hidden.
-      blocklyPanel.onDidChangeViewState(() => {
-        try { updateP5WebviewTabContext(); } catch { }
-      });
-      blocklyPanel.webview.html = getBlocklyHtml(blocklyPanel);
-      // After setting HTML, send the resolved theme to the webview so it can apply
-      try {
-        const cfg = vscode.workspace.getConfiguration('P5Studio');
-        const t = cfg.get<string>('blocklyTheme', 'dark');
-        let resolved = t;
-        if (t === 'auto') {
-          resolved = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark ? 'dark' : 'light';
-        }
-        try { blocklyPanel.webview.postMessage({ type: 'setBlocklyTheme', theme: resolved }); } catch (e) { }
-      } catch (e) { }
-      // Panel is created directly in the target bottom group, no need to move it.
-
-      // After the webview is ready, prefer loading workspace from a sibling .blockly sidecar.
-      // If no sidecar exists, fall back to embedded workspace and migrate it to sidecar.
-      (async () => {
-        try {
-          const filePath = doc.fileName;
-          const sidecar = sidecarPathForFile(filePath);
-          let workspaceContent: string | null = null;
-          // If sidecar contains a wrapper object with workspace + lineMap, extract both
-          if (sidecar && fs.existsSync(sidecar)) {
-            try {
-              const raw = fs.readFileSync(sidecar, 'utf8');
-              try {
-                const obj = JSON.parse(raw);
-                if (obj && obj.workspace) {
-                  workspaceContent = JSON.stringify(obj.workspace);
-                  if (Array.isArray(obj.lineMap)) {
-                    try { blocklyLineMapForDocument.set(docUri, obj.lineMap); } catch { }
-                  }
-                } else {
-                  // Backward compat: file is the raw workspace JSON/string
-                  workspaceContent = raw;
-                }
-              } catch {
-                // Not JSON, assume raw workspace string
-                workspaceContent = raw;
-              }
-            } catch (e) { workspaceContent = null; }
-          }
-          if (!workspaceContent) {
-            const embedded = extractEmbeddedWorkspaceFromCode(text);
-            if (embedded) {
-              workspaceContent = embedded;
-              // Migrate: write sidecar directory and file
-              try {
-                const sidecarDir = path.dirname(sidecar!);
-                fs.mkdirSync(sidecarDir, { recursive: true });
-                // Write wrapped object to allow future line maps (no lineMap yet)
-                try {
-                  const payload = { workspace: JSON.parse(workspaceContent) };
-                  fs.writeFileSync(sidecar!, JSON.stringify(payload, null, 2), 'utf8');
-                } catch {
-                  fs.writeFileSync(sidecar!, workspaceContent, 'utf8');
-                }
-              } catch (e) { /* ignore migration errors */ }
-            }
-          }
-          if (workspaceContent) {
-            setTimeout(() => {
-              try { blocklyPanel.webview.postMessage({ type: 'loadWorkspace', workspace: workspaceContent }); } catch (e) { }
-            }, 300);
-          }
-        } catch (e) { }
-      })();
-
-      blocklyPanel.webview.onDidReceiveMessage(async msg => {
-        if (msg && msg.type === 'blocklyGeneratedCode' && typeof msg.code === 'string') {
-          // Always persist the export, even if the workspace and code are empty.
-          let wsObj: any = null;
-          try {
-            if (msg.workspace && typeof msg.workspace === 'string') wsObj = JSON.parse(msg.workspace);
-          } catch (e) { wsObj = null; }
-          // Store line map for this document (if provided)
-          try {
-            if (Array.isArray(msg.lineMap)) blocklyLineMapForDocument.set(docUri, msg.lineMap);
-          } catch { }
-          if (originatingEditor && !originatingEditor.document.isClosed) {
-            try {
-              const filePath = originatingEditor.document.fileName;
-              const sidecar = sidecarPathForFile(filePath);
-              // Write workspace to sidecar (create .blockly folder if necessary)
-              if (sidecar && msg.workspace && typeof msg.workspace === 'string') {
-                try {
-                  const sidecarDir = path.dirname(sidecar);
-                  fs.mkdirSync(sidecarDir, { recursive: true });
-                  // Write a wrapped payload so we can include the lineMap for step highlighting
-                  try {
-                    const payload: any = { workspace: wsObj || JSON.parse(msg.workspace) };
-                    if (Array.isArray(msg.lineMap)) payload.lineMap = msg.lineMap;
-                    fs.writeFileSync(sidecar, JSON.stringify(payload, null, 2), 'utf8');
-                  } catch (e) {
-                    // Fallback to raw workspace string
-                    fs.writeFileSync(sidecar, msg.workspace, 'utf8');
-                  }
-                } catch (e) {
-                  // ignore
-                }
-              }
-              // Write generated code to file WITHOUT embedded workspace comment and WITHOUT any debug markers
-              let finalCode = msg.code
-                .replace(/\/\*@BlocklyWorkspace[\s\S]*?\*\//g, '')
-                .replace(/\/\*@b:(?:'[^']+'|[^*]+)\*\//g, '');
-              // If code is empty, clear the file
-              if (finalCode.trim().length === 0) {
-                finalCode = '';
-              } else if (!finalCode.endsWith('\n')) {
-                finalCode = finalCode + '\n';
-              }
-              // Apply edit but ignore the resulting change event to avoid loops
-              ignoreDocumentChangeForBlockly.add(docUri);
-              const edit = new vscode.WorkspaceEdit();
-              const fullRange = new vscode.Range(
-                originatingEditor.document.positionAt(0),
-                originatingEditor.document.positionAt(originatingEditor.document.getText().length)
-              );
-              edit.replace(originatingEditor.document.uri, fullRange, finalCode);
-              await vscode.workspace.applyEdit(edit);
-              await originatingEditor.document.save();
-            } catch (e) { /* ignore save errors */ }
-          }
-          setTimeout(() => ignoreDocumentChangeForBlockly.delete(docUri), 300);
-        }
-      });
-    })
-  );
+  // Blockly command and panel moved to ./blockly/blocklyPanel via registerBlockly
 
 
   // Helper to update context key for JS/TS file detection and show/hide status bar
@@ -2975,11 +809,6 @@ export function activate(context: vscode.ExtensionContext) {
     updateJsOrTsContext(editor);
     if (!editor) return;
     const docUri = editor.document.uri.toString();
-    // Focus the corresponding Blockly panel if it exists
-    const blocklyPanel = blocklyPanelForDocument.get(docUri);
-    if (blocklyPanel) {
-      blocklyPanel.reveal(blocklyPanel.viewColumn, true);
-    }
     if (!editor) return;
     const panel = webviewPanelMap.get(docUri);
     if (panel) {
@@ -3037,96 +866,16 @@ export function activate(context: vscode.ExtensionContext) {
       // Stop highlighting as soon as code is changed
       clearStepHighlight(vscode.window.activeTextEditor);
     }
-    // Lint on text change
-    lintSemicolons(e.document);
-    lintUndeclaredVariables(e.document);
-    lintNoVar(e.document);
-    lintLooseEquality(e.document);
-    // If this document has a Blockly panel open, forward any embedded workspace to the webview
+    // Lint on text change only for documents with an open LIVE P5 panel
     try {
       const docUri = e.document.uri.toString();
-      const panel = blocklyPanelForDocument.get(docUri);
-      if (panel) {
-        if (ignoreDocumentChangeForBlockly.has(docUri)) return;
-        if (workspaceDebounceTimers.has(docUri)) clearTimeout(workspaceDebounceTimers.get(docUri)!);
-        workspaceDebounceTimers.set(docUri, setTimeout(() => {
-          (async () => {
-            try {
-              const txt = e.document.getText();
-              const filePath = e.document.fileName;
-              const sidecar = sidecarPathForFile(filePath);
-              let workspaceContent: string | null = null;
-              if (sidecar && fs.existsSync(sidecar)) {
-                try {
-                  const raw = fs.readFileSync(sidecar, 'utf8');
-                  try {
-                    const obj = JSON.parse(raw);
-                    if (obj && obj.workspace) {
-                      workspaceContent = JSON.stringify(obj.workspace);
-                      if (Array.isArray(obj.lineMap)) {
-                        try { blocklyLineMapForDocument.set(docUri, obj.lineMap); } catch { }
-                      }
-                    } else {
-                      workspaceContent = raw;
-                    }
-                  } catch {
-                    workspaceContent = raw;
-                  }
-                } catch (e) { workspaceContent = null; }
-              }
-              if (!workspaceContent) {
-                const embedded = extractEmbeddedWorkspaceFromCode(txt);
-                if (embedded) {
-                  workspaceContent = embedded;
-                  // Migrate to sidecar for future stability
-                  try {
-                    const sidecarDir = path.dirname(sidecar!);
-                    fs.mkdirSync(sidecarDir, { recursive: true });
-                    fs.writeFileSync(sidecar!, workspaceContent, 'utf8');
-                  } catch (e) { /* ignore */ }
-                }
-              }
-              if (workspaceContent) {
-                panel.webview.postMessage({ type: 'loadWorkspace', workspace: workspaceContent });
-              }
-            } catch (err) { }
-          })();
-        }, 350));
+      if (webviewPanelMap.has(docUri)) {
+        lintApi.lintAll(e.document);
       }
-    } catch (err) { }
+    } catch { /* ignore lint errors */ }
+    // Blockly workspace forwarding handled within the blockly module
   });
-
-  // Keep sidecar files in sync when files are renamed or deleted
-  context.subscriptions.push(vscode.workspace.onDidRenameFiles(async ev => {
-    try {
-      for (const r of ev.files) {
-        const oldFs = r.oldUri.fsPath;
-        const newFs = r.newUri.fsPath;
-        const oldSide = sidecarPathForFile(oldFs);
-        const newSide = sidecarPathForFile(newFs);
-        if (oldSide && fs.existsSync(oldSide)) {
-          try {
-            const newDir = path.dirname(newSide!);
-            fs.mkdirSync(newDir, { recursive: true });
-            fs.copyFileSync(oldSide, newSide!);
-            try { fs.unlinkSync(oldSide); removeSidecarDirIfEmpty(oldSide); } catch { }
-          } catch (e) { /* ignore */ }
-        }
-      }
-    } catch (e) { }
-  }));
-
-  context.subscriptions.push(vscode.workspace.onDidDeleteFiles(async ev => {
-    try {
-      for (const u of ev.files) {
-        const fsPath = u.fsPath;
-        const sc = sidecarPathForFile(fsPath);
-        if (sc && fs.existsSync(sc)) {
-          try { fs.unlinkSync(sc); removeSidecarDirIfEmpty(sc); } catch { }
-        }
-      }
-    } catch (e) { }
-  }));
+  // Sidecar file syncing moved into blockly module
   vscode.workspace.onDidSaveTextDocument(doc => {
     if (doc === vscode.window.activeTextEditor?.document) {
       updateP5Context(vscode.window.activeTextEditor);
@@ -3134,21 +883,20 @@ export function activate(context: vscode.ExtensionContext) {
   });
   // Lint when a document is opened/closed
   context.subscriptions.push(
-    vscode.workspace.onDidOpenTextDocument(doc => { lintSemicolons(doc); lintUndeclaredVariables(doc); lintNoVar(doc); lintLooseEquality(doc); })
+    vscode.workspace.onDidOpenTextDocument(doc => {
+      try {
+        const docUri = doc.uri.toString();
+        if (webviewPanelMap.has(docUri)) {
+          lintApi.lintAll(doc);
+        }
+      } catch { /* ignore lint errors */ }
+    })
   );
 
   context.subscriptions.push(
     vscode.workspace.onDidCloseTextDocument(async doc => {
-      semicolonDiagnostics.delete(doc.uri);
-      undeclaredDiagnostics.delete(doc.uri);
-      noVarDiagnostics.delete(doc.uri);
-      equalityDiagnostics.delete(doc.uri);
-      // If the closed document is the one that opened the blocklyPanel, close the panel
-      // If a blockly panel was opened for this document, close it
-      const panel = blocklyPanelForDocument.get(doc.uri.toString());
-      if (panel) {
-        panel.dispose();
-      }
+      lintApi.clearDiagnosticsForDocument(doc.uri);
+      // Blockly panels are managed by the blockly module
       // Also close the corresponding LIVE P5 panel for this document, if present
       try {
         const p5Panel = webviewPanelMap.get(doc.uri.toString());
@@ -3214,10 +962,7 @@ export function activate(context: vscode.ExtensionContext) {
     const outputChannel = getOrCreateOutputChannel(docUri, fileName);
 
     // Proactively clear any Blockly block highlight for this document before reloading
-    try {
-      const blk = blocklyPanelForDocument.get(docUri);
-      if (blk) blk.webview.postMessage({ type: 'clearBlocklyHighlight' });
-    } catch { }
+    try { blocklyApi.clearHighlight(docUri); } catch { }
 
     // Capture and clear the pending reason (typing/save/command)
     const reason = _pendingReloadReason;
@@ -3290,28 +1035,28 @@ export function activate(context: vscode.ExtensionContext) {
       code = wrapInSetupIfNeeded(code);
       // Block sketch when configured and warnings exist; otherwise run as usual
       const cfgUD = vscode.workspace.getConfiguration('P5Studio');
-      const warnSemi_UD = hasSemicolonWarnings(document);
-      const warnUnd_UD = hasUndeclaredWarnings(document);
-      const warnVar_UD = hasVarWarnings(document);
-      const warnEq_UD = hasEqualityWarnings(document);
-      const shouldBlockUD = (getStrictLevel('Semicolon') === 'block' && warnSemi_UD.has)
-        || (getStrictLevel('Undeclared') === 'block' && warnUnd_UD.has)
-        || (getStrictLevel('NoVar') === 'block' && warnVar_UD.has)
-        || (getStrictLevel('LooseEquality') === 'block' && warnEq_UD.has);
+      const warnSemi_UD = lintApi.hasSemicolonWarnings(document);
+      const warnUnd_UD = lintApi.hasUndeclaredWarnings(document);
+      const warnVar_UD = lintApi.hasVarWarnings(document);
+      const warnEq_UD = lintApi.hasEqualityWarnings(document);
+      const shouldBlockUD = (lintApi.getStrictLevel('Semicolon') === 'block' && warnSemi_UD.has)
+        || (lintApi.getStrictLevel('Undeclared') === 'block' && warnUnd_UD.has)
+        || (lintApi.getStrictLevel('NoVar') === 'block' && warnVar_UD.has)
+        || (lintApi.getStrictLevel('LooseEquality') === 'block' && warnEq_UD.has);
       if (shouldBlockUD) {
         // Suppress overlay during live typing; only show on explicit reload/save/command
         if (reason === 'typing') {
           // Still log warnings to the Output channel if requested
           if (forceLog) {
-            try { logSemicolonWarningsForDocument(document); } catch { }
-            try { logUndeclaredWarningsForDocument(document); } catch { }
-            try { logVarWarningsForDocument(document); } catch { }
-            try { logEqualityWarningsForDocument(document); } catch { }
+            try { lintApi.logSemicolonWarningsForDocument(document); } catch { }
+            try { lintApi.logUndeclaredWarningsForDocument(document); } catch { }
+            try { lintApi.logVarWarningsForDocument(document); } catch { }
+            try { lintApi.logEqualityWarningsForDocument(document); } catch { }
           }
           return;
         } else {
           panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
-          logBlockingWarningsForDocument(document);
+          lintApi.logBlockingWarningsForDocument(document);
           return;
         }
       } else {
@@ -3391,10 +1136,10 @@ export function activate(context: vscode.ExtensionContext) {
 
     // If requested, log semicolon warnings when the panel reloads (typing/save debounce path)
     if (forceLog) {
-      try { logSemicolonWarningsForDocument(document); } catch { }
-      try { logUndeclaredWarningsForDocument(document); } catch { }
-      try { logVarWarningsForDocument(document); } catch { }
-      try { logEqualityWarningsForDocument(document); } catch { }
+      try { lintApi.logSemicolonWarningsForDocument(document); } catch { }
+      try { lintApi.logUndeclaredWarningsForDocument(document); } catch { }
+      try { lintApi.logVarWarningsForDocument(document); } catch { }
+      try { lintApi.logEqualityWarningsForDocument(document); } catch { }
     }
   }
 
@@ -3887,10 +1632,7 @@ export function activate(context: vscode.ExtensionContext) {
               clearStepHighlight(ed);
             }
             // Also clear any Blockly block highlight tied to this document
-            try {
-              const blk = blocklyPanelForDocument.get(editor.document.uri.toString());
-              if (blk) blk.webview.postMessage({ type: 'clearBlocklyHighlight' });
-            } catch { }
+            try { blocklyApi.clearHighlight(editor.document.uri.toString()); } catch { }
             (panel as any)._steppingActive = false;
             if ((panel as any)._autoStepTimer) {
               try { clearInterval((panel as any)._autoStepTimer); } catch { }
@@ -3912,23 +1654,23 @@ export function activate(context: vscode.ExtensionContext) {
               return;
             }
             // Log warnings on explicit reload action
-            logSemicolonWarningsForDocument(editor.document);
-            logUndeclaredWarningsForDocument(editor.document);
-            logVarWarningsForDocument(editor.document);
-            logEqualityWarningsForDocument(editor.document);
+            lintApi.logSemicolonWarningsForDocument(editor.document);
+            lintApi.logUndeclaredWarningsForDocument(editor.document);
+            lintApi.logVarWarningsForDocument(editor.document);
+            lintApi.logEqualityWarningsForDocument(editor.document);
             // Optionally block sketch on warning
             {
-              const warnSemi = hasSemicolonWarnings(editor.document);
-              const warnUnd = hasUndeclaredWarnings(editor.document);
-              const warnVar = hasVarWarnings(editor.document);
-              const warnEq = hasEqualityWarnings(editor.document);
-              const shouldBlock = (getStrictLevel('Semicolon') === 'block' && warnSemi.has)
-                || (getStrictLevel('Undeclared') === 'block' && warnUnd.has)
-                || (getStrictLevel('NoVar') === 'block' && warnVar.has)
-                || (getStrictLevel('LooseEquality') === 'block' && warnEq.has);
+              const warnSemi = lintApi.hasSemicolonWarnings(editor.document);
+              const warnUnd = lintApi.hasUndeclaredWarnings(editor.document);
+              const warnVar = lintApi.hasVarWarnings(editor.document);
+              const warnEq = lintApi.hasEqualityWarnings(editor.document);
+              const shouldBlock = (lintApi.getStrictLevel('Semicolon') === 'block' && warnSemi.has)
+                || (lintApi.getStrictLevel('Undeclared') === 'block' && warnUnd.has)
+                || (lintApi.getStrictLevel('NoVar') === 'block' && warnVar.has)
+                || (lintApi.getStrictLevel('LooseEquality') === 'block' && warnEq.has);
               if (shouldBlock) {
                 panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
-                logBlockingWarningsForDocument(editor.document);
+                lintApi.logBlockingWarningsForDocument(editor.document);
                 return;
               }
             }
@@ -4090,20 +1832,20 @@ export function activate(context: vscode.ExtensionContext) {
               return;
             }
             // Log warnings on explicit action
-            logSemicolonWarningsForDocument(editor.document);
-            logUndeclaredWarningsForDocument(editor.document);
-            logVarWarningsForDocument(editor.document);
-            logEqualityWarningsForDocument(editor.document);
+            lintApi.logSemicolonWarningsForDocument(editor.document);
+            lintApi.logUndeclaredWarningsForDocument(editor.document);
+            lintApi.logVarWarningsForDocument(editor.document);
+            lintApi.logEqualityWarningsForDocument(editor.document);
             // Optionally block sketch on warning
             {
               const blockOnWarning = vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true);
-              const warnSemi = hasSemicolonWarnings(editor.document);
-              const warnUnd = hasUndeclaredWarnings(editor.document);
-              const warnVar = hasVarWarnings(editor.document);
-              const warnEq = hasEqualityWarnings(editor.document);
+              const warnSemi = lintApi.hasSemicolonWarnings(editor.document);
+              const warnUnd = lintApi.hasUndeclaredWarnings(editor.document);
+              const warnVar = lintApi.hasVarWarnings(editor.document);
+              const warnEq = lintApi.hasEqualityWarnings(editor.document);
               if (blockOnWarning && (warnSemi.has || warnUnd.has || warnVar.has || warnEq.has)) {
                 panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel) });
-                logBlockingWarningsForDocument(editor.document);
+                lintApi.logBlockingWarningsForDocument(editor.document);
                 return;
               }
             }
@@ -4237,20 +1979,20 @@ export function activate(context: vscode.ExtensionContext) {
               return;
             }
             // Warnings on explicit action
-            logSemicolonWarningsForDocument(editor.document);
-            logUndeclaredWarningsForDocument(editor.document);
-            logVarWarningsForDocument(editor.document);
-            logEqualityWarningsForDocument(editor.document);
+            lintApi.logSemicolonWarningsForDocument(editor.document);
+            lintApi.logUndeclaredWarningsForDocument(editor.document);
+            lintApi.logVarWarningsForDocument(editor.document);
+            lintApi.logEqualityWarningsForDocument(editor.document);
             {
-              const warnSemi = hasSemicolonWarnings(editor.document);
-              const warnUnd = hasUndeclaredWarnings(editor.document);
-              const warnVar = hasVarWarnings(editor.document);
-              const shouldBlock = (getStrictLevel('Semicolon') === 'block' && warnSemi.has)
-                || (getStrictLevel('Undeclared') === 'block' && warnUnd.has)
-                || (getStrictLevel('NoVar') === 'block' && warnVar.has);
+              const warnSemi = lintApi.hasSemicolonWarnings(editor.document);
+              const warnUnd = lintApi.hasUndeclaredWarnings(editor.document);
+              const warnVar = lintApi.hasVarWarnings(editor.document);
+              const shouldBlock = (lintApi.getStrictLevel('Semicolon') === 'block' && warnSemi.has)
+                || (lintApi.getStrictLevel('Undeclared') === 'block' && warnUnd.has)
+                || (lintApi.getStrictLevel('NoVar') === 'block' && warnVar.has);
               if (shouldBlock) {
                 panel.webview.html = await createHtml('', panel, context.extensionPath);
-                logBlockingWarningsForDocument(editor.document);
+                lintApi.logBlockingWarningsForDocument(editor.document);
                 return;
               }
             }
@@ -4358,34 +2100,10 @@ export function activate(context: vscode.ExtensionContext) {
                 ch.appendLine(`${getTime()} [ℹ️INFO] Highlight requested but sketch editor is not visible. Open the sketch to see line highlights.`);
               } catch { }
             }
-            // If a Blockly panel exists for this document and we have a lineMap, highlight the corresponding block
+            // Also reflect highlight in Blockly view (if present)
             try {
-              const blocklyPanel = blocklyPanelForDocument.get(docUri);
-              const mapping = blocklyLineMapForDocument.get(docUri);
               const line = typeof msg.line === 'number' ? msg.line : 1;
-              if (blocklyPanel) {
-                // Always clear previous selection first so only one block is highlighted at a time
-                try { blocklyPanel.webview.postMessage({ type: 'clearBlocklyHighlight' }); } catch { }
-              }
-              if (blocklyPanel && Array.isArray(mapping) && mapping.length > 0) {
-                // Ensure mapping is sorted by line ascending
-                const sorted = [...mapping].sort((a, b) => (a.line || 0) - (b.line || 0));
-                // Prefer exact match
-                let entry = sorted.find(m => m && typeof m.line === 'number' && m.line === line);
-                if (!entry) {
-                  // Fallback: choose the last mapping whose line is <= current line
-                  // and ensure we don't pass the start of the next mapping line
-                  let idx = -1;
-                  for (let i = 0; i < sorted.length; i++) {
-                    if (sorted[i] && typeof sorted[i].line === 'number' && sorted[i].line <= line) idx = i;
-                    else break;
-                  }
-                  if (idx >= 0) entry = sorted[idx];
-                }
-                if (entry && entry.blockId) {
-                  blocklyPanel.webview.postMessage({ type: 'highlightBlocklyBlock', blockId: entry.blockId });
-                }
-              }
+              blocklyApi.highlightForLine(docUri, line);
             } catch { }
           }
           // --- CLEAR HIGHLIGHT HANDLER ---
@@ -4397,12 +2115,7 @@ export function activate(context: vscode.ExtensionContext) {
                 : null);
             if (ed && ed.document) { clearStepHighlight(ed); }
             // Also clear block highlight in Blockly (if open)
-            try {
-              const blocklyPanel = blocklyPanelForDocument.get(docUri);
-              if (blocklyPanel) {
-                blocklyPanel.webview.postMessage({ type: 'clearBlocklyHighlight' });
-              }
-            } catch { }
+            try { blocklyApi.clearHighlight(docUri); } catch { }
             // Only mark stepping finished if there is no draw() in the user's code
             try {
               const codeText = editor.document.getText();
@@ -4423,27 +2136,7 @@ export function activate(context: vscode.ExtensionContext) {
           }
           // --- OSC SEND HANDLER ---
           else if (msg.type === 'oscSend') {
-            try {
-              if (!oscPort) {
-                vscode.window.showErrorMessage('OSC port is not initialized. Try reloading the window.');
-                return;
-              }
-              const packet = {
-                address: msg.address,
-                args: (msg.args || []).map((a: any) => {
-                  if (typeof a === "number") return { type: "f", value: a };
-                  if (typeof a === "string") return { type: "s", value: a };
-                  if (typeof a === "boolean") return { type: a ? "T" : "F", value: a };
-                  return { type: "s", value: String(a) };
-                })
-              };
-              oscOutputChannel.appendLine(`[DEBUG] Sending OSC packet: ${JSON.stringify(packet)}`);
-              oscPort.send(packet);
-              // Removed manual self-loopback to prevent duplicate delivery
-            } catch (e) {
-              oscOutputChannel.appendLine(`[DEBUG] OSC send error: ${e}`);
-              console.error("OSC send error:", e);
-            }
+            try { oscService?.send(msg.address, msg.args || []); } catch { }
             return;
           }
           // --- SAVE CANVAS IMAGE HANDLER ---
@@ -4511,10 +2204,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (edToClear) clearStepHighlight(edToClear);
           } catch { }
           // Also clear any Blockly block highlight for this document when the LIVE P5 panel closes
-          try {
-            const blk = blocklyPanelForDocument.get(docUri);
-            if (blk) blk.webview.postMessage({ type: 'clearBlocklyHighlight' });
-          } catch { }
+          try { blocklyApi.clearHighlight(docUri); } catch { }
           (panel as any)._steppingActive = false;
           // Stop auto-step timer if running
           if ((panel as any)._autoStepTimer) {
@@ -4561,21 +2251,21 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         // Only set HTML on first open, but optionally block on warnings
-        const warnSemi_IO = hasSemicolonWarnings(editor.document);
-        const warnUnd_IO = hasUndeclaredWarnings(editor.document);
-        const warnVar_IO = hasVarWarnings(editor.document);
-        const shouldBlockIO = (getStrictLevel('Semicolon') === 'block' && warnSemi_IO.has)
-          || (getStrictLevel('Undeclared') === 'block' && warnUnd_IO.has)
-          || (getStrictLevel('NoVar') === 'block' && warnVar_IO.has);
+        const warnSemi_IO = lintApi.hasSemicolonWarnings(editor.document);
+        const warnUnd_IO = lintApi.hasUndeclaredWarnings(editor.document);
+        const warnVar_IO = lintApi.hasVarWarnings(editor.document);
+        const shouldBlockIO = (lintApi.getStrictLevel('Semicolon') === 'block' && warnSemi_IO.has)
+          || (lintApi.getStrictLevel('Undeclared') === 'block' && warnUnd_IO.has)
+          || (lintApi.getStrictLevel('NoVar') === 'block' && warnVar_IO.has);
         if (shouldBlockIO) {
           panel.webview.html = await createHtml('', panel, context.extensionPath);
-          logBlockingWarningsForDocument(editor.document);
+          lintApi.logBlockingWarningsForDocument(editor.document);
         } else {
           panel.webview.html = await createHtml(codeToInject, panel, context.extensionPath);
           // Log warnings when running the sketch (initial open)
-          logSemicolonWarningsForDocument(editor.document);
-          logUndeclaredWarningsForDocument(editor.document);
-          logVarWarningsForDocument(editor.document);
+          lintApi.logSemicolonWarningsForDocument(editor.document);
+          lintApi.logUndeclaredWarningsForDocument(editor.document);
+          lintApi.logVarWarningsForDocument(editor.document);
         }
         // Send global variables immediately after setting HTML
         const { globals } = extractGlobalVariablesWithConflicts(codeToInject);
@@ -4608,23 +2298,23 @@ export function activate(context: vscode.ExtensionContext) {
             new Function(codeToSend);
             codeToSend = wrapInSetupIfNeeded(codeToSend);
             // Optionally block on semicolon warnings
-            const warnSemi_RO = hasSemicolonWarnings(editor.document);
-            const warnUnd_RO = hasUndeclaredWarnings(editor.document);
-            const warnVar_RO = hasVarWarnings(editor.document);
-            const shouldBlockRO = (getStrictLevel('Semicolon') === 'block' && warnSemi_RO.has)
-              || (getStrictLevel('Undeclared') === 'block' && warnUnd_RO.has)
-              || (getStrictLevel('NoVar') === 'block' && warnVar_RO.has);
+            const warnSemi_RO = lintApi.hasSemicolonWarnings(editor.document);
+            const warnUnd_RO = lintApi.hasUndeclaredWarnings(editor.document);
+            const warnVar_RO = lintApi.hasVarWarnings(editor.document);
+            const shouldBlockRO = (lintApi.getStrictLevel('Semicolon') === 'block' && warnSemi_RO.has)
+              || (lintApi.getStrictLevel('Undeclared') === 'block' && warnUnd_RO.has)
+              || (lintApi.getStrictLevel('NoVar') === 'block' && warnVar_RO.has);
             if (shouldBlockRO) {
               (async () => {
                 panel.webview.html = await createHtml('', panel, context.extensionPath);
-                logBlockingWarningsForDocument(editor.document);
+                lintApi.logBlockingWarningsForDocument(editor.document);
               })();
             } else {
               panel.webview.postMessage({ type: 'reload', code: codeToSend });
               // Log warnings on explicit open -> reload path
-              logSemicolonWarningsForDocument(editor.document);
-              logUndeclaredWarningsForDocument(editor.document);
-              logVarWarningsForDocument(editor.document);
+              lintApi.logSemicolonWarningsForDocument(editor.document);
+              lintApi.logUndeclaredWarningsForDocument(editor.document);
+              lintApi.logVarWarningsForDocument(editor.document);
             }
           } catch (err: any) {
             // If error, send empty code and show error
@@ -4655,9 +2345,9 @@ export function activate(context: vscode.ExtensionContext) {
             const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === docUri);
             if (doc) {
               // Log warnings on explicit reload command
-              logSemicolonWarningsForDocument(doc);
-              logUndeclaredWarningsForDocument(doc);
-              logVarWarningsForDocument(doc);
+              lintApi.logSemicolonWarningsForDocument(doc);
+              lintApi.logUndeclaredWarningsForDocument(doc);
+              lintApi.logVarWarningsForDocument(doc);
               _pendingReloadReason = 'command';
               debounceDocumentUpdate(doc, false);
             }
@@ -4666,9 +2356,9 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
       // Log warnings on explicit reload command
-      logSemicolonWarningsForDocument(editor.document);
-      logUndeclaredWarningsForDocument(editor.document);
-      logVarWarningsForDocument(editor.document);
+      lintApi.logSemicolonWarningsForDocument(editor.document);
+      lintApi.logUndeclaredWarningsForDocument(editor.document);
+      lintApi.logVarWarningsForDocument(editor.document);
       _pendingReloadReason = 'command';
       debounceDocumentUpdate(editor.document, false); // use false to match typing
     })
@@ -4843,16 +2533,9 @@ text("P5", 50, 52);`;
     })
   );
 
-  // Listen for OSC config changes and re-create port if needed
+  // Listen for OSC config changes and re-create port if needed (delegated to oscService)
   vscode.workspace.onDidChangeConfiguration(e => {
-    if (
-      e.affectsConfiguration('P5Studio.oscLocalAddress') ||
-      e.affectsConfiguration('P5Studio.oscRemoteAddress') ||
-      e.affectsConfiguration('P5Studio.oscRemotePort') ||
-      e.affectsConfiguration('P5Studio.oscLocalPort')
-    ) {
-      setupOscPort();
-    }
+    try { oscService?.handleConfigChange(e); } catch { }
   });
 
   // Listen for debounceDelay config changes and update debounce logic
@@ -4889,36 +2572,10 @@ text("P5", 50, 52);`;
       }
     }
 
-    // Update Blockly theme when setting changes
-    if (e.affectsConfiguration('P5Studio.blocklyTheme')) {
-      try {
-        const cfg = vscode.workspace.getConfiguration('P5Studio');
-        const t = cfg.get<string>('blocklyTheme', 'dark');
-        let resolved = t;
-        if (t === 'auto') {
-          resolved = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark ? 'dark' : 'light';
-        }
-        for (const [, panel] of blocklyPanelForDocument.entries()) {
-          try { panel.webview.postMessage({ type: 'setBlocklyTheme', theme: resolved }); } catch (e) { }
-        }
-      } catch (e) { }
-    }
+    // Blockly theme updates are handled within the blockly module
   });
 
-  // If the user switches the VS Code color theme and the blocklyTheme config
-  // is 'auto', update Blockly panels to match.
-  context.subscriptions.push(vscode.window.onDidChangeActiveColorTheme(theme => {
-    try {
-      const cfg = vscode.workspace.getConfiguration('P5Studio');
-      const t = cfg.get<string>('blocklyTheme', 'dark');
-      if (t === 'auto') {
-        const resolved = theme.kind === vscode.ColorThemeKind.Dark ? 'dark' : 'light';
-        for (const [, panel] of blocklyPanelForDocument.entries()) {
-          try { panel.webview.postMessage({ type: 'setBlocklyTheme', theme: resolved }); } catch (e) { }
-        }
-      }
-    } catch (e) { }
-  }));
+  // Blockly theme sync with VS Code theme handled within the blockly module
 
   // (Removed duplicate close handler; unified logic exists earlier with per-path disposal)
 
@@ -4991,6 +2648,19 @@ text("P5", 50, 52);`;
       }
     } catch {
       // ignore
+    }
+  }
+
+  // Helper: compute Blockly sidecar path for a given file path
+  function getBlocklySidecarPath(filePath: string): string | null {
+    try {
+      const dir = path.dirname(filePath);
+      const base = path.basename(filePath);
+      const sidecarDir = path.join(dir, '.blockly');
+      const sidecarName = base + '.blockly';
+      return path.join(sidecarDir, sidecarName);
+    } catch {
+      return null;
     }
   }
 
@@ -5091,9 +2761,9 @@ text("P5", 50, 52);`;
         await vscode.workspace.fs.copy(fileUri, vscode.Uri.file(newPath));
         // If a sidecar exists for the source file, copy it for the duplicate
         try {
-          const srcSide = sidecarPathForFile(fileUri.fsPath);
+          const srcSide = getBlocklySidecarPath(fileUri.fsPath);
           if (srcSide && fs.existsSync(srcSide)) {
-            const destSide = sidecarPathForFile(newPath);
+            const destSide = getBlocklySidecarPath(newPath);
             if (destSide) {
               fs.mkdirSync(path.dirname(destSide), { recursive: true });
               fs.copyFileSync(srcSide, destSide);
@@ -5109,45 +2779,7 @@ text("P5", 50, 52);`;
     })
   );
 
-  // Decouple Blockly: remove the sidecar for a file after user confirmation
-  context.subscriptions.push(
-    vscode.commands.registerCommand('extension.decouple-blockly', async (fileUri: vscode.Uri) => {
-      try {
-        // If not invoked from context menu, prompt for file
-        if (!fileUri) {
-          const picked = await vscode.window.showOpenDialog({
-            canSelectFiles: true,
-            canSelectFolders: false,
-            canSelectMany: false,
-            openLabel: 'Select file to decouple from Blockly'
-          });
-          if (!picked || picked.length === 0) return;
-          fileUri = picked[0];
-        }
-        const side = sidecarPathForFile(fileUri.fsPath);
-        if (!side || !fs.existsSync(side)) {
-          vscode.window.showInformationMessage('No Blockly workspace sidecar found for this file.');
-          return;
-        }
-        const confirm = await vscode.window.showWarningMessage(
-          `Delete Blockly workspace sidecar for '${path.basename(fileUri.fsPath)}'?`,
-          { modal: true },
-          'Delete'
-        );
-        if (confirm === 'Delete') {
-          try {
-            fs.unlinkSync(side);
-            try { removeSidecarDirIfEmpty(side); } catch { }
-            vscode.window.showInformationMessage('Blockly workspace decoupled (sidecar deleted).');
-          } catch (e: any) {
-            vscode.window.showErrorMessage('Failed to delete sidecar: ' + (e.message || e));
-          }
-        }
-      } catch (e: any) {
-        vscode.window.showErrorMessage('Failed to decouple Blockly: ' + (e.message || e));
-      }
-    })
-  );
+  // Decouple Blockly command moved into the blockly module
 
   // Best-effort: when files are created via external copy/paste operations, try to
   // detect if they are duplicates of an existing file and copy its sidecar.
@@ -5179,8 +2811,8 @@ text("P5", 50, 52);`;
             const candBuffer = fs.readFileSync(candFs);
             const candHash = crypto.createHash('sha1').update(candBuffer).digest('hex');
             if (candHash === hash) {
-              const srcSide = sidecarPathForFile(candFs);
-              const destSide = sidecarPathForFile(createdFs);
+              const srcSide = getBlocklySidecarPath(candFs);
+              const destSide = getBlocklySidecarPath(createdFs);
               if (srcSide && fs.existsSync(srcSide) && destSide) {
                 try {
                   fs.mkdirSync(path.dirname(destSide), { recursive: true });
