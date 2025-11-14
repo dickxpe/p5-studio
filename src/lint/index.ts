@@ -27,6 +27,9 @@ export type LintApi = {
     logVarWarningsForDocument: (document: vscode.TextDocument) => void;
     logEqualityWarningsForDocument: (document: vscode.TextDocument) => void;
     logBlockingWarningsForDocument: (document: vscode.TextDocument) => void;
+    // helpers
+    shouldBlockDocument: (document: vscode.TextDocument) => boolean;
+    logAllWarningsForDocument: (document: vscode.TextDocument) => void;
 };
 
 export function registerLinting(
@@ -510,13 +513,49 @@ export function registerLinting(
         return { has: diags.length > 0, eqLines: Array.from(new Set(eqLines)).sort((a, b) => a - b), neqLines: Array.from(new Set(neqLines)).sort((a, b) => a - b) };
     }
 
+    type LintCacheEntry = {
+        version: number;
+        semi: ReturnType<typeof hasSemicolonWarnings>;
+        und: ReturnType<typeof hasUndeclaredWarnings>;
+        nov: ReturnType<typeof hasVarWarnings>;
+        eq: ReturnType<typeof hasEqualityWarnings>;
+    };
+
+    const lintCache = new Map<string, LintCacheEntry>();
+
+    function getLintSnapshot(document: vscode.TextDocument): LintCacheEntry {
+        const key = document.uri.toString();
+        const existing = lintCache.get(key);
+        if (existing && existing.version === document.version) {
+            return existing;
+        }
+        const semi = hasSemicolonWarnings(document);
+        const und = hasUndeclaredWarnings(document);
+        const nov = hasVarWarnings(document);
+        const eq = hasEqualityWarnings(document);
+        const snapshot: LintCacheEntry = { version: document.version, semi, und, nov, eq };
+        lintCache.set(key, snapshot);
+        return snapshot;
+    }
+
+    function shouldBlockDocument(document: vscode.TextDocument): boolean {
+        const snap = getLintSnapshot(document);
+        return (
+            (getStrictLevel('Semicolon') === 'block' && snap.semi.has) ||
+            (getStrictLevel('Undeclared') === 'block' && snap.und.has) ||
+            (getStrictLevel('NoVar') === 'block' && snap.nov.has) ||
+            (getStrictLevel('LooseEquality') === 'block' && snap.eq.has)
+        );
+    }
+
     function logBlockingWarningsForDocument(document: vscode.TextDocument) {
         const docUri = document.uri.toString();
         const fileName = path.basename(document.fileName);
         const outputChannel = deps.getOrCreateOutputChannel(docUri, fileName);
-        const semi = hasSemicolonWarnings(document);
-        const und = hasUndeclaredWarnings(document);
-        const nov = hasVarWarnings(document);
+        const snap = getLintSnapshot(document);
+        const semi = snap.semi;
+        const und = snap.und;
+        const nov = snap.nov;
         const lines = semi.lines;
         const semiMsg = semi.has ? `[⚠️WARNING in ${fileName}] Missing semicolon on line(s): ${lines.join(', ')}` : '';
         const undParts: string[] = [];
@@ -526,7 +565,7 @@ export function registerLinting(
         }
         const undMsg = und.has ? `[⚠️WARNING in ${fileName}] Undeclared variable(s): ${undParts.join(', ')}` : '';
         const novMsg = nov.has ? `[⚠️WARNING in ${fileName}] Avoid var; use let instead on line(s): ${nov.lines.join(', ')}` : '';
-        const eq = hasEqualityWarnings(document);
+        const eq = snap.eq;
         const eqMsgEq = eq.eqLines.length ? `[⚠️WARNING in ${fileName}] Use '===' instead of '==' on line(s): ${eq.eqLines.join(', ')}` : '';
         const eqMsgNeq = eq.neqLines.length ? `[⚠️WARNING in ${fileName}] Use '!==' instead of '!=' on line(s): ${eq.neqLines.join(', ')}` : '';
 
@@ -549,6 +588,13 @@ export function registerLinting(
         ].filter(Boolean);
         const overlay = overlayParts.join('\n');
         if (panel && overlay) sendToWebview(panel, { type: 'showWarning', message: overlay });
+    }
+
+    function logAllWarningsForDocument(document: vscode.TextDocument) {
+        logSemicolonWarningsForDocument(document);
+        logUndeclaredWarningsForDocument(document);
+        logVarWarningsForDocument(document);
+        logEqualityWarningsForDocument(document);
     }
 
     function lintAll(document: vscode.TextDocument) {
@@ -582,5 +628,7 @@ export function registerLinting(
         logVarWarningsForDocument,
         logEqualityWarningsForDocument,
         logBlockingWarningsForDocument,
+        shouldBlockDocument,
+        logAllWarningsForDocument,
     };
 }

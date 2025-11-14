@@ -30,6 +30,8 @@ import { registerLivePanelManager, LivePanelManagerApi } from './panels/livePane
 import { livePanelTitleForFile, LIVE_PANEL_TITLE_PREFIX } from './panels/registry';
 import { resolveLiveAssets } from './assets/resolver';
 import { config as cfg } from './config/index';
+import { setHtmlAndPost } from './webview/helpers';
+import { prepareSketch, validateSource, ReloadReason } from './processing/sketchPrep';
 // Commands groups
 import { registerDebugCommands } from './commands/debug';
 import { registerCaptureCommands } from './commands/capture';
@@ -437,12 +439,22 @@ export function activate(context: vscode.ExtensionContext) {
       // Stop highlighting as soon as code is changed
       clearStepHighlight(vscode.window.activeTextEditor);
     }
+
     // Lint on text change only for documents with an open LIVE P5 panel
     try {
       const docUri = e.document.uri.toString();
-      if (webviewPanelMap.has(docUri)) {
-        lintApi.lintAll(e.document);
+      if (!webviewPanelMap.has(docUri)) {
+        return;
       }
+
+      // Cheap early-out: if all strict levels are "ignore", skip linting entirely
+      const strictKinds: Array<'Semicolon' | 'Undeclared' | 'NoVar' | 'LooseEquality'> = ['Semicolon', 'Undeclared', 'NoVar', 'LooseEquality'];
+      const anyEnabled = strictKinds.some(k => lintApi.getStrictLevel(k) !== 'ignore');
+      if (!anyEnabled) {
+        return;
+      }
+
+      lintApi.lintAll(e.document);
     } catch { /* ignore lint errors */ }
     // Blockly workspace forwarding handled within the blockly module
   });
@@ -538,155 +550,105 @@ export function activate(context: vscode.ExtensionContext) {
     const reason = _pendingReloadReason;
     _pendingReloadReason = undefined;
 
-    let code = document.getText();
-    // If inputPrompt() is used outside top-of-sketch, block and show friendly error
-    try {
-      if (hasNonTopInputUsage(code)) {
-        panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel), p5Version: (panel as any)._p5Version });
-        const friendly = 'inputPrompt() can only be used at the very top of the sketch to initialize a variable, e.g.: let a = inputPrompt(); ';
-        setTimeout(() => { sendToWebview(panel, { type: 'showError', message: friendly }); }, 150);
-        const time = getTime();
-        outputChannel.appendLine(`${time} [‼️RUNTIME ERROR in ${fileName}] ${friendly}`);
-        (panel as any)._lastRuntimeError = `${time} [‼️RUNTIME ERROR in ${fileName}] ${friendly}`;
+    const prep = await prepareSketch({
+      document,
+      reason: reason as ReloadReason,
+      lint: {
+        hasSemicolonWarnings: d => lintApi.hasSemicolonWarnings(d),
+        hasUndeclaredWarnings: d => lintApi.hasUndeclaredWarnings(d),
+        hasVarWarnings: d => lintApi.hasVarWarnings(d),
+        hasEqualityWarnings: d => lintApi.hasEqualityWarnings(d),
+        getStrictLevel: k => lintApi.getStrictLevel(k),
+      },
+      allowInteractiveTopInputs: _allowInteractiveTopInputs,
+    });
+
+    let syntaxErrorMsg: string | null = null;
+
+    if (prep.inputsOverlay && prep.inputsOverlay.length > 0) {
+      await setHtmlAndPost(panel, {
+        code: '',
+        extensionPath: context.extensionPath,
+        allowInteractiveTopInputs: _allowInteractiveTopInputs,
+        initialCaptureVisible: getInitialCaptureVisible(panel),
+        p5Version: (panel as any)._p5Version,
+      }, [
+        { delayMs: 150, message: { type: 'showTopInputs', items: prep.inputsOverlay } as ExtensionToWebviewMessage },
+      ], sendToWebview);
+      return;
+    }
+
+    if (prep.runtimeErrorMsg) {
+      const friendly = prep.runtimeErrorMsg;
+      await setHtmlAndPost(panel, {
+        code: '',
+        extensionPath: context.extensionPath,
+        allowInteractiveTopInputs: _allowInteractiveTopInputs,
+        initialCaptureVisible: getInitialCaptureVisible(panel),
+        p5Version: (panel as any)._p5Version,
+      }, [
+        { delayMs: 150, message: { type: 'showError', message: friendly } as ExtensionToWebviewMessage },
+      ], sendToWebview);
+      outputChannel.appendLine(friendly);
+      (panel as any)._lastRuntimeError = friendly;
+      return;
+    }
+
+    if (prep.blockOnLint) {
+      if (reason === 'typing') {
+        if (forceLog) {
+          try { lintApi.logAllWarningsForDocument(document); } catch { }
+        }
         return;
       }
-    } catch { }
-    // --- Preprocess top-level inputs before any wrapping or syntax checks on auto updates ---
-    try {
-      const key = document.fileName;
-      const inputs = detectTopLevelInputs(code);
-      if (inputs.length > 0) {
-        if (reason === 'save' || reason === 'command') {
-          // Always show overlay on save/command; prefill with cache if available
-          let itemsToShow = inputs;
-          if (hasCachedInputsForKey(key, inputs)) {
-            const cached = getCachedInputsForKey(key);
-            if (cached) {
-              itemsToShow = inputs.map((it, i) => ({
-                varName: it.varName,
-                label: it.label,
-                defaultValue: typeof cached.values[i] !== 'undefined' ? cached.values[i] : it.defaultValue,
-              }));
-            }
-          }
-          panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel), p5Version: (panel as any)._p5Version });
-          setTimeout(() => { sendToWebview(panel, { type: 'showTopInputs', items: itemsToShow }); }, 150);
-          return;
-        } else if (hasCachedInputsForKey(key, inputs)) {
-          // typing: use cache silently
-          _allowInteractiveTopInputs = false;
-          try {
-            code = await preprocessTopLevelInputs(code, { key, interactive: false });
-          } finally {
-            _allowInteractiveTopInputs = true;
-          }
-        } else {
-          // No cached answers on typing auto-update: block and show overlay below
-        }
+      await setHtmlAndPost(panel, {
+        code: '',
+        extensionPath: context.extensionPath,
+        allowInteractiveTopInputs: _allowInteractiveTopInputs,
+        initialCaptureVisible: getInitialCaptureVisible(panel),
+        p5Version: (panel as any)._p5Version,
+      }, [], sendToWebview);
+      lintApi.logBlockingWarningsForDocument(document);
+      return;
+    }
+
+    if (!prep.ok) {
+      syntaxErrorMsg = prep.syntaxErrorMsg || null;
+      await setHtmlAndPost(panel, {
+        code: '',
+        extensionPath: context.extensionPath,
+        allowInteractiveTopInputs: _allowInteractiveTopInputs,
+        initialCaptureVisible: getInitialCaptureVisible(panel),
+        p5Version: (panel as any)._p5Version,
+      }, [], sendToWebview);
+    } else {
+      const code = prep.codeToInject;
+      _allowInteractiveTopInputs = false;
+      try {
+        panel.webview.html = await createHtml(code, panel, context.extensionPath, {
+          allowInteractiveTopInputs: _allowInteractiveTopInputs,
+          initialCaptureVisible: getInitialCaptureVisible(panel),
+          p5Version: (panel as any)._p5Version,
+        });
+      } finally {
+        _allowInteractiveTopInputs = true;
       }
-    } catch { }
-    let syntaxErrorMsg: string | null = null;
-    let hadSyntaxError = false;
-    try {
-      // --- Check for reserved global conflicts before syntax check ---
-      const { globals, conflicts } = extractGlobalVariablesWithConflicts(code);
-      if (conflicts.length > 0) {
-        syntaxErrorMsg = `${getTime()} [‼️SYNTAX ERROR in ${fileName}] Reserved variable name(s) used: ${conflicts.join(', ')}`;
-        syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
-        panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel), p5Version: (panel as any)._p5Version });
-        hadSyntaxError = true;
-        throw new Error(syntaxErrorMsg);
-      }
-
-      // --- Check for syntax/reference errors BEFORE wrapping in setup ---
-      new Function(code); // syntax/reference check
-
-      // Only wrap/massage top-level statements if no errors
-      code = wrapInSetupIfNeeded(code);
-      // Block sketch when configured and warnings exist; otherwise run as usual
-
-      const warnSemi_UD = lintApi.hasSemicolonWarnings(document);
-      const warnUnd_UD = lintApi.hasUndeclaredWarnings(document);
-      const warnVar_UD = lintApi.hasVarWarnings(document);
-      const warnEq_UD = lintApi.hasEqualityWarnings(document);
-      const shouldBlockUD = (lintApi.getStrictLevel('Semicolon') === 'block' && warnSemi_UD.has)
-        || (lintApi.getStrictLevel('Undeclared') === 'block' && warnUnd_UD.has)
-        || (lintApi.getStrictLevel('NoVar') === 'block' && warnVar_UD.has)
-        || (lintApi.getStrictLevel('LooseEquality') === 'block' && warnEq_UD.has);
-      if (shouldBlockUD) {
-        // Suppress overlay during live typing; only show on explicit reload/save/command
-        if (reason === 'typing') {
-          // Still log warnings to the Output channel if requested
-          if (forceLog) {
-            try { lintApi.logSemicolonWarningsForDocument(document); } catch { }
-            try { lintApi.logUndeclaredWarningsForDocument(document); } catch { }
-            try { lintApi.logVarWarningsForDocument(document); } catch { }
-            try { lintApi.logEqualityWarningsForDocument(document); } catch { }
-          }
-          return;
-        } else {
-          panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel), p5Version: (panel as any)._p5Version });
-          lintApi.logBlockingWarningsForDocument(document);
-          return;
-        }
-      } else {
-        // Before reloading HTML, if inputs exist but are unresolved, block and ask user to Reload
-        const docKey = (panel && (panel as any)._sketchFilePath) ? String((panel as any)._sketchFilePath) : document.fileName;
-        const unresolved = detectTopLevelInputs(document.getText());
-        if (unresolved.length > 0 && !hasCachedInputsForKey(docKey, unresolved)) {
-          panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel), p5Version: (panel as any)._p5Version });
-          setTimeout(() => { sendToWebview(panel, { type: 'showTopInputs', items: unresolved }); }, 150);
-          return;
-        }
-        // Always reload HTML for every code update to reset JS environment
-        const key = (panel && (panel as any)._sketchFilePath) ? String((panel as any)._sketchFilePath) : '';
-        const inputs = detectTopLevelInputs(code);
-        if (inputs.length > 0 && !hasCachedInputsForKey(key, inputs)) {
-          // Do not run sketch with unresolved inputs on auto updates. Show input UI and return.
-          panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel), p5Version: (panel as any)._p5Version });
-          setTimeout(() => {
-            sendToWebview(panel, { type: 'showTopInputs', items: inputs });
-          }, 150);
-          return;
-        }
-        _allowInteractiveTopInputs = false; // suppress prompts, use cache
-        try {
-          panel.webview.html = await createHtml(code, panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel), p5Version: (panel as any)._p5Version });
-        } finally {
-          _allowInteractiveTopInputs = true;
-        }
-        // After HTML is set, send global variables
-        const { globals: filteredGlobals } = extractGlobalVariablesWithConflicts(code);
-        // --- PATCH: Use .type instead of typeof .value ---
-        let filtered = filteredGlobals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
-        // Apply @hide directive filtering based on original document text
-        const hiddenSet = getHiddenGlobalsByDirective(document.getText());
-        if (hiddenSet.size > 0) {
-          filtered = filtered.filter(g => !hiddenSet.has(g.name));
-        }
+      if (prep.globals) {
         setTimeout(() => {
-          // compute readOnly based on the original document text (before we may wrap)
-          const readOnly = hasOnlySetup(document.getText());
-          sendToWebview(panel, { type: 'setGlobalVars', variables: filtered, readOnly });
+          sendToWebview(panel, {
+            type: 'setGlobalVars',
+            variables: prep.globals!.variables.map(g => ({ name: g.name, type: g.type, value: undefined })),
+            readOnly: prep.globals!.readOnly,
+          });
         }, 200);
-        // For setup-only sketches, request a snapshot after setup finishes to ensure final values are reflected
         setTimeout(() => {
-          const onlySetup = hasOnlySetup(document.getText());
-          if (onlySetup) {
+          if (prep.globals && prep.globals.readOnly) {
             try { sendToWebview(panel, { type: 'requestGlobalsSnapshot' }); } catch { }
           }
         }, 600);
       }
-    } catch (err: any) {
-      if (!syntaxErrorMsg) {
-        syntaxErrorMsg = `${getTime()} [‼️SYNTAX ERROR in ${path.basename(document.fileName)}] ${err.message}`;
-        syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
-      }
-      panel.webview.html = await createHtml('', panel, context.extensionPath, { allowInteractiveTopInputs: _allowInteractiveTopInputs, initialCaptureVisible: getInitialCaptureVisible(panel), p5Version: (panel as any)._p5Version });
-      hadSyntaxError = true;
     }
 
-    // Always show syntax errors in overlay
     if (syntaxErrorMsg) {
       ignoreLogs = true;
       // Fix [object Arguments] for overlay as well
@@ -706,10 +668,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     // If requested, log semicolon warnings when the panel reloads (typing/save debounce path)
     if (forceLog) {
-      try { lintApi.logSemicolonWarningsForDocument(document); } catch { }
-      try { lintApi.logUndeclaredWarningsForDocument(document); } catch { }
-      try { lintApi.logVarWarningsForDocument(document); } catch { }
-      try { lintApi.logEqualityWarningsForDocument(document); } catch { }
+      try { lintApi.logAllWarningsForDocument(document); } catch { }
     }
   }
 
@@ -750,44 +709,20 @@ export function activate(context: vscode.ExtensionContext) {
       if (!panel) {
         // Check for syntax errors before setting HTML
 
-        let syntaxErrorMsg: string | null = null;
-        let codeToInject = code;
-        let _inputsNeeded: TopInputItem[] = [];
-        // --- Determine top-level inputs BEFORE syntax check/wrapping ---
-        try {
-          const inputs = detectTopLevelInputs(codeToInject);
-          if (inputs.length > 0) {
-            _inputsNeeded = inputs;
-            codeToInject = '';
-          }
-        } catch { }
-        try {
-          // Friendly error for inputPrompt() used outside top-of-sketch
-          if (hasNonTopInputUsage(codeToInject)) {
-            syntaxErrorMsg = `${getTime()} [‼️RUNTIME ERROR in ${path.basename(editor.document.fileName)}] inputPrompt() must be used at the very top of the sketch to initialize a variable e.g.: let a = inputPrompt());`;
-            codeToInject = '';
-            throw new Error('inputPrompt must initialize a top-level variable');
-          }
-          // --- Check for reserved global conflicts before syntax check ---
-          const { globals, conflicts } = extractGlobalVariablesWithConflicts(codeToInject);
-          if (conflicts.length > 0) {
-            syntaxErrorMsg = `${getTime()} [‼️SYNTAX ERROR in ${path.basename(editor.document.fileName)}] Reserved variable name(s) used: ${conflicts.join(', ')}`;
-            syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
-            codeToInject = '';
-            throw new Error(syntaxErrorMsg);
-          }
-          // --- Check for syntax/reference errors BEFORE wrapping in setup ---
-          new Function(codeToInject); // syntax/reference check
+        const prep = await prepareSketch({
+          document: editor.document,
+          reason: 'open',
+          lint: {
+            hasSemicolonWarnings: d => lintApi.hasSemicolonWarnings(d),
+            hasUndeclaredWarnings: d => lintApi.hasUndeclaredWarnings(d),
+            hasVarWarnings: d => lintApi.hasVarWarnings(d),
+            hasEqualityWarnings: d => lintApi.hasEqualityWarnings(d),
+            getStrictLevel: k => lintApi.getStrictLevel(k),
+          },
+          allowInteractiveTopInputs: _allowInteractiveTopInputs,
+        });
 
-          // Only wrap if no errors
-          codeToInject = wrapInSetupIfNeeded(codeToInject);
-        } catch (err: any) {
-          if (!syntaxErrorMsg) {
-            syntaxErrorMsg = `${getTime()} [‼️SYNTAX ERROR in ${path.basename(editor.document.fileName)}] ${err.message}`;
-            syntaxErrorMsg = formatSyntaxErrorMsg(syntaxErrorMsg);
-          }
-          codeToInject = '';
-        }
+        let syntaxErrorMsg: string | null = prep.syntaxErrorMsg || null;
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
         if (!workspaceFolder) return;
         const { localResourceRoots, selectedVersion } = resolveLiveAssets(context, editor);
@@ -922,6 +857,7 @@ export function activate(context: vscode.ExtensionContext) {
               createHtml: (code: string, p: vscode.WebviewPanel, extPath: string, opts?: any) => createHtml(code, p, extPath, { ...(opts || {}), p5Version: (p as any)._p5Version }),
               getInitialCaptureVisible: (p) => getInitialCaptureVisible(p),
               getExtensionPath: () => context.extensionPath,
+              validateSource,
               hasNonTopInputUsage,
               detectTopLevelInputs,
               hasCachedInputsForKey,
@@ -1064,59 +1000,60 @@ export function activate(context: vscode.ExtensionContext) {
           }
         });
 
-        // If inputs are present, always show UI (prefill from cache if available) and stop
-        if (_inputsNeeded && _inputsNeeded.length > 0) {
+        if (prep.inputsOverlay && prep.inputsOverlay.length > 0) {
           const key = editor.document.fileName;
-          let itemsToShow = _inputsNeeded;
-          if (hasCachedInputsForKey(key, _inputsNeeded)) {
+          let itemsToShow = prep.inputsOverlay;
+          if (hasCachedInputsForKey(key, prep.inputsOverlay)) {
             const cached = getCachedInputsForKey(key);
             if (cached) {
-              itemsToShow = _inputsNeeded.map((it, i) => ({
+              itemsToShow = prep.inputsOverlay.map((it, i) => ({
                 varName: it.varName,
                 label: it.label,
                 defaultValue: typeof cached.values[i] !== 'undefined' ? cached.values[i] : it.defaultValue,
               }));
             }
           }
-          panel.webview.html = await createHtml('', panel, context.extensionPath, { p5Version: (panel as any)._p5Version });
-          setTimeout(() => {
-            sendToWebview(panel, { type: 'showTopInputs', items: itemsToShow });
-          }, 150);
+          await setHtmlAndPost(panel, {
+            code: '',
+            extensionPath: context.extensionPath,
+            allowInteractiveTopInputs: _allowInteractiveTopInputs,
+            initialCaptureVisible: getInitialCaptureVisible(panel),
+            p5Version: (panel as any)._p5Version,
+          }, [
+            { delayMs: 150, message: { type: 'showTopInputs', items: itemsToShow } as ExtensionToWebviewMessage },
+          ], sendToWebview);
           return;
         }
 
-        // Only set HTML on first open, but optionally block on warnings
-        const warnSemi_IO = lintApi.hasSemicolonWarnings(editor.document);
-        const warnUnd_IO = lintApi.hasUndeclaredWarnings(editor.document);
-        const warnVar_IO = lintApi.hasVarWarnings(editor.document);
-        const shouldBlockIO = (lintApi.getStrictLevel('Semicolon') === 'block' && warnSemi_IO.has)
-          || (lintApi.getStrictLevel('Undeclared') === 'block' && warnUnd_IO.has)
-          || (lintApi.getStrictLevel('NoVar') === 'block' && warnVar_IO.has);
-        if (shouldBlockIO) {
-          panel.webview.html = await createHtml('', panel, context.extensionPath, { p5Version: (panel as any)._p5Version });
+        if (prep.blockOnLint) {
+          await setHtmlAndPost(panel, {
+            code: '',
+            extensionPath: context.extensionPath,
+            allowInteractiveTopInputs: _allowInteractiveTopInputs,
+            initialCaptureVisible: getInitialCaptureVisible(panel),
+            p5Version: (panel as any)._p5Version,
+          }, [], sendToWebview);
           lintApi.logBlockingWarningsForDocument(editor.document);
         } else {
-          panel.webview.html = await createHtml(codeToInject, panel, context.extensionPath, { p5Version: (panel as any)._p5Version });
-          // Log warnings when running the sketch (initial open)
+          await setHtmlAndPost(panel, {
+            code: prep.ok ? prep.codeToInject : '',
+            extensionPath: context.extensionPath,
+            allowInteractiveTopInputs: _allowInteractiveTopInputs,
+            initialCaptureVisible: getInitialCaptureVisible(panel),
+            p5Version: (panel as any)._p5Version,
+          }, [], sendToWebview);
           lintApi.logSemicolonWarningsForDocument(editor.document);
           lintApi.logUndeclaredWarningsForDocument(editor.document);
           lintApi.logVarWarningsForDocument(editor.document);
         }
-        // Send global variables immediately after setting HTML
-        const { globals } = extractGlobalVariablesWithConflicts(codeToInject);
-        // --- PATCH: Use .type instead of typeof .value ---
-        let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
-        // Apply @hide directive filtering based on original editor code
-        {
-          const hiddenSet = getHiddenGlobalsByDirective(code);
-          if (hiddenSet.size > 0) {
-            filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name));
-          }
+
+        if (prep.globals && prep.ok && !prep.blockOnLint) {
+          const varsPayload = prep.globals.variables.map(g => ({ name: g.name, type: g.type, value: undefined }));
+          setTimeout(() => {
+            sendToWebview(panel, { type: 'setGlobalVars', variables: varsPayload, readOnly: prep.globals!.readOnly });
+          }, 200);
         }
-        setTimeout(() => {
-          const readOnly = hasOnlySetup(code); // use original editor code to decide
-          sendToWebview(panel, { type: 'setGlobalVars', variables: filteredGlobals, readOnly });
-        }, 200);
+
         if (syntaxErrorMsg) {
           setTimeout(() => {
             sendToWebview(panel, { type: 'syntaxError', message: stripLeadingTimestamp(syntaxErrorMsg) });
@@ -1179,10 +1116,8 @@ export function activate(context: vscode.ExtensionContext) {
           if (docUri) {
             const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === docUri);
             if (doc) {
-              // Log warnings on explicit reload command
-              lintApi.logSemicolonWarningsForDocument(doc);
-              lintApi.logUndeclaredWarningsForDocument(doc);
-              lintApi.logVarWarningsForDocument(doc);
+              // Log all warnings on explicit reload command
+              lintApi.logAllWarningsForDocument(doc);
               _pendingReloadReason = 'command';
               autoReload.debounceUpdate(doc, false);
             }
@@ -1190,10 +1125,8 @@ export function activate(context: vscode.ExtensionContext) {
         }
         return;
       }
-      // Log warnings on explicit reload command
-      lintApi.logSemicolonWarningsForDocument(editor.document);
-      lintApi.logUndeclaredWarningsForDocument(editor.document);
-      lintApi.logVarWarningsForDocument(editor.document);
+      // Log all warnings on explicit reload command
+      lintApi.logAllWarningsForDocument(editor.document);
       _pendingReloadReason = 'command';
       autoReload.debounceUpdate(editor.document, false); // use false to match typing
     })
@@ -1368,46 +1301,65 @@ text("P5", 50, 52);`;
     })
   );
 
-  // Listen for OSC config changes and re-create port if needed (delegated to oscService)
+  // Simple debouncers for config-driven broadcasts
+  let _varPanelDebounceTimer: NodeJS.Timeout | undefined;
+  let _showFpsDebounceTimer: NodeJS.Timeout | undefined;
+  let _overlayFontDebounceTimer: NodeJS.Timeout | undefined;
+
+  // Centralized configuration change handler
   vscode.workspace.onDidChangeConfiguration(e => {
-    try { oscService?.handleConfigChange(e); } catch { }
-  });
+    try {
+      // OSC config changes
+      try { oscService?.handleConfigChange(e); } catch { }
 
-  // Listen for debounceDelay config changes and update debounce logic
-  vscode.workspace.onDidChangeConfiguration(e => {
-    if (e.affectsConfiguration('P5Studio.debounceDelay')) {
-      try { autoReload.clearDebounceCache(); } catch { }
-    }
-    if (e.affectsConfiguration('P5Studio.variablePanelDebounceDelay')) {
-      const newDelay = cfg.getVariablePanelDebounceDelay();
-      for (const [, panel] of webviewPanelMap.entries()) {
-        sendToWebview(panel, { type: 'updateVarDebounceDelay', value: newDelay });
+      // Debounce delay for auto-reload
+      if (e.affectsConfiguration('P5Studio.debounceDelay')) {
+        try { autoReload.clearDebounceCache(); } catch { }
       }
-    }
-    // --- Sync reloadWhileTyping/reloadOnSave if changed via settings UI ---
-    if (e.affectsConfiguration('P5Studio.reloadWhileTyping') || e.affectsConfiguration('P5Studio.reloadOnSave')) {
-      (async () => { try { await autoReload.updateConfig(); } catch { } })();
-      autoReload.refreshAll();
-    }
-    // Toolbar in webview removed; no need to sync showReloadButton/ShowDebugButton settings to webview DOM.
 
-    // --- Immediately apply showFPS changes in all open panels ---
-    if (e.affectsConfiguration('P5Studio.showFPS')) {
-      const show = cfg.getShowFPS();
-      for (const [, panel] of webviewPanelMap.entries()) {
-        try { sendToWebview(panel, { type: 'toggleFPS', show }); } catch { }
+      // Variable panel debounce delay (debounced broadcast)
+      if (e.affectsConfiguration('P5Studio.variablePanelDebounceDelay')) {
+        const newDelay = cfg.getVariablePanelDebounceDelay();
+        if (_varPanelDebounceTimer) clearTimeout(_varPanelDebounceTimer);
+        _varPanelDebounceTimer = setTimeout(() => {
+          for (const [, panel] of webviewPanelMap.entries()) {
+            try { sendToWebview(panel, { type: 'updateVarDebounceDelay', value: newDelay }); } catch { }
+          }
+        }, 150);
       }
-    }
 
-    // Update overlay font size if the editor font size changes
-    if (e.affectsConfiguration('editor.fontSize')) {
-      const newSize = vscode.workspace.getConfiguration('editor').get<number>('fontSize', 14);
-      for (const [, panel] of webviewPanelMap.entries()) {
-        sendToWebview(panel, { type: 'updateOverlayFontSize', value: newSize });
+      // Sync reloadWhileTyping/reloadOnSave when changed via settings UI
+      if (e.affectsConfiguration('P5Studio.reloadWhileTyping') || e.affectsConfiguration('P5Studio.reloadOnSave')) {
+        (async () => { try { await autoReload.updateConfig(); } catch { } })();
+        autoReload.refreshAll();
       }
-    }
 
-    // Blockly theme updates are handled within the blockly module
+      // Immediately apply showFPS changes in all open panels (debounced)
+      if (e.affectsConfiguration('P5Studio.showFPS')) {
+        const show = cfg.getShowFPS();
+        if (_showFpsDebounceTimer) clearTimeout(_showFpsDebounceTimer);
+        _showFpsDebounceTimer = setTimeout(() => {
+          for (const [, panel] of webviewPanelMap.entries()) {
+            try { sendToWebview(panel, { type: 'toggleFPS', show }); } catch { }
+          }
+        }, 100);
+      }
+
+      // Update overlay font size if the editor font size changes (debounced)
+      if (e.affectsConfiguration('editor.fontSize')) {
+        const newSize = vscode.workspace.getConfiguration('editor').get<number>('fontSize', 14);
+        if (_overlayFontDebounceTimer) clearTimeout(_overlayFontDebounceTimer);
+        _overlayFontDebounceTimer = setTimeout(() => {
+          for (const [, panel] of webviewPanelMap.entries()) {
+            try { sendToWebview(panel, { type: 'updateOverlayFontSize', value: newSize }); } catch { }
+          }
+        }, 100);
+      }
+
+      // Blockly theme updates are handled within the blockly module
+    } catch {
+      // ignore config handler errors
+    }
   });
 
   // Blockly theme sync with VS Code theme handled within the blockly module

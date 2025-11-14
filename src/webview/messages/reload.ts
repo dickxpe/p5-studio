@@ -8,10 +8,7 @@ export async function handleReloadClicked(
     clearStepHighlight: (editor?: vscode.TextEditor) => void;
     blocklyClearHighlight: (docUri: string) => void;
     lintApi: {
-      logSemicolonWarningsForDocument: (doc: vscode.TextDocument) => void;
-      logUndeclaredWarningsForDocument: (doc: vscode.TextDocument) => void;
-      logVarWarningsForDocument: (doc: vscode.TextDocument) => void;
-      logEqualityWarningsForDocument: (doc: vscode.TextDocument) => void;
+      logAllWarningsForDocument: (doc: vscode.TextDocument) => void;
       hasSemicolonWarnings: (doc: vscode.TextDocument) => { has: boolean };
       hasUndeclaredWarnings: (doc: vscode.TextDocument) => { has: boolean };
       hasVarWarnings: (doc: vscode.TextDocument) => { has: boolean };
@@ -24,6 +21,12 @@ export async function handleReloadClicked(
     createHtml: (code: string, panel: vscode.WebviewPanel, extensionPath: string, opts?: { allowInteractiveTopInputs?: boolean; initialCaptureVisible?: boolean }) => Promise<string>;
     getInitialCaptureVisible: (panel: vscode.WebviewPanel) => boolean;
     getExtensionPath: () => string;
+    validateSource: (document: vscode.TextDocument, code?: string) => {
+      ok: boolean;
+      code: string;
+      syntaxErrorMsg?: string;
+      reservedConflictMsg?: string;
+    };
     hasNonTopInputUsage: (code: string) => boolean;
     detectTopLevelInputs: (code: string) => Array<{ varName: string; label?: string; defaultValue?: any }>;
     hasCachedInputsForKey: (key: string, items: Array<{ varName: string; label?: string }>) => boolean;
@@ -60,6 +63,18 @@ export async function handleReloadClicked(
   const docUri = editor.document.uri.toString();
   const fileName = require('path').basename(editor.document.fileName);
   const rawCode = editor.document.getText();
+  const drawRegex = /\bfunction\s+draw\s*\(/;
+
+  function postGlobalsSnapshot(codeForGlobals: string) {
+    const globalsInfo = deps.extractGlobalVariablesWithConflicts(codeForGlobals);
+    let filteredGlobals = globalsInfo.globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+    const hiddenSet = deps.getHiddenGlobalsByDirective(editor.document.getText());
+    if (hiddenSet.size > 0) {
+      filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name));
+    }
+    const readOnly = deps.hasOnlySetup(editor.document.getText());
+    panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
+  }
 
   // Friendly error for inputPrompt misuse
   if (deps.hasNonTopInputUsage(rawCode)) {
@@ -73,10 +88,7 @@ export async function handleReloadClicked(
   }
 
   // Log warnings on explicit reload action
-  deps.lintApi.logSemicolonWarningsForDocument(editor.document);
-  deps.lintApi.logUndeclaredWarningsForDocument(editor.document);
-  deps.lintApi.logVarWarningsForDocument(editor.document);
-  deps.lintApi.logEqualityWarningsForDocument(editor.document);
+  deps.lintApi.logAllWarningsForDocument(editor.document);
 
   // Optionally block sketch on warning
   {
@@ -95,18 +107,16 @@ export async function handleReloadClicked(
     }
   }
 
-  const { conflicts } = deps.extractGlobalVariablesWithConflicts(rawCode);
-  if (conflicts.length > 0) {
+  const validation = deps.validateSource(editor.document, rawCode);
+  if (!validation.ok) {
     const outputChannel = deps.getOrCreateOutputChannel(docUri, fileName);
-    let syntaxErrorMsg = `${deps.getTime()} [‼️SYNTAX ERROR in ${fileName}] Reserved variable name(s) used: ${conflicts.join(', ')}`;
-    syntaxErrorMsg = deps.formatSyntaxErrorMsg(syntaxErrorMsg);
-    // Replace HTML with empty sketch so nothing runs, then show overlay
+    const msg = validation.syntaxErrorMsg || validation.reservedConflictMsg || `${deps.getTime()} [‼️SYNTAX ERROR in ${fileName}]`;
     panel.webview.html = await deps.createHtml('', panel, deps.getExtensionPath(), { allowInteractiveTopInputs: deps.getAllowInteractiveTopInputs(), initialCaptureVisible: deps.getInitialCaptureVisible(panel) });
     setTimeout(() => {
-      panel.webview.postMessage({ type: 'syntaxError', message: deps.stripLeadingTimestamp(syntaxErrorMsg) });
+      panel.webview.postMessage({ type: 'syntaxError', message: deps.stripLeadingTimestamp(msg) });
     }, 150);
-    outputChannel.appendLine(syntaxErrorMsg);
-    (panel as any)._lastSyntaxError = syntaxErrorMsg;
+    outputChannel.appendLine(msg);
+    (panel as any)._lastSyntaxError = msg;
     (panel as any)._lastRuntimeError = null;
     return;
   }
@@ -121,20 +131,14 @@ export async function handleReloadClicked(
       const preprocessed = await deps.preprocessTopLevelInputs(rawCode, { key, interactive: false });
       deps.setAllowInteractiveTopInputs(prev);
       let code = deps.wrapInSetupIfNeeded(preprocessed);
-      const globals = deps.extractGlobalVariables(code);
+      const globalsInfo = deps.extractGlobalVariablesWithConflicts(code);
+      const globals = globalsInfo.globals;
       let rewrittenCode = deps.rewriteUserCodeWithWindowGlobals(code, globals);
-      const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
+      const hasDraw = drawRegex.test(code);
       if (!hasDraw) {
         panel.webview.html = await deps.createHtml(code, panel, deps.getExtensionPath(), { allowInteractiveTopInputs: deps.getAllowInteractiveTopInputs(), initialCaptureVisible: deps.getInitialCaptureVisible(panel) });
         setTimeout(() => {
-          const { globals } = deps.extractGlobalVariablesWithConflicts(code);
-          let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
-          const hiddenSet = deps.getHiddenGlobalsByDirective(editor.document.getText());
-          if (hiddenSet.size > 0) {
-            filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name));
-          }
-          const readOnly = deps.hasOnlySetup(editor.document.getText());
-          panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
+          try { postGlobalsSnapshot(code); } catch { }
         }, 200);
         setTimeout(() => {
           const onlySetup = deps.hasOnlySetup(editor.document.getText());
@@ -145,14 +149,7 @@ export async function handleReloadClicked(
       } else {
         panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: false });
         setTimeout(() => {
-          const { globals } = deps.extractGlobalVariablesWithConflicts(code);
-          let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
-          const hiddenSet = deps.getHiddenGlobalsByDirective(editor.document.getText());
-          if (hiddenSet.size > 0) {
-            filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name));
-          }
-          const readOnly = deps.hasOnlySetup(editor.document.getText());
-          panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
+          try { postGlobalsSnapshot(code); } catch { }
         }, 200);
       }
       return;
@@ -166,9 +163,10 @@ export async function handleReloadClicked(
     }
   }
 
-  // No inputs: just run normally
+  // No inputs: just run normally (after validation above)
   let code = deps.wrapInSetupIfNeeded(rawCode);
-  const globals = deps.extractGlobalVariables(code);
+  const globalsInfo = deps.extractGlobalVariablesWithConflicts(code);
+  const globals = globalsInfo.globals;
   let rewrittenCode = deps.rewriteUserCodeWithWindowGlobals(code, globals);
   if (params.preserveGlobals && globals.length > 0) {
     globals.forEach(g => {
@@ -176,18 +174,11 @@ export async function handleReloadClicked(
       rewrittenCode = rewrittenCode.replace(new RegExp('^\\s*window\\.' + g.name + '\\s*=\\s*' + g.name + ';?\\s*$', 'gm'), '');
     });
   }
-  const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
+  const hasDraw = drawRegex.test(code);
   if (!hasDraw) {
     panel.webview.html = await deps.createHtml(code, panel, deps.getExtensionPath(), { allowInteractiveTopInputs: deps.getAllowInteractiveTopInputs(), initialCaptureVisible: deps.getInitialCaptureVisible(panel) });
     setTimeout(() => {
-      const { globals } = deps.extractGlobalVariablesWithConflicts(code);
-      let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
-      const hiddenSet = deps.getHiddenGlobalsByDirective(editor.document.getText());
-      if (hiddenSet.size > 0) {
-        filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name));
-      }
-      const readOnly = deps.hasOnlySetup(editor.document.getText());
-      panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
+      try { postGlobalsSnapshot(code); } catch { }
     }, 200);
     setTimeout(() => {
       const onlySetup = deps.hasOnlySetup(editor.document.getText());
@@ -199,14 +190,7 @@ export async function handleReloadClicked(
     // For sketches with draw(), always reset globals to initial values on reload
     panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: false });
     setTimeout(() => {
-      const { globals } = deps.extractGlobalVariablesWithConflicts(code);
-      let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
-      const hiddenSet = deps.getHiddenGlobalsByDirective(editor.document.getText());
-      if (hiddenSet.size > 0) {
-        filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name));
-      }
-      const readOnly = deps.hasOnlySetup(editor.document.getText());
-      panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
+      try { postGlobalsSnapshot(code); } catch { }
     }, 200);
   }
 }
