@@ -190,7 +190,9 @@ export function registerLinting(
         const outputChannel = deps.getOrCreateOutputChannel(docUri, fileName);
         const warningText = `Missing semicolon on line(s): ${uniqLines.join(', ')}`;
         const fullWarning = `[⚠️WARNING in ${fileName}] ${warningText}`;
-        outputChannel.appendLine(`${deps.getTime()} ${fullWarning}`);
+        if (cfg.getLogWarningsToOutput()) {
+            outputChannel.appendLine(`${deps.getTime()} ${fullWarning}`);
+        }
         const panel = deps.getPanelForDocUri(docUri);
         const level = getStrictLevel('Semicolon');
         if (panel && level === 'block') sendToWebview(panel, { type: 'showWarning', message: fullWarning });
@@ -494,7 +496,7 @@ export function registerLinting(
         const outputChannel = deps.getOrCreateOutputChannel(docUri, fileName);
         const { eqLines, neqLines } = hasEqualityWarnings(document);
         const level = getStrictLevel('LooseEquality');
-        if (level !== 'ignore') {
+        if (level !== 'ignore' && cfg.getLogWarningsToOutput()) {
             if (eqLines.length) outputChannel.appendLine(`${deps.getTime()} [⚠️WARNING in ${fileName}] Use '===' instead of '==' on line(s): ${eqLines.join(', ')}`);
             if (neqLines.length) outputChannel.appendLine(`${deps.getTime()} [⚠️WARNING in ${fileName}] Use '!==' instead of '!=' on line(s): ${neqLines.join(', ')}`);
         }
@@ -569,11 +571,13 @@ export function registerLinting(
         const eqMsgEq = eq.eqLines.length ? `[⚠️WARNING in ${fileName}] Use '===' instead of '==' on line(s): ${eq.eqLines.join(', ')}` : '';
         const eqMsgNeq = eq.neqLines.length ? `[⚠️WARNING in ${fileName}] Use '!==' instead of '!=' on line(s): ${eq.neqLines.join(', ')}` : '';
 
-        if (semiMsg) outputChannel.appendLine(`${deps.getTime()} ${semiMsg}`);
-        if (undMsg) outputChannel.appendLine(`${deps.getTime()} ${undMsg}`);
-        if (novMsg) outputChannel.appendLine(`${deps.getTime()} ${novMsg}`);
-        if (eqMsgEq) outputChannel.appendLine(`${deps.getTime()} ${eqMsgEq}`);
-        if (eqMsgNeq) outputChannel.appendLine(`${deps.getTime()} ${eqMsgNeq}`);
+        if (cfg.getLogWarningsToOutput()) {
+            if (semiMsg) outputChannel.appendLine(`${deps.getTime()} ${semiMsg}`);
+            if (undMsg) outputChannel.appendLine(`${deps.getTime()} ${undMsg}`);
+            if (novMsg) outputChannel.appendLine(`${deps.getTime()} ${novMsg}`);
+            if (eqMsgEq) outputChannel.appendLine(`${deps.getTime()} ${eqMsgEq}`);
+            if (eqMsgNeq) outputChannel.appendLine(`${deps.getTime()} ${eqMsgNeq}`);
+        }
 
         const panel = deps.getPanelForDocUri(docUri);
         const lvlSemi = getStrictLevel('Semicolon');

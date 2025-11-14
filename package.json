@@ -279,8 +279,8 @@
     },
     "configuration": [
       {
-        "type": "object",
         "title": "General",
+        "type": "object",
         "properties": {
           "P5Studio.P5jsVersion": {
             "type": "string",
@@ -342,8 +342,8 @@
         }
       },
       {
-        "type": "object",
         "title": "OSC",
+        "type": "object",
         "properties": {
           "P5Studio.oscRemoteAddress": {
             "type": "string",
@@ -372,8 +372,8 @@
         }
       },
       {
-        "type": "object",
         "title": "Blockly",
+        "type": "object",
         "properties": {
           "P5Studio.enableBlockly": {
             "type": "boolean",
@@ -391,8 +391,8 @@
         }
       },
       {
-        "type": "object",
         "title": "Debugging",
+        "type": "object",
         "properties": {
           "P5Studio.stepRunDelayMs": {
             "type": "number",
@@ -410,8 +410,8 @@
         }
       },
       {
-        "type": "object",
         "title": "Linting",
+        "type": "object",
         "properties": {
           "P5Studio.StrictSemicolonWarning": {
             "type": "string",

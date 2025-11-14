@@ -1,3 +1,8 @@
+function getLogWarningsToOutput(): boolean {
+    try {
+        return vscode.workspace.getConfiguration('P5Studio').get<boolean>('logWarningsToOutput', true) === true;
+    } catch { return true; }
+}
 import * as vscode from 'vscode';
 
 export type StrictLevel = 'ignore' | 'warn' | 'block';
@@ -144,6 +149,7 @@ export const config = {
     getBlocklyTheme,
     resolveBlocklyTheme,
     getStrictLevel,
+    getLogWarningsToOutput,
     getOscConfig,
     getSingleP5Panel,
     setReloadWhileTyping,

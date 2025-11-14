@@ -1,15 +1,35 @@
-# Exclude source, test, and dev files
+# Source, tests, build artifacts
 **/*.map
 **/src/**
 **/test/**
 **/out/test/**
+**/typescript/**
+**/vendor/**
+**/P5TestProject/**
+
+# Workspace and VCS
 .vscode/**
 .git/**
 .gitignore
 npm-debug.log
+
+# TypeScript sources (extension runs from compiled JS)
+**/*.ts
+!p5types/**/*.ts
+
+# Local tooling / examples / non-runtime
+examples/**
+sketches/**
+readme/**
+common/**
+import/**
+scripts/**
+__tmp/**
+
+# Local artifacts not needed in vsix
+p5-studio-*.vsix
+image.gif
+
+# Docs (optional to exclude if you want a smaller vsix)
 README.md
 CHANGELOG.md
-!p5types/**/*.ts
-**/*.ts
-**/P5TestProject/**
-**/typescript/**

@@ -26,7 +26,7 @@ function copyDirSync(src, dest) {
     const dest111 = path.join(repoRoot, 'assets', '1.11', 'p5types');
     try { fs.mkdirSync(path.join(repoRoot, 'assets', '1.11'), { recursive: true }); } catch { }
     if (!fs.existsSync(src)) {
-        console.warn('[copy-p5types-to-assets] Source p5types folder not found:', src);
+        // Optional: if no local p5types folder is present, skip silently.
         return;
     }
     copyDirSync(src, dest111);

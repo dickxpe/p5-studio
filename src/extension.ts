@@ -1,23 +1,19 @@
-
 import * as path from 'path';
 import * as vscode from 'vscode';
 import type { WebviewToExtensionMessage, ExtensionToWebviewMessage } from './webview/messageTypes';
 import { postMessage as sendToWebview } from './webview/router';
-import * as recast from 'recast';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
-import { exec } from 'child_process';
 import { writeFileSync } from 'fs';
 // Modularized helpers and constants
-import { debounce, getTime, getDebounceDelay, listFilesRecursively, toLocalISOString } from './utils/helpers';
-import { RESERVED_GLOBALS, P5_NUMERIC_IDENTIFIERS, P5_EVENT_HANDLERS } from './constants';
+import { getTime, toLocalISOString } from './utils/helpers';
+import { RESERVED_GLOBALS } from './constants';
 import { extractGlobalVariablesWithConflicts, extractGlobalVariables, rewriteUserCodeWithWindowGlobals } from './processing/codeRewriter';
-import { detectTopLevelInputs, hasNonTopInputUsage, preprocessTopLevelInputs, hasCachedInputsForKey, getCachedInputsForKey, setCachedInputsForKey, TopInputItem } from './processing/topInputs';
+import { detectTopLevelInputs, hasNonTopInputUsage, preprocessTopLevelInputs, hasCachedInputsForKey, getCachedInputsForKey, setCachedInputsForKey } from './processing/topInputs';
 import { createHtml } from './webview/createHtml';
 import { rewriteFrameCountRefs, wrapInSetupIfNeeded, formatSyntaxErrorMsg, stripLeadingTimestamp, hasOnlySetup, getHiddenGlobalsByDirective } from './processing/astHelpers';
-// New modularized imports
-import { ensureStepHighlightDecoration, clearStepHighlight, applyStepHighlight } from './editors/stepHighlight';
-import { instrumentSetupWithDelays, instrumentSetupForSingleStep } from './processing/instrumentation';
+import { clearStepHighlight, applyStepHighlight } from './editors/stepHighlight';
+import { instrumentSetupForSingleStep } from './processing/instrumentation';
 import { initOsc, OscServiceApi } from './osc/oscService';
 import { registerVariablesService, VariablesServiceApi } from './variables';
 import { registerBlockly, BlocklyApi } from './blockly/blocklyPanel';
@@ -59,10 +55,6 @@ import { registerLayoutRestore, LayoutRestoreApi } from './layout';
 const webviewPanelMap = new Map<string, vscode.WebviewPanel>();
 let activeP5Panel: vscode.WebviewPanel | null = null;
 
-// Auto-reload moved to ./reload/autoReload
-
-// Output channel helpers moved to ./logging/output
-
 // Context service for context keys and focus watchers
 let contextService: ContextServiceApi;
 
@@ -72,22 +64,7 @@ let hasP5Project: boolean = false;
 // Layout/Restore service for panel positioning and startup restore
 let layoutService: LayoutRestoreApi;
 
-// Step highlight helpers moved to ./editors/stepHighlight
-
-// Output channel helpers moved to ./logging/output
-
-// (helpers moved to ./utils/helpers)
-
-// (constants moved to ./constants)
-
-// (moved to ./processing/codeRewriter)
-
-// (moved to ./processing/codeRewriter)
-
-// (event handlers moved to ./constants)
-
-// (moved to ./processing/codeRewriter)
-
+// Step highlight helpers
 let _allowInteractiveTopInputs = true;
 // Track reason for last reload/update to alter input overlay behavior
 let _pendingReloadReason: 'typing' | 'save' | 'command' | undefined;
@@ -96,33 +73,21 @@ let _pendingReloadReason: 'typing' | 'save' | 'command' | undefined;
 function getInitialCaptureVisible(panel: vscode.WebviewPanel): boolean {
   try { return contextService?.getInitialCaptureVisible(panel) || false; } catch { return false; }
 }
-// createHtml moved to './webview/createHtml'
-
-// Instrument setup() to insert `await __sleep(delayMs)` between top-level statements/blocks.
-// Returns original code if setup() cannot be found.
-// Instrumentation helpers moved to ./processing/instrumentation
-
-// --- OSC moved to ./osc/oscService ---
-
 
 // Command to clear highlight, for use with keybinding
 function registerClearHighlightCommand(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.commands.registerCommand('p5studio.clearHighlightEsc', async () => {
     clearStepHighlight(vscode.window.activeTextEditor);
-    // Do NOT reload or re-inject code when clearing highlight with ESC
   }));
 }
-// Register ESC key to clear highlight
-function registerEscKeybinding(context: vscode.ExtensionContext) {
-  // This function is obsolete. Keybindings must be declared in package.json only.
-}
+
 // ----------------------------
 // Activate
 // ----------------------------
 export function activate(context: vscode.ExtensionContext) {
   // Make p5/builtin globals visible to the linter via globalThis hook
   try { (globalThis as any).RESERVED_GLOBALS = RESERVED_GLOBALS; } catch { }
-  // --- VARIABLES SERVICE ---
+  // VARIABLES SERVICE
   let variablesService: VariablesServiceApi;
   // Initialize OSC service with broadcast to all open P5 panels
   let oscService: OscServiceApi | null = null;
@@ -224,8 +189,6 @@ export function activate(context: vscode.ExtensionContext) {
       if (uri) {
         contextService.setDebugPrimed(uri.toString(), false);
         contextService.setContext('p5DebugPrimed', false);
-        // Preserve capture visibility state on reload; webview will apply its current state
-        // and report it back when needed. Do not override p5CaptureVisible here.
       }
     } catch { }
     await invokeReload(panel);
@@ -236,12 +199,6 @@ export function activate(context: vscode.ExtensionContext) {
   function updateP5WebviewTabContext() {
     try { contextService?.updateActiveContexts(); } catch { }
   }
-
-  // Listen for tab group changes
-  // Focus watchers are registered in the context service
-  // Register the debug toggle button command for the tab group
-  // Note: we proactively close any auto-restored LIVE/Blockly tabs on activation below
-  // so we can fully control restore order and tracking in our custom flow.
 
   // --- Lightweight restore manager ---
   const restore = registerRestoreManager(context);
@@ -259,9 +216,6 @@ export function activate(context: vscode.ExtensionContext) {
       return roots.some(r => norm.startsWith(r.replace(/\\/g, '/').toLowerCase() + '/'));
     } catch { return false; }
   }
-  // Restore helpers moved to src/restore/restoreManager
-
-  // One-time restore migration handled later in restore IIFE
 
   // Register Blockly feature and obtain API hooks
   const blocklyApi: BlocklyApi = registerBlockly(context, {
@@ -270,7 +224,7 @@ export function activate(context: vscode.ExtensionContext) {
     RESTORE_BLOCKLY_KEY,
     updateP5WebviewTabContext,
   });
-  // Variables view provider registered via registerVariablesView
+
   // Linting: delegated to src/lint
   const lintApi: LintApi = registerLinting(context, {
     getOrCreateOutputChannel,
@@ -316,9 +270,6 @@ export function activate(context: vscode.ExtensionContext) {
   p5RefStatusBar.tooltip = '$(book) Open P5.js Reference';
   context.subscriptions.push(p5RefStatusBar);
 
-
-  // Convenience: open the JSON that defines the Blockly toolbox (version-aware)
-
   // Track all open panels to robustly close them on document close (even if untracked)
   const panelManager: LivePanelManagerApi = registerLivePanelManager(context, {
     webviewPanelMap,
@@ -326,16 +277,6 @@ export function activate(context: vscode.ExtensionContext) {
     showAndTrackOutputChannel,
     disposeOutputForDoc,
   });
-
-  // Helpers moved to panel manager
-
-  // Breakpoints helper moved to ./debug/breakpoints
-
-
-  // rewriteFrameCountRefs moved to ./processing/astHelpers
-
-  // Blockly command and panel moved to ./blockly/blocklyPanel via registerBlockly
-
 
   // Helper to update context key for JS/TS file detection and show/hide status bar
   function updateJsOrTsContext(editor?: vscode.TextEditor) {
@@ -440,13 +381,8 @@ export function activate(context: vscode.ExtensionContext) {
       clearStepHighlight(vscode.window.activeTextEditor);
     }
 
-    // Lint on text change only for documents with an open LIVE P5 panel
+    // Lint on every text change in the script editor
     try {
-      const docUri = e.document.uri.toString();
-      if (!webviewPanelMap.has(docUri)) {
-        return;
-      }
-
       // Cheap early-out: if all strict levels are "ignore", skip linting entirely
       const strictKinds: Array<'Semicolon' | 'Undeclared' | 'NoVar' | 'LooseEquality'> = ['Semicolon', 'Undeclared', 'NoVar', 'LooseEquality'];
       const anyEnabled = strictKinds.some(k => lintApi.getStrictLevel(k) !== 'ignore');
@@ -456,7 +392,6 @@ export function activate(context: vscode.ExtensionContext) {
 
       lintApi.lintAll(e.document);
     } catch { /* ignore lint errors */ }
-    // Blockly workspace forwarding handled within the blockly module
   });
   // Sidecar file syncing moved into blockly module
   vscode.workspace.onDidSaveTextDocument(doc => {
@@ -589,7 +524,9 @@ export function activate(context: vscode.ExtensionContext) {
       }, [
         { delayMs: 150, message: { type: 'showError', message: friendly } as ExtensionToWebviewMessage },
       ], sendToWebview);
-      outputChannel.appendLine(friendly);
+      if (require('./config/index').getLogWarningsToOutput()) {
+        outputChannel.appendLine(friendly);
+      }
       (panel as any)._lastRuntimeError = friendly;
       return;
     }
@@ -656,7 +593,9 @@ export function activate(context: vscode.ExtensionContext) {
       setTimeout(() => {
         sendToWebview(panel, { type: 'syntaxError', message: overlayMsg });
       }, 150);
-      outputChannel.appendLine(syntaxErrorMsg);
+      if (require('./config/index').getLogWarningsToOutput()) {
+        outputChannel.appendLine(syntaxErrorMsg);
+      }
       // outputChannel.show(true); // Do not focus on every error
       (panel as any)._lastSyntaxError = syntaxErrorMsg;
       (panel as any)._lastRuntimeError = null;
@@ -741,7 +680,6 @@ export function activate(context: vscode.ExtensionContext) {
           localResourceRoots,
         });
         try { (panel as any)._p5Version = selectedVersion; } catch { }
-
 
         // Focus the output channel for the new sketch immediately
         const docUri = editor.document.uri.toString();
@@ -1059,7 +997,9 @@ export function activate(context: vscode.ExtensionContext) {
             sendToWebview(panel, { type: 'syntaxError', message: stripLeadingTimestamp(syntaxErrorMsg) });
           }, 150);
           const outputChannel = getOrCreateOutputChannel(docUri, path.basename(editor.document.fileName));
-          outputChannel.appendLine(syntaxErrorMsg);
+          if (require('./config/index').getLogWarningsToOutput()) {
+            outputChannel.appendLine(syntaxErrorMsg);
+          }
         }
       } else {
         panel.reveal(panel.viewColumn, true);
@@ -1094,7 +1034,9 @@ export function activate(context: vscode.ExtensionContext) {
             const syntaxErrorMsg = `${getTime()} [‼️SYNTAX ERROR in ${path.basename(editor.document.fileName)}] ${err.message}`;
             sendToWebview(panel, { type: 'syntaxError', message: stripLeadingTimestamp(formatSyntaxErrorMsg(syntaxErrorMsg)) });
             const outputChannel = getOrCreateOutputChannel(docUri, path.basename(editor.document.fileName));
-            outputChannel.appendLine(formatSyntaxErrorMsg(syntaxErrorMsg));
+            if (require('./config/index').getLogWarningsToOutput()) {
+              outputChannel.appendLine(formatSyntaxErrorMsg(syntaxErrorMsg));
+            }
           }
         }, 100);
       }
@@ -1240,16 +1182,16 @@ export function activate(context: vscode.ExtensionContext) {
         const sketch1Existed = fs.existsSync(sketch1Path);
 
         const sketchString = `//Start coding with P5 here!
-//Have a look at the P5 Reference: https://p5js.org/reference/ 
-//Click the P5 button at the top to run your sketch! ⤴
+          //Have a look at the P5 Reference: https://p5js.org/reference/ 
+          //Click the P5 button at the top to run your sketch! ⤴
 
-noStroke();
-fill("red");
-circle(50, 50, 80);
-fill("white");
-textFont("Arial", 36);
-textAlign(CENTER, CENTER);
-text("P5", 50, 52);`;
+          noStroke();
+          fill("red");
+          circle(50, 50, 80);
+          fill("white");
+          textFont("Arial", 36);
+          textAlign(CENTER, CENTER);
+          text("P5", 50, 52);`;
         if (!sketch1Existed) {
           fs.writeFileSync(sketch1Path, sketchString);
         }
@@ -1355,16 +1297,10 @@ text("P5", 50, 52);`;
           }
         }, 100);
       }
-
-      // Blockly theme updates are handled within the blockly module
     } catch {
       // ignore config handler errors
     }
   });
-
-  // Blockly theme sync with VS Code theme handled within the blockly module
-
-  // (Removed duplicate close handler; unified logic exists earlier with per-path disposal)
 
   // Project setup utilities (refresh jsconfig, setup prompt)
   runOnActivate(context);
@@ -1381,8 +1317,6 @@ text("P5", 50, 52);`;
       return null;
     }
   }
-
-  // Setup prompt handled by project/setup.ts
 
   // --- NEW: Scroll LIVE P5 output to end command ---
   context.subscriptions.push(
@@ -1475,8 +1409,6 @@ text("P5", 50, 52);`;
     })
   );
 
-  // Decouple Blockly command moved into the blockly module
-
   // Best-effort: when files are created via external copy/paste operations, try to
   // detect if they are duplicates of an existing file and copy its sidecar.
   // We do this by computing a content hash for the created file and comparing it
@@ -1524,25 +1456,8 @@ text("P5", 50, 52);`;
   }));
 }
 
-// Helper: Wrap code in setup() if no setup/draw present
-// wrapInSetupIfNeeded moved to ./processing/astHelpers
-
-// Helper: Format syntax error message to include "on line N" and remove (N:M)
-// formatSyntaxErrorMsg moved to ./processing/astHelpers
-
-// Helper: Remove a leading timestamp like "HH:MM:SS " from a message (for clean overlay text)
-// stripLeadingTimestamp moved to ./processing/astHelpers
-
 // Helper to check SingleP5Panel setting
 function isSingleP5PanelEnabled() {
   return cfg.getSingleP5Panel();
 }
-
-// NEW: helper to detect whether the user's code defines only a single top-level `setup` function
-// hasOnlySetup moved to ./processing/astHelpers
-
-// toLocalISOString moved to ./utils/helpers
-
-// Detect hidden globals via //@hide or // @hide directives immediately above top-level declarations
-// getHiddenGlobalsByDirective moved to ./processing/astHelpers
 

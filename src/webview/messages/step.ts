@@ -115,6 +115,11 @@ export async function handleStepRunClicked(
   const preGlobals = deps.extractGlobalVariables(wrapped);
   const lineOffsetTotal = (didWrap ? 1 : 0);
   let instrumented = deps.instrumentSetupForSingleStep(wrapped, lineOffsetTotal, { disableTopLevelPreSteps: didWrap });
+  try {
+    const ch = deps.getOrCreateOutputChannel(docUri, fileName);
+    ch.appendLine(`${deps.getTime()} [DEBUG] Instrumented code for STEP-RUN (didWrap=${didWrap}, lineOffset=${lineOffsetTotal}):`);
+    ch.appendLine(instrumented.split('\n').map((l, i) => `${(i + 1).toString().padStart(3, '0')}: ${l}`).join('\n'));
+  } catch { }
   const globals = preGlobals;
   let rewrittenCode = deps.rewriteUserCodeWithWindowGlobals(instrumented, globals);
   const hasDraw = /\bfunction\s+draw\s*\(/.test(wrapped);

@@ -184,8 +184,32 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
         } catch { hasSetupFunction = false; }
 
         const makeHighlightFor = (node: any) => {
-            const loc = node && node.loc ? node.loc : null;
-            if (!loc) return null;
+            if (!node || !node.loc) return null;
+
+            // For loop statements, prefer highlighting the first body statement
+            if ((node.type === 'ForStatement'
+                || node.type === 'WhileStatement'
+                || node.type === 'DoWhileStatement') &&
+                node.body &&
+                node.body.type === 'BlockStatement' &&
+                Array.isArray(node.body.body) &&
+                node.body.body.length > 0 &&
+                node.body.body[0] &&
+                node.body.body[0].loc) {
+                const innerLoc = node.body.body[0].loc;
+                const startInner = innerLoc.start || { line: 1, column: 0 };
+                const endInner = innerLoc.end || startInner;
+                return b.expressionStatement(
+                    b.callExpression(b.identifier('__highlight'), [
+                        b.literal(startInner.line),
+                        b.literal(startInner.column + 1),
+                        b.literal(endInner.line),
+                        b.literal(endInner.column + 1)
+                    ])
+                );
+            }
+
+            const loc = node.loc;
             const start = loc.start || { line: 1, column: 0 };
             const end = loc.end || start;
             return b.expressionStatement(
@@ -234,6 +258,16 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                 // Don't instrument nested function declarations
                 if (stmt && (stmt.type === 'FunctionDeclaration' || stmt.type === 'FunctionExpression')) {
                     newBody.push(stmt);
+                    continue;
+                }
+                // For loop statements, skip highlighting the loop header itself
+                if (stmt && (
+                    stmt.type === 'ForStatement'
+                    || stmt.type === 'WhileStatement'
+                    || stmt.type === 'DoWhileStatement'
+                    || stmt.type === 'ForInStatement'
+                    || stmt.type === 'ForOfStatement')) {
+                    newBody.push(instrumentNode(stmt));
                     continue;
                 }
                 const hi = makeHighlightFor(stmt);
@@ -580,15 +614,8 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                     );
                     // Instrument the original body statements
                     const instrumentedBlock = instrumentBlock(b.blockStatement(original));
-                    // If setup() has no statements, still start stepping at setup by inserting an entry highlight/await
+                    // No additional setup entry step: stepping starts at first instrumented statement
                     const entryStep: any[] = [];
-                    if (node.id && node.id.name === 'setup' && (!instrumentedBlock.body || instrumentedBlock.body.length === 0)) {
-                        const hiAtFunc = makeHighlightFor(node);
-                        if (hiAtFunc) {
-                            entryStep.push(hiAtFunc);
-                            entryStep.push(makeAwaitStep());
-                        }
-                    }
                     // Append a final clear highlight call when function finishes (setup or draw)
                     const callClear = b.expressionStatement(b.callExpression(b.identifier('__clearHighlight'), []));
                     if (node.id && node.id.name === 'setup') {

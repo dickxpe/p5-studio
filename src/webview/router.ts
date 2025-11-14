@@ -8,7 +8,13 @@ export function registerWebviewRouter(
   panel: vscode.WebviewPanel,
   handler: (msg: WebviewMessage) => void | Promise<void>,
 ): vscode.Disposable {
-  return panel.webview.onDidReceiveMessage(handler);
+  // Prevent listener leaks: remove any previous handler before adding a new one
+  if ((panel as any)._webviewRouterDisposable) {
+    try { (panel as any)._webviewRouterDisposable.dispose(); } catch { }
+  }
+  const disposable = panel.webview.onDidReceiveMessage(handler);
+  (panel as any)._webviewRouterDisposable = disposable;
+  return disposable;
 }
 
 export function postMessage(

@@ -18,6 +18,7 @@ export function handleHighlightLine(
     ed = vscode.window.activeTextEditor;
   }
   if (ed && ed.document) {
+    console.log(`[handleHighlightLine] Highlighting line: ${line}`);
     deps.applyStepHighlight(ed, line);
     try {
       if ((panel as any)._autoStepMode && deps.hasBreakpointOnLine(docUri, line)) {
