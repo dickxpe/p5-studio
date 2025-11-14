@@ -1,6 +1,6 @@
 function getLogWarningsToOutput(): boolean {
     try {
-        return vscode.workspace.getConfiguration('P5Studio').get<boolean>('logWarningsToOutput', true) === true;
+        return vscode.workspace.getConfiguration('P5Studio').get<boolean>('lint.logWarningsToOutput', true) === true;
     } catch { return true; }
 }
 import * as vscode from 'vscode';
@@ -15,7 +15,7 @@ function getP5jsVersion(): string {
 
 function getStepRunDelayMs(): number {
     try {
-        return vscode.workspace.getConfiguration('P5Studio').get<number>('stepRunDelayMs', 500);
+        return vscode.workspace.getConfiguration('P5Studio').get<number>('debug.stepRunDelayMs', 500);
     } catch { return 500; }
 }
 
@@ -57,7 +57,7 @@ function getReloadOnSave(): boolean {
 
 function getStrictLevel(kind: 'Semicolon' | 'Undeclared' | 'NoVar' | 'LooseEquality'): StrictLevel {
     const cfg = vscode.workspace.getConfiguration('P5Studio');
-    const key = `Strict${kind}Warning` as const;
+    const key = `lint.Strict${kind}Warning` as const;
     let level = cfg.get<string>(key, 'warn') as StrictLevel;
     const valid = level === 'ignore' || level === 'warn' || level === 'block';
     if (!valid) level = 'warn';
@@ -77,10 +77,10 @@ function getStrictLevel(kind: 'Semicolon' | 'Undeclared' | 'NoVar' | 'LooseEqual
 function getOscConfig() {
     const cfg = vscode.workspace.getConfiguration('P5Studio');
     return {
-        localAddress: cfg.get<string>('oscLocalAddress', '127.0.0.1') || '127.0.0.1',
-        localPort: cfg.get<number>('oscLocalPort', 57121) || 57121,
-        remoteAddress: cfg.get<string>('oscRemoteAddress', '127.0.0.1') || '127.0.0.1',
-        remotePort: cfg.get<number>('oscRemotePort', 57120) || 57120,
+        localAddress: cfg.get<string>('osc.oscLocalAddress', '127.0.0.1') || '127.0.0.1',
+        localPort: cfg.get<number>('osc.oscLocalPort', 57121) || 57121,
+        remoteAddress: cfg.get<string>('osc.oscRemoteAddress', '127.0.0.1') || '127.0.0.1',
+        remotePort: cfg.get<number>('osc.oscRemotePort', 57122) || 57122,
     };
 }
 
@@ -92,7 +92,7 @@ function getSingleP5Panel(): boolean {
 
 function getBlocklyTheme(): string {
     try {
-        return vscode.workspace.getConfiguration('P5Studio').get<string>('blocklyTheme', 'dark') || 'dark';
+        return vscode.workspace.getConfiguration('P5Studio').get<string>('blockly.blocklyTheme', 'dark') || 'dark';
     } catch { return 'dark'; }
 }
 
@@ -113,7 +113,7 @@ async function setReloadWhileTyping(value: boolean): Promise<void> {
 
 async function setShowDebugButton(value: boolean): Promise<void> {
     const config = vscode.workspace.getConfiguration('P5Studio');
-    await config.update('ShowDebugButton', !!value, vscode.ConfigurationTarget.Global);
+    await config.update('debug.ShowDebugButton', !!value, vscode.ConfigurationTarget.Global);
 }
 
 async function setReloadOnSave(value: boolean): Promise<void> {
@@ -141,7 +141,7 @@ export const config = {
     getReloadWhileTyping,
     getReloadOnSave,
     getBlockSketchOnWarning(): boolean {
-        return vscode.workspace.getConfiguration('P5Studio').get<boolean>('BlockSketchOnWarning', true) === true;
+        return vscode.workspace.getConfiguration('P5Studio').get<boolean>('lint.BlockSketchOnWarning', true) === true;
     },
     getShowSetupNotification(): boolean {
         return vscode.workspace.getConfiguration('P5Studio').get<boolean>('showSetupNotification', true) === true;

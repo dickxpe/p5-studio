@@ -352,8 +352,7 @@ export function activate(context: vscode.ExtensionContext) {
     updateJsOrTsContext(editor);
     if (!editor) return;
     const docUri = editor.document.uri.toString();
-    if (!editor) return;
-    // Focus P5 panel if present
+    // Restore focus for LIVE P5 panel
     const panel = webviewPanelMap.get(docUri);
     if (panel) {
       panel.reveal(panel.viewColumn, true);
@@ -362,15 +361,17 @@ export function activate(context: vscode.ExtensionContext) {
     } else {
       vscode.commands.executeCommand('setContext', 'hasP5Webview', false);
     }
-
-    // Focus Blockly panel if present
-    if (blocklyApi && typeof blocklyApi.getPanelForDocUri === 'function') {
-      const blocklyPanel = blocklyApi.getPanelForDocUri(docUri);
-      if (blocklyPanel) {
-        blocklyPanel.reveal(blocklyPanel.viewColumn, true);
+    // Restore focus for Blockly panel if it exists
+    try {
+      if (blocklyApi && typeof blocklyApi === 'object') {
+        // blocklyPanelForDocument is internal to blocklyPanel.ts, so use API if available
+        if (blocklyApi.revealPanelForDocUri) {
+          blocklyApi.revealPanelForDocUri(docUri);
+        } else if ((blocklyApi as any).focusPanelForDocUri) {
+          (blocklyApi as any).focusPanelForDocUri(docUri);
+        }
       }
-    }
-
+    } catch { /* ignore */ }
     if (editor && autoReload) autoReload.setupAutoReloadForDoc(editor);
     // Track the last editor for highlight clearing
     _lastStepHighlightEditor = editor;
@@ -635,7 +636,6 @@ export function activate(context: vscode.ExtensionContext) {
   registerLiveCommands(context, {
     openLive: async () => {
       if (!hasP5Project) {
-        vscode.window.showInformationMessage('This feature is available in P5 projects. Create a project (adds .p5) via "P5 Studio Setup new project".');
         return;
       }
       const editor = vscode.window.activeTextEditor;

@@ -12,7 +12,7 @@ export type BlocklyApi = {
     clearHighlight: (docUri: string) => void;
     highlightForLine: (docUri: string, line: number) => void;
     disposePanelsForFilePath: (fsPath: string) => void;
-    getPanelForDocUri: (docUri: string) => vscode.WebviewPanel | undefined;
+    revealPanelForDocUri: (docUri: string) => void;
 };
 
 export function registerBlockly(
@@ -54,10 +54,6 @@ export function registerBlockly(
         const set = map.get(key)!;
         set.delete(panel);
         if (set.size === 0) map.delete(key);
-    }
-
-    function getPanelForDocUri(docUri: string): vscode.WebviewPanel | undefined {
-        return blocklyPanelForDocument.get(docUri);
     }
 
     function sidecarPathForFile(filePath: string) {
@@ -348,46 +344,45 @@ export function registerBlockly(
         } catch { }
 
         return `<!doctype html>
-    return {
-        clearHighlight: (docUri: string) => {
-            try {
-                const panel = blocklyPanelForDocument.get(docUri);
-                if (panel) sendBlockly(panel, { type: 'clearHighlight' });
-            } catch { }
-        },
-        highlightForLine: (docUri: string, line: number) => {
-            try {
-                const panel = blocklyPanelForDocument.get(docUri);
-                if (panel) sendBlockly(panel, { type: 'highlightForLine', line });
-            } catch { }
-        },
-        disposePanelsForFilePath: (fsPath: string) => {
-            const key = normalizeFsPath(fsPath);
-            const panels = blocklyPanelsByPath.get(key);
-            if (panels) {
-                for (const panel of panels) {
-                    try { panel.dispose(); } catch { }
-                }
-            }
-        },
-        getPanelForDocUri: getPanelForDocUri
-    };
-  ${extraCategoriesScript}
-    <script nonce="${nonce}" src="${blocksJs}"></script>
-    <script nonce="${nonce}" src="${generatorsJs}"></script>
-    <script nonce="${nonce}">
-  window.P5_CATEGORY_MAP = ${JSON.stringify(p5CategoryMap)};
-  window.P5_PARAM_MAP = ${JSON.stringify(p5ParamMap)};
-  window.P5_PARAM_OPTIONAL = ${JSON.stringify(p5ParamOptionalMap)};
-  window.P5_PARAM_TYPE = ${JSON.stringify(p5ParamTypeMap)};
-  window.BLOCKLY_STORAGE_KEY = ${JSON.stringify(storageKey)};
-  window.BLOCKLY_THEME = ${JSON.stringify(configuredBlocklyTheme)};
-  window.BLOCKLY_JSON_ONLY = true;
-    </script>
-    <script nonce="${nonce}" src="${autoBlocksJs}"></script>
-      <script nonce="${nonce}" src="${appJs}"></script>
-    </body>
-    </html>`;
+    <html>
+        <head>
+            <meta charset="utf-8" />
+            <meta http-equiv="Content-Security-Policy" content="${csp}">
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+            <title>Blockly</title>
+            <link rel="stylesheet" href="${indexCss}" />
+    <script nonce="${nonce}" src="${blkCore}"></script>
+    <script nonce="${nonce}" src="${blkBlocks}"></script>
+    <script nonce="${nonce}" src="${blkJsGen}"></script>
+    <script nonce="${nonce}" src="${blkMsgEn}"></script>
+        </head>
+        <body>
+            <div id="pageContainer">
+                <div id="outputPane">
+                    <pre id="generatedCode"><code></code></pre>
+                    <div id="output"></div>
+                </div>
+                <div id="blocklyDiv"></div>
+            </div>
+
+        <script nonce="${nonce}" src="${toolboxJs}"></script>
+    ${allowedBlocksScript}
+    ${extraCategoriesScript}
+        <script nonce="${nonce}" src="${blocksJs}"></script>
+        <script nonce="${nonce}" src="${generatorsJs}"></script>
+        <script nonce="${nonce}">
+    window.P5_CATEGORY_MAP = ${JSON.stringify(p5CategoryMap)};
+    window.P5_PARAM_MAP = ${JSON.stringify(p5ParamMap)};
+    window.P5_PARAM_OPTIONAL = ${JSON.stringify(p5ParamOptionalMap)};
+    window.P5_PARAM_TYPE = ${JSON.stringify(p5ParamTypeMap)};
+    window.BLOCKLY_STORAGE_KEY = ${JSON.stringify(storageKey)};
+    window.BLOCKLY_THEME = ${JSON.stringify(configuredBlocklyTheme)};
+    window.BLOCKLY_JSON_ONLY = true;
+        </script>
+        <script nonce="${nonce}" src="${autoBlocksJs}"></script>
+            <script nonce="${nonce}" src="${appJs}"></script>
+        </body>
+        </html>`;
     }
 
     // Command to open a Blockly panel for the active editor
@@ -405,7 +400,6 @@ export function registerBlockly(
                 return false;
             })();
             if (!hasP5Project) {
-                vscode.window.showInformationMessage('This feature is available in P5 projects. Create a project (adds .p5) via "P5 Studio Setup new project".');
                 return;
             }
             const originatingEditor = vscode.window.activeTextEditor;
@@ -679,7 +673,7 @@ export function registerBlockly(
                         canSelectFiles: true,
                         canSelectFolders: false,
                         canSelectMany: false,
-                        openLabel: 'Select file to decouple from Blockly'
+                        openLabel: 'Select file to decouple from Blockly',
                     });
                     if (!picked || picked.length === 0) return;
                     fileUri = picked[0];
@@ -752,5 +746,13 @@ export function registerBlockly(
         } catch { }
     }
 
-    return { clearHighlight, highlightForLine, disposePanelsForFilePath };
+    function revealPanelForDocUri(docUri: string) {
+        try {
+            const panel = blocklyPanelForDocument.get(docUri);
+            if (panel) {
+                panel.reveal(panel.viewColumn, true);
+            }
+        } catch { /* ignore */ }
+    }
+    return { clearHighlight, highlightForLine, disposePanelsForFilePath, revealPanelForDocUri };
 }

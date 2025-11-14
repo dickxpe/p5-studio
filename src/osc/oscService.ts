@@ -13,7 +13,8 @@ export interface OscServiceApi {
     handleConfigChange: (e: vscode.ConfigurationChangeEvent) => void;
 }
 
-let port: osc.UDPPort | null = null;
+let port: osc.UDPPort | null = null; // receiver
+let sendPort: osc.UDPPort | null = null; // sender
 let broadcast: BroadcastFn | null = null;
 let output: vscode.OutputChannel | null = null;
 
@@ -25,27 +26,46 @@ function ensureOutput() {
 }
 
 function openPort() {
-    if (port) {
-        try { port.close(); } catch { }
-        port = null;
-    }
+    // Close previous ports if any
+    if (port) { try { port.close(); } catch { } port = null; }
+    if (sendPort) { try { sendPort.close(); } catch { } sendPort = null; }
     const cfg = getConfig();
-    // Bind exactly to the configured localAddress to avoid unexpected EADDRINUSE on 0.0.0.0
-    port = new osc.UDPPort({
+    // Receiver port
+
+    const receiveOptions = {
+        remoteAddress: "127.0.0.1", // required by osc.js
+        remotePort: Math.floor(20000 + Math.random() * 40000), // random high port
         localAddress: cfg.localAddress,
         localPort: cfg.localPort,
+        metadata: true
+    };
+    port = new osc.UDPPort(receiveOptions);
+
+    const sendOptions = {
         remoteAddress: cfg.remoteAddress,
         remotePort: cfg.remotePort,
+        localAddress: "127.0.0.1", // required by osc.js
+        localPort: Math.floor(20000 + Math.random() * 40000), // random high port
         metadata: true
-    });
+    };
+    // Sender port (do not bind localAddress/localPort, just set remote)
+    sendPort = new osc.UDPPort(sendOptions);
     const ch = ensureOutput();
-    ch.appendLine(`[DEBUG] Opening OSC port on ${cfg.localAddress}:${cfg.localPort}, remote ${cfg.remoteAddress}:${cfg.remotePort}`);
+    ch.appendLine(`[DEBUG] Opening OSC receive port on ${cfg.localAddress}:${cfg.localPort}`);
+    ch.appendLine(`[DEBUG] Opening OSC send port to ${cfg.remoteAddress}:${cfg.remotePort}`);
     port.open();
+    sendPort.open();
 
     port.on('ready', () => {
         try {
             const c = getConfig();
-            ch.appendLine(`[${new Date().toLocaleTimeString()}] [OSC] Listening on ${c.localAddress}:${c.localPort} | Remote target ${c.remoteAddress}:${c.remotePort}`);
+            ch.appendLine(`[${new Date().toLocaleTimeString()}] [OSC] Listening on ${c.localAddress}:${c.localPort}`);
+        } catch { }
+    });
+    sendPort.on('ready', () => {
+        try {
+            const c = getConfig();
+            ch.appendLine(`[${new Date().toLocaleTimeString()}] [OSC] Sending to ${c.remoteAddress}:${c.remotePort}`);
         } catch { }
     });
     port.on('message', (msg: any) => {
@@ -59,10 +79,15 @@ function openPort() {
             try {
                 const msg = err && err.message ? err.message : String(err);
                 ch.appendLine(`[${new Date().toLocaleTimeString()}] [OSC] Error: ${msg}`);
-                // Provide a helpful hint for common binding conflict
                 if (typeof err?.code === 'string' && err.code.toUpperCase() === 'EADDRINUSE') {
                     ch.appendLine('[OSC] Hint: The local port is already in use. Close the other app or change P5Studio.oscLocalPort or P5Studio.oscLocalAddress (e.g., 127.0.0.1).');
                 }
+            } catch { }
+        });
+        (sendPort as any).on && (sendPort as any).on('error', (err: any) => {
+            try {
+                const msg = err && err.message ? err.message : String(err);
+                ch.appendLine(`[${new Date().toLocaleTimeString()}] [OSC] SendPort Error: ${msg}`);
             } catch { }
         });
     } catch { }
@@ -87,13 +112,13 @@ export function initOsc(bcast: BroadcastFn): OscServiceApi {
     function send(address: string, args: any[]) {
         const ch = ensureOutput();
         try {
-            if (!port) {
-                vscode.window.showErrorMessage('OSC port is not initialized. Try reloading the window.');
+            if (!sendPort) {
+                vscode.window.showErrorMessage('OSC send port is not initialized. Try reloading the window.');
                 return;
             }
             const packet = toPacket(address, args);
             ch.appendLine(`[DEBUG] Sending OSC packet: ${JSON.stringify(packet)}`);
-            port.send(packet);
+            sendPort.send(packet);
         } catch (e) {
             try { ch.appendLine(`[DEBUG] OSC send error: ${e}`); } catch { }
             console.error('OSC send error:', e);

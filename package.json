@@ -372,7 +372,7 @@
           "P5Studio.blockly.blocklyTheme": {
             "type": "string",
             "enum": ["dark", "light", "auto"],
-            "default": "dark",
+            "default": "auto",
             "description": "Blockly theme to use in the Blockly panel. 'auto' follows the editor theme.",
             "order": 15
           },

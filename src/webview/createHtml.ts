@@ -34,9 +34,29 @@ export async function createHtml(
     return str.replace(/`/g, '\\`');
   }
 
+  // Enhanced sanitization: handle \n, backticks, null bytes, control chars, </script>, and unescaped line breaks
+  function sanitizeUserCode(code: string): string {
+    // 1. Replace literal \n in string literals with a space
+    code = code.replace(/(['"`])((?:\\\1|.)*?)\\n((?:\\\1|.)*?)\1/g, (match, quote, before, after) => {
+      return quote + before.replace(/\\n/g, ' ') + after + quote;
+    });
+    // 2. Escape backticks (already handled by escapeBackticks, but double check)
+    code = code.replace(/`/g, '\\`');
+    // 3. Remove null bytes and control characters except tab/newline/carriage return
+    code = code.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, ' ');
+    // 4. Replace </script> (case-insensitive) to avoid breaking out of script tag
+    code = code.replace(/<\/script>/gi, '<\\/script>');
+    // 5. Remove BOM if present
+    code = code.replace(/^\uFEFF/, '');
+    // 6. Remove unescaped line breaks in single/double-quoted strings (not allowed in JS)
+    // This regex matches single/double-quoted strings that contain a line break
+    code = code.replace(/(['"])(?:\\.|[^\\])*?\n(?:\\.|[^\\])*?\1/g, (match) => match.replace(/\n/g, ' '));
+    return code;
+  }
+  const sanitizedCode = sanitizeUserCode(userCode);
   // Detect globals and rewrite code
-  const { globals, conflicts } = extractGlobalVariablesWithConflicts(userCode);
-  const rewrittenCode = rewriteUserCodeWithWindowGlobals(userCode, globals);
+  const { globals, conflicts } = extractGlobalVariablesWithConflicts(sanitizedCode);
+  const rewrittenCode = rewriteUserCodeWithWindowGlobals(sanitizedCode, globals);
   const escapedCode = escapeBackticks(rewrittenCode);
 
   const uniqueId = Date.now() + '-' + Math.random().toString(36).substr(2, 8);
