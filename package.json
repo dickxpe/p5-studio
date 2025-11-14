@@ -200,7 +200,7 @@
         {
           "command": "extension.open-blockly",
           "group": "navigation",
-          "when": "hasP5Project == true && config.P5Studio.enableBlockly == true && isP5js && (editorLangId == javascript || editorLangId == typescript)"
+          "when": "hasP5Project == true && config.P5Studio.blockly.enableBlockly == true && isP5js && (editorLangId == javascript || editorLangId == typescript)"
         },
         {
           "command": "extension.reload-p5-sketch",
@@ -215,17 +215,17 @@
         {
           "command": "P5Studio.debugPrime",
           "group": "navigation@3",
-          "when": "p5WebviewTabFocused && !p5DebugPrimed && config.P5Studio.ShowDebugButton"
+          "when": "p5WebviewTabFocused && !p5DebugPrimed && config.P5Studio.debug.ShowDebugButton"
         },
         {
           "command": "P5Studio.stepRun",
           "group": "navigation@3",
-          "when": "p5WebviewTabFocused && p5DebugPrimed && config.P5Studio.ShowDebugButton"
+          "when": "p5WebviewTabFocused && p5DebugPrimed && config.P5Studio.debug.ShowDebugButton"
         },
         {
           "command": "P5Studio.singleStep",
           "group": "navigation@4",
-          "when": "p5WebviewTabFocused && p5DebugPrimed && config.P5Studio.ShowDebugButton"
+          "when": "p5WebviewTabFocused && p5DebugPrimed && config.P5Studio.debug.ShowDebugButton"
         },
         {
           "command": "P5Studio.captureToggle",
@@ -251,7 +251,7 @@
       "explorer/context": [
         {
           "command": "extension.decouple-blockly",
-          "when": "config.P5Studio.enableBlockly == true && (resourceExtname == .js || resourceExtname == .ts)",
+          "when": "config.P5Studio.blockly.enableBlockly == true && (resourceExtname == .js || resourceExtname == .ts)",
           "group": "5_decouple@99"
         },
         {
@@ -277,10 +277,9 @@
         }
       ]
     },
-    "configuration": [
+    "configuration": 
       {
-        "title": "General",
-        "type": "object",
+        "title": "P5 Studio",
         "properties": {
           "P5Studio.P5jsVersion": {
             "type": "string",
@@ -338,112 +337,96 @@
             "default": false,
             "description": "Show the current FPS (rounded from 1000/deltaTime) in the top-left of the P5 web panel.",
             "order": 9
-          }
-        }
-      },
-      {
-        "title": "OSC",
-        "type": "object",
-        "properties": {
-          "P5Studio.oscRemoteAddress": {
+          },
+        
+          "P5Studio.osc.oscRemoteAddress": {
             "type": "string",
             "default": "127.0.0.1",
             "description": "OSC remote address (host to send OSC messages to).",
-            "order": 1
+            "order": 10
           },
-          "P5Studio.oscRemotePort": {
+          "P5Studio.osc.oscRemotePort": {
             "type": "number",
             "default": 57120,
             "description": "OSC remote port (port to send OSC messages to).",
-            "order": 2
+            "order": 11
           },
-          "P5Studio.oscLocalAddress": {
+          "P5Studio.osc.oscLocalAddress": {
             "type": "string",
             "default": "127.0.0.1",
             "description": "OSC local bind address for receiving (e.g. '127.0.0.1' for localhost only, or '0.0.0.0' to accept from the network).",
-            "order": 3
+            "order": 12
           },
-          "P5Studio.oscLocalPort": {
+          "P5Studio.osc.oscLocalPort": {
             "type": "number",
             "default": 57121,
             "description": "OSC local port (port to listen for incoming OSC messages).",
-            "order": 4
-          }
-        }
-      },
-      {
-        "title": "Blockly",
-        "type": "object",
-        "properties": {
-          "P5Studio.enableBlockly": {
+            "order": 13
+          },
+          "P5Studio.blockly.enableBlockly": {
             "type": "boolean",
             "default": true,
             "description": "Enable Blockly integration: shows the Blockly button and the Decouple Blockly context menu entry.",
-            "order": 1
+            "order": 14
           },
-          "P5Studio.blocklyTheme": {
+          "P5Studio.blockly.blocklyTheme": {
             "type": "string",
             "enum": ["dark", "light", "auto"],
             "default": "dark",
             "description": "Blockly theme to use in the Blockly panel. 'auto' follows the editor theme.",
-            "order": 2
-          }
-        }
-      },
-      {
-        "title": "Debugging",
-        "type": "object",
-        "properties": {
-          "P5Studio.stepRunDelayMs": {
+            "order": 15
+          },
+          "P5Studio.debug.stepRunDelayMs": {
             "type": "number",
             "default": 250,
             "minimum": 0,
             "description": "Delay (in milliseconds) used by the Step-Run button between setup() statements and at the start of each loop iteration.",
-            "order": 1
+            "order": 16
           },
-          "P5Studio.ShowDebugButton": {
+          "P5Studio.debug.ShowDebugButton": {
             "type": "boolean",
             "default": true,
             "description": "Show the Debug button in the P5 webview title bar.",
-            "order": 2
-          }
-        }
-      },
-      {
-        "title": "Linting",
-        "type": "object",
-        "properties": {
-          "P5Studio.StrictSemicolonWarning": {
+            "order": 17
+          },
+        
+          "P5Studio.lint.StrictSemicolonWarning": {
             "type": "string",
             "enum": ["ignore", "warn", "block"],
             "default": "block",
             "description": "Semicolon rule: ignore (disabled), warn (log + Problems), block (yellow overlay & block).",
-            "order": 1
+            "order": 18
           },
-          "P5Studio.StrictUndeclaredWarning": {
+          "P5Studio.lint.StrictUndeclaredWarning": {
             "type": "string",
             "enum": ["ignore", "warn", "block"],
             "default": "block",
             "description": "Undeclared variable rule: ignore, warn, block (overlay).",
-            "order": 2
+            "order": 19
           },
-          "P5Studio.StrictNoVarWarning": {
+          "P5Studio.lint.StrictNoVarWarning": {
             "type": "string",
             "enum": ["ignore", "warn", "block"],
             "default": "block",
             "description": "Avoid var rule: ignore, warn, block (overlay).",
-            "order": 3
+            "order": 20
           },
-          "P5Studio.StrictLooseEqualityWarning": {
+          "P5Studio.lint.StrictLooseEqualityWarning": {
             "type": "string",
             "enum": ["ignore", "warn", "block"],
             "default": "ignore",
             "description": "Loose equality rule: ignore, warn, block (overlay).",
-            "order": 4
+            "order": 21
+          },
+          "P5Studio.lint.logWarningsToOutput": {
+            "type": "boolean",
+            "default": true,
+            "description": "Show warnings in the Output panel as well as in the webview overlay.",
+            "order": 22
           }
         }
       }
-    ],
+    ,
     "keybindings": [
       {
         "command": "extension.live-p5",

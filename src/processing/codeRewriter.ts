@@ -125,9 +125,16 @@ export function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: 
         }
     }
 
-    // Insert window.<global> = undefined for all globals at the very top
+    // Insert window.<global> = undefined for globals that have initializers only
     for (const g of globals) {
-        newBody.push(recast.types.builders.expressionStatement(recast.types.builders.assignmentExpression('=', recast.types.builders.memberExpression(recast.types.builders.identifier('window'), recast.types.builders.identifier(g.name), false), recast.types.builders.identifier('undefined'))));
+        // Only assign window.<name> = undefined if the original declaration had an initializer
+        const hadInit = programBody.some(stmt => stmt.type === 'VariableDeclaration' && stmt.declarations.some((decl: any) => decl.id && decl.id.name === g.name && decl.init));
+        if (hadInit) {
+            newBody.push(recast.types.builders.expressionStatement(
+                recast.types.builders.assignmentExpression('=',
+                    recast.types.builders.memberExpression(recast.types.builders.identifier('window'), recast.types.builders.identifier(g.name), false),
+                    recast.types.builders.identifier('undefined'))));
+        }
     }
 
     for (let i = 0; i < programBody.length; i++) {
@@ -152,8 +159,30 @@ export function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: 
         if (stmt.type === 'FunctionDeclaration' && stmt.id && stmt.id.name === 'setup' && stmt.body && stmt.body.body) {
             setupFound = true;
             const originalStmt: any = stmt;
-            const newSetupBody = [...globalAssignments, ...stmt.body.body];
-            newSetupBody.push(recast.types.builders.expressionStatement(recast.types.builders.assignmentExpression('=', recast.types.builders.memberExpression(recast.types.builders.identifier('window'), recast.types.builders.identifier('_p5SetupDone'), false), recast.types.builders.literal(true))));
+            // Find the last createCanvas call in setup
+            const setupStmts = [...stmt.body.body];
+            let lastCreateCanvasIdx = -1;
+            for (let i = 0; i < setupStmts.length; i++) {
+                const s = setupStmts[i];
+                if (s.type === 'ExpressionStatement' && s.expression.type === 'CallExpression' && s.expression.callee.name === 'createCanvas') {
+                    lastCreateCanvasIdx = i;
+                }
+            }
+            // Insert globalAssignments after the last createCanvas, or at the start if not found
+            let newSetupBody = [];
+            if (lastCreateCanvasIdx !== -1) {
+                newSetupBody = [
+                    ...setupStmts.slice(0, lastCreateCanvasIdx + 1),
+                    ...globalAssignments,
+                    ...setupStmts.slice(lastCreateCanvasIdx + 1)
+                ];
+            } else {
+                newSetupBody = [...globalAssignments, ...setupStmts];
+            }
+            newSetupBody.push(recast.types.builders.expressionStatement(
+                recast.types.builders.assignmentExpression('=',
+                    recast.types.builders.memberExpression(recast.types.builders.identifier('window'), recast.types.builders.identifier('_p5SetupDone'), false),
+                    recast.types.builders.literal(true))));
             let newFn = recast.types.builders.functionDeclaration(stmt.id, stmt.params, recast.types.builders.blockStatement(newSetupBody));
             (newFn as any).async = !!(originalStmt as any).async;
             stmt = newFn as any;

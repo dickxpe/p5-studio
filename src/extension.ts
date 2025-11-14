@@ -353,6 +353,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (!editor) return;
     const docUri = editor.document.uri.toString();
     if (!editor) return;
+    // Focus P5 panel if present
     const panel = webviewPanelMap.get(docUri);
     if (panel) {
       panel.reveal(panel.viewColumn, true);
@@ -361,6 +362,15 @@ export function activate(context: vscode.ExtensionContext) {
     } else {
       vscode.commands.executeCommand('setContext', 'hasP5Webview', false);
     }
+
+    // Focus Blockly panel if present
+    if (blocklyApi && typeof blocklyApi.getPanelForDocUri === 'function') {
+      const blocklyPanel = blocklyApi.getPanelForDocUri(docUri);
+      if (blocklyPanel) {
+        blocklyPanel.reveal(blocklyPanel.viewColumn, true);
+      }
+    }
+
     if (editor && autoReload) autoReload.setupAutoReloadForDoc(editor);
     // Track the last editor for highlight clearing
     _lastStepHighlightEditor = editor;

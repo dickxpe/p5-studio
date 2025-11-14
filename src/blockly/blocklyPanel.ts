@@ -12,6 +12,7 @@ export type BlocklyApi = {
     clearHighlight: (docUri: string) => void;
     highlightForLine: (docUri: string, line: number) => void;
     disposePanelsForFilePath: (fsPath: string) => void;
+    getPanelForDocUri: (docUri: string) => vscode.WebviewPanel | undefined;
 };
 
 export function registerBlockly(
@@ -53,6 +54,10 @@ export function registerBlockly(
         const set = map.get(key)!;
         set.delete(panel);
         if (set.size === 0) map.delete(key);
+    }
+
+    function getPanelForDocUri(docUri: string): vscode.WebviewPanel | undefined {
+        return blocklyPanelForDocument.get(docUri);
     }
 
     function sidecarPathForFile(filePath: string) {
@@ -343,29 +348,30 @@ export function registerBlockly(
         } catch { }
 
         return `<!doctype html>
-  <html>
-    <head>
-      <meta charset="utf-8" />
-      <meta http-equiv="Content-Security-Policy" content="${csp}">
-      <meta name="viewport" content="width=device-width, initial-scale=1" />
-      <title>Blockly</title>
-      <link rel="stylesheet" href="${indexCss}" />
-  <script nonce="${nonce}" src="${blkCore}"></script>
-  <script nonce="${nonce}" src="${blkBlocks}"></script>
-  <script nonce="${nonce}" src="${blkJsGen}"></script>
-  <script nonce="${nonce}" src="${blkMsgEn}"></script>
-    </head>
-    <body>
-      <div id="pageContainer">
-        <div id="outputPane">
-          <pre id="generatedCode"><code></code></pre>
-          <div id="output"></div>
-        </div>
-        <div id="blocklyDiv"></div>
-      </div>
-
-    <script nonce="${nonce}" src="${toolboxJs}"></script>
-  ${allowedBlocksScript}
+    return {
+        clearHighlight: (docUri: string) => {
+            try {
+                const panel = blocklyPanelForDocument.get(docUri);
+                if (panel) sendBlockly(panel, { type: 'clearHighlight' });
+            } catch { }
+        },
+        highlightForLine: (docUri: string, line: number) => {
+            try {
+                const panel = blocklyPanelForDocument.get(docUri);
+                if (panel) sendBlockly(panel, { type: 'highlightForLine', line });
+            } catch { }
+        },
+        disposePanelsForFilePath: (fsPath: string) => {
+            const key = normalizeFsPath(fsPath);
+            const panels = blocklyPanelsByPath.get(key);
+            if (panels) {
+                for (const panel of panels) {
+                    try { panel.dispose(); } catch { }
+                }
+            }
+        },
+        getPanelForDocUri: getPanelForDocUri
+    };
   ${extraCategoriesScript}
     <script nonce="${nonce}" src="${blocksJs}"></script>
     <script nonce="${nonce}" src="${generatorsJs}"></script>

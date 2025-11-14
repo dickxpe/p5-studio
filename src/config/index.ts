@@ -21,7 +21,7 @@ function getStepRunDelayMs(): number {
 
 function getShowDebugButton(): boolean {
     try {
-        return vscode.workspace.getConfiguration('P5Studio').get<boolean>('ShowDebugButton', false) === true;
+        return vscode.workspace.getConfiguration('P5Studio').get<boolean>('debug.ShowDebugButton', false) === true;
     } catch { return false; }
 }
 
