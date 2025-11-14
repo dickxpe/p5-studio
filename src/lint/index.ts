@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { config as cfg, StrictLevel } from '../config/index';
+import { postMessage as sendToWebview } from '../webview/router';
 
-export type StrictLevel = 'ignore' | 'warn' | 'block';
+// StrictLevel now provided by config facade
 
 export type LintApi = {
     // diagnostics lifecycle
@@ -42,22 +44,7 @@ export function registerLinting(
     context.subscriptions.push(semicolonDiagnostics, undeclaredDiagnostics, noVarDiagnostics, equalityDiagnostics);
 
     function getStrictLevel(kind: 'Semicolon' | 'Undeclared' | 'NoVar' | 'LooseEquality'): StrictLevel {
-        const cfg = vscode.workspace.getConfiguration('P5Studio');
-        const key = `Strict${kind}Warning` as const;
-        let level = cfg.get<string>(key, 'warn') as StrictLevel;
-        const valid = level === 'ignore' || level === 'warn' || level === 'block';
-        if (!valid) level = 'warn';
-        try { if (level) return level; } catch { }
-        const enable = cfg.get<boolean>(
-            kind === 'Semicolon' ? 'enableSemicolonWarning' :
-                kind === 'Undeclared' ? 'enableUndeclaredWarning' :
-                    kind === 'NoVar' ? 'enableNoVarWarning' : 'enableLooseEqualityWarning', true);
-        const block = cfg.get<boolean>(
-            kind === 'Semicolon' ? 'BlockOnSemicolon' :
-                kind === 'Undeclared' ? 'BlockOnUndeclared' :
-                    kind === 'NoVar' ? 'BlockOnNoVar' : 'BlockOnLooseEquality', true);
-        if (!enable) return 'ignore';
-        return block ? 'block' : 'warn';
+        return cfg.getStrictLevel(kind);
     }
 
     function lintSemicolons(document: vscode.TextDocument) {
@@ -203,7 +190,7 @@ export function registerLinting(
         outputChannel.appendLine(`${deps.getTime()} ${fullWarning}`);
         const panel = deps.getPanelForDocUri(docUri);
         const level = getStrictLevel('Semicolon');
-        if (panel && level === 'block') panel.webview.postMessage({ type: 'showWarning', message: fullWarning });
+        if (panel && level === 'block') sendToWebview(panel, { type: 'showWarning', message: fullWarning });
     }
 
     function hasSemicolonWarnings(document: vscode.TextDocument) {
@@ -363,7 +350,7 @@ export function registerLinting(
         outputChannel.appendLine(`${deps.getTime()} ${fullWarning}`);
         const panel = deps.getPanelForDocUri(docUri);
         const level = getStrictLevel('Undeclared');
-        if (panel && level === 'block') panel.webview.postMessage({ type: 'showWarning', message: fullWarning });
+        if (panel && level === 'block') sendToWebview(panel, { type: 'showWarning', message: fullWarning });
     }
 
     function hasUndeclaredWarnings(document: vscode.TextDocument) {
@@ -561,7 +548,7 @@ export function registerLinting(
             (lvlLoose === 'block') ? [eqMsgEq, eqMsgNeq].filter(Boolean).join('\n') : ''
         ].filter(Boolean);
         const overlay = overlayParts.join('\n');
-        if (panel && overlay) panel.webview.postMessage({ type: 'showWarning', message: overlay });
+        if (panel && overlay) sendToWebview(panel, { type: 'showWarning', message: overlay });
     }
 
     function lintAll(document: vscode.TextDocument) {

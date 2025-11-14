@@ -1,6 +1,10 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
+import { BLOCKLY_PANEL_VIEWTYPE, BLOCKLY_PANEL_TITLE_PREFIX } from '../panels/registry';
+import { config as cfg } from '../config';
+import type { BlocklyToExtensionMessage } from './messageTypes';
+import { postBlocklyMessage as sendBlockly, registerBlocklyRouter } from '../webview/router';
 
 type Timeout = NodeJS.Timeout;
 
@@ -129,7 +133,7 @@ export function registerBlockly(
         let allowedBlocksScript = '';
         let extraCategoriesScript = '';
         try {
-            const selectedP5Version = vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11';
+            const selectedP5Version = cfg.getP5jsVersion();
             const versioned = path.join(context.extensionPath, 'assets', selectedP5Version, 'blockly_categories.json');
             const fallbackV1 = path.join(context.extensionPath, 'assets', '1.11', 'blockly_categories.json');
             const legacy = path.join(context.extensionPath, 'blockly', 'blockly_categories.json');
@@ -164,7 +168,7 @@ export function registerBlockly(
         function buildP5CategoryMap(): Record<string, string> {
             const map: Record<string, string> = {};
             try {
-                const selectedP5Version = vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11';
+                const selectedP5Version = cfg.getP5jsVersion();
                 const srcRoot = (
                     selectedP5Version === '1.11'
                         ? path.join(context.extensionPath, 'assets', '1.11', 'p5types', 'src')
@@ -243,7 +247,7 @@ export function registerBlockly(
             const optionalMap: Record<string, boolean[]> = {};
             const typeMap: Record<string, string[]> = {};
             try {
-                const selectedP5Version = vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11';
+                const selectedP5Version = cfg.getP5jsVersion();
                 const srcRoot = (
                     selectedP5Version === '1.11'
                         ? path.join(context.extensionPath, 'assets', '1.11', 'p5types', 'src')
@@ -329,15 +333,13 @@ export function registerBlockly(
 
         const csp = `default-src 'none'; img-src ${webview.cspSource} https: data:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}' https: 'unsafe-eval'; font-src ${webview.cspSource} https:; connect-src https:; media-src https: ${webview.cspSource}`;
 
-        const storageKey = panel.title.startsWith('BLOCKLY: ')
-            ? 'blockly_' + encodeURIComponent(panel.title.slice(9))
+        const storageKey = panel.title.startsWith(BLOCKLY_PANEL_TITLE_PREFIX)
+            ? 'blockly_' + encodeURIComponent(panel.title.slice(BLOCKLY_PANEL_TITLE_PREFIX.length))
             : 'blockly_default';
 
         let configuredBlocklyTheme = 'dark';
         try {
-            const cfg = vscode.workspace.getConfiguration('P5Studio');
-            const t = cfg.get<string>('blocklyTheme');
-            if (t) configuredBlocklyTheme = t;
+            configuredBlocklyTheme = cfg.resolveBlocklyTheme();
         } catch { }
 
         return `<!doctype html>
@@ -438,8 +440,8 @@ export function registerBlockly(
             } catch { }
 
             const panel = vscode.window.createWebviewPanel(
-                'blocklyPanel',
-                `BLOCKLY: ${scriptName}`,
+                BLOCKLY_PANEL_VIEWTYPE,
+                `${BLOCKLY_PANEL_TITLE_PREFIX}${scriptName}`,
                 { viewColumn: targetColumn, preserveFocus: true },
                 {
                     enableScripts: true,
@@ -449,7 +451,7 @@ export function registerBlockly(
                         vscode.Uri.file(path.join(context.extensionPath, 'vendor')),
                         vscode.Uri.file(path.join(context.extensionPath, 'assets')),
                         vscode.Uri.file(path.join(context.extensionPath, 'assets', '1.11')),
-                        vscode.Uri.file(path.join(context.extensionPath, 'assets', (vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11')))
+                        vscode.Uri.file(path.join(context.extensionPath, 'assets', cfg.getP5jsVersion()))
                     ]
                 }
             );
@@ -467,13 +469,8 @@ export function registerBlockly(
             panel.onDidChangeViewState(() => { try { deps.updateP5WebviewTabContext(); } catch { } });
             panel.webview.html = buildBlocklyHtml(panel);
             try {
-                const cfg = vscode.workspace.getConfiguration('P5Studio');
-                const t = cfg.get<string>('blocklyTheme', 'dark');
-                let resolved = t;
-                if (t === 'auto') {
-                    resolved = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark ? 'dark' : 'light';
-                }
-                try { panel.webview.postMessage({ type: 'setBlocklyTheme', theme: resolved }); } catch { }
+                const resolved = cfg.resolveBlocklyTheme();
+                try { sendBlockly(panel, { type: 'setBlocklyTheme', theme: resolved }); } catch { }
             } catch { }
 
             // After ready, prefer sidecar workspace; fallback to embedded
@@ -515,12 +512,12 @@ export function registerBlockly(
                         }
                     }
                     if (workspaceContent) {
-                        setTimeout(() => { try { panel.webview.postMessage({ type: 'loadWorkspace', workspace: workspaceContent }); } catch { } }, 300);
+                        setTimeout(() => { try { sendBlockly(panel, { type: 'loadWorkspace', workspace: workspaceContent }); } catch { } }, 300);
                     }
                 } catch { }
             })();
 
-            panel.webview.onDidReceiveMessage(async msg => {
+            registerBlocklyRouter(panel, async (msg: BlocklyToExtensionMessage) => {
                 if (msg && msg.type === 'blocklyGeneratedCode' && typeof msg.code === 'string') {
                     let wsObj: any = null;
                     try { if (msg.workspace && typeof msg.workspace === 'string') wsObj = JSON.parse(msg.workspace); } catch { wsObj = null; }
@@ -605,7 +602,7 @@ export function registerBlockly(
                             }
                         }
                         if (workspaceContent) {
-                            panel.webview.postMessage({ type: 'loadWorkspace', workspace: workspaceContent });
+                            sendBlockly(panel, { type: 'loadWorkspace', workspace: workspaceContent });
                         }
                     } catch { }
                 })();
@@ -648,26 +645,19 @@ export function registerBlockly(
     context.subscriptions.push(vscode.workspace.onDidChangeConfiguration(e => {
         if (e.affectsConfiguration('P5Studio.blocklyTheme')) {
             try {
-                const cfg = vscode.workspace.getConfiguration('P5Studio');
-                const t = cfg.get<string>('blocklyTheme', 'dark');
-                let resolved = t;
-                if (t === 'auto') {
-                    resolved = vscode.window.activeColorTheme.kind === vscode.ColorThemeKind.Dark ? 'dark' : 'light';
-                }
+                const resolved = cfg.resolveBlocklyTheme();
                 for (const [, panel] of blocklyPanelForDocument.entries()) {
-                    try { panel.webview.postMessage({ type: 'setBlocklyTheme', theme: resolved }); } catch { }
+                    try { sendBlockly(panel, { type: 'setBlocklyTheme', theme: resolved }); } catch { }
                 }
             } catch { }
         }
     }));
     context.subscriptions.push(vscode.window.onDidChangeActiveColorTheme(theme => {
         try {
-            const cfg = vscode.workspace.getConfiguration('P5Studio');
-            const t = cfg.get<string>('blocklyTheme', 'dark');
-            if (t === 'auto') {
-                const resolved = theme.kind === vscode.ColorThemeKind.Dark ? 'dark' : 'light';
+            if (cfg.getBlocklyTheme() === 'auto') {
+                const resolved = cfg.resolveBlocklyTheme();
                 for (const [, panel] of blocklyPanelForDocument.entries()) {
-                    try { panel.webview.postMessage({ type: 'setBlocklyTheme', theme: resolved }); } catch { }
+                    try { sendBlockly(panel, { type: 'setBlocklyTheme', theme: resolved }); } catch { }
                 }
             }
         } catch { }
@@ -721,14 +711,14 @@ export function registerBlockly(
     function clearHighlight(docUri: string) {
         try {
             const panel = blocklyPanelForDocument.get(docUri);
-            if (panel) panel.webview.postMessage({ type: 'clearBlocklyHighlight' });
+            if (panel) sendBlockly(panel, { type: 'clearBlocklyHighlight' });
         } catch { }
     }
     function highlightForLine(docUri: string, line: number) {
         try {
             const panel = blocklyPanelForDocument.get(docUri);
             const mapping = blocklyLineMapForDocument.get(docUri);
-            if (panel) { try { panel.webview.postMessage({ type: 'clearBlocklyHighlight' }); } catch { } }
+            if (panel) { try { sendBlockly(panel, { type: 'clearBlocklyHighlight' }); } catch { } }
             if (panel && Array.isArray(mapping) && mapping.length > 0) {
                 const sorted = [...mapping].sort((a, b) => (a.line || 0) - (b.line || 0));
                 let entry = sorted.find(m => m && typeof m.line === 'number' && m.line === line);
@@ -740,7 +730,7 @@ export function registerBlockly(
                     if (idx >= 0) entry = sorted[idx];
                 }
                 if (entry && entry.blockId) {
-                    panel.webview.postMessage({ type: 'highlightBlocklyBlock', blockId: entry.blockId });
+                    sendBlockly(panel, { type: 'highlightBlocklyBlock', blockId: entry.blockId });
                 }
             }
         } catch { }

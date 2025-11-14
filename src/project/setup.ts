@@ -2,19 +2,11 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { writeFileSync } from 'fs';
+import { toLocalISOString } from '../utils/helpers';
 import { exec } from 'child_process';
+import { config as cfg } from '../config';
 
-function toLocalISOString(d: Date): string {
-    const pad = (n: number, w = 2) => String(n).padStart(w, '0');
-    const year = d.getFullYear();
-    const month = pad(d.getMonth() + 1);
-    const day = pad(d.getDate());
-    const hour = pad(d.getHours());
-    const minute = pad(d.getMinutes());
-    const second = pad(d.getSeconds());
-    const ms = pad(d.getMilliseconds(), 3);
-    return `${year}-${month}-${day}T${hour}:${minute}:${second}.${ms}`;
-}
+// toLocalISOString moved to ../utils/helpers
 
 export function hideFileIfSupported(filePath: string) {
     try {
@@ -41,17 +33,19 @@ async function refreshJsconfigIfMarkerPresent(context: vscode.ExtensionContext) 
             }
             // Recreate jsconfig.json with current settings
             const now2 = new Date();
-            const selectedP5VersionRJ = vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11';
-            const p5typesCandidatesRJ = (
-                selectedP5VersionRJ === '1.11'
-                    ? [path.join(context.extensionPath, 'assets', '1.11', 'p5types', 'global.d.ts')]
-                    : [path.join(context.extensionPath, 'assets', selectedP5VersionRJ, 'p5types', 'global.d.ts')]
-            );
-            const p5helperCandidatesRJ = (
-                selectedP5VersionRJ === '1.11'
-                    ? [path.join(context.extensionPath, 'assets', '1.11', 'p5types', 'p5helper.d.ts')]
-                    : [path.join(context.extensionPath, 'assets', selectedP5VersionRJ, 'p5types', 'p5helper.d.ts')]
-            );
+            const selectedP5VersionRJ = cfg.getP5jsVersion();
+            let p5typesCandidatesRJ: string[];
+            if (selectedP5VersionRJ === '1.11') {
+                p5typesCandidatesRJ = [path.join(context.extensionPath, 'assets', '1.11', 'p5types', 'global.d.ts')];
+            } else {
+                p5typesCandidatesRJ = [path.join(context.extensionPath, 'assets', selectedP5VersionRJ, 'p5types', 'global.d.ts')];
+            }
+            let p5helperCandidatesRJ: string[];
+            if (selectedP5VersionRJ === '1.11') {
+                p5helperCandidatesRJ = [path.join(context.extensionPath, 'assets', '1.11', 'p5types', 'p5helper.d.ts')];
+            } else {
+                p5helperCandidatesRJ = [path.join(context.extensionPath, 'assets', selectedP5VersionRJ, 'p5types', 'p5helper.d.ts')];
+            }
             const resolvedGlobalRJ = p5typesCandidatesRJ.find(p => { try { return fs.existsSync(p); } catch { return false; } });
             const resolvedHelperRJ = p5helperCandidatesRJ.find(p => { try { return fs.existsSync(p); } catch { return false; } });
             const jsconfig = {
@@ -84,8 +78,7 @@ async function showSetupNotificationIfNeeded() {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) return;
 
-    const config = vscode.workspace.getConfiguration('P5Studio');
-    const showSetupNotification = config.get<boolean>('showSetupNotification', true);
+    const showSetupNotification = cfg.getShowSetupNotification();
     if (!showSetupNotification) return;
 
     const p5MarkerPath = path.join(workspaceFolder.uri.fsPath, '.p5');
@@ -93,12 +86,12 @@ async function showSetupNotificationIfNeeded() {
         const action = await vscode.window.showInformationMessage(
             "This project isn't configured for P5 yet. Would you like to set it up now?",
             'Setup P5 Project',
-            "Don't show again"
+            "Don't show again",
         );
         if (action === 'Setup P5 Project') {
             vscode.commands.executeCommand('extension.create-jsconfig');
         } else if (action === "Don't show again") {
-            await config.update('showSetupNotification', false, vscode.ConfigurationTarget.Global);
+            await cfg.setShowSetupNotification(false);
         }
     }
 }

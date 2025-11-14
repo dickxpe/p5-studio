@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { config as cfg } from '../config/index';
 
 // Debounce utility to delay function execution
 export function debounce<Func extends (...args: any[]) => void>(fn: Func, delay: number) {
@@ -21,7 +22,7 @@ export function getTime(): string {
 
 // Read debounce delay from user config
 export function getDebounceDelay() {
-    return vscode.workspace.getConfiguration('P5Studio').get<number>('debounceDelay', 500);
+    return cfg.getDebounceDelay();
 }
 
 // Recursively list .js/.ts files in a folder (for script imports)
@@ -39,4 +40,17 @@ export async function listFilesRecursively(dirUri: vscode.Uri, exts: string[]): 
         }
     } catch (e) { /* ignore */ }
     return files;
+}
+
+// Format a local ISO-like string without timezone offset, e.g. 2025-10-16T14:05:00.000
+export function toLocalISOString(d: Date): string {
+    const pad = (n: number, w = 2) => String(n).padStart(w, '0');
+    const year = d.getFullYear();
+    const month = pad(d.getMonth() + 1);
+    const day = pad(d.getDate());
+    const hour = pad(d.getHours());
+    const minute = pad(d.getMinutes());
+    const second = pad(d.getSeconds());
+    const ms = pad(d.getMilliseconds(), 3);
+    return `${year}-${month}-${day}T${hour}:${minute}:${second}.${ms}`;
 }

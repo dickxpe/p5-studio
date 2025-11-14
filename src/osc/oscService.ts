@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as osc from 'osc';
+import { config as cfg } from '../config/index';
 
 export type OscArgs = Array<{ type: string; value?: any } | number | string | boolean>;
 export type BroadcastFn = (address: string, args: any[]) => void;
@@ -16,15 +17,7 @@ let port: osc.UDPPort | null = null;
 let broadcast: BroadcastFn | null = null;
 let output: vscode.OutputChannel | null = null;
 
-function getConfig() {
-    const config = vscode.workspace.getConfiguration('P5Studio');
-    return {
-        localAddress: config.get<string>('oscLocalAddress', '127.0.0.1'),
-        remoteAddress: config.get<string>('oscRemoteAddress', '127.0.0.1'),
-        remotePort: config.get<number>('oscRemotePort', 57120),
-        localPort: config.get<number>('oscLocalPort', 57121)
-    };
-}
+function getConfig() { return cfg.getOscConfig(); }
 
 function ensureOutput() {
     if (!output) output = vscode.window.createOutputChannel('LIVE P5: OSC');

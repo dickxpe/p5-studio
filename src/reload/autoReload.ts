@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { debounce, getDebounceDelay } from '../utils/helpers';
+import { config as cfg } from '../config/index';
 
 export type AutoReloadApi = {
     setupAutoReloadForDoc: (editor: vscode.TextEditor) => void;
@@ -20,13 +21,13 @@ export function registerAutoReload(
     const listenersByDoc = new Map<string, { changeListener?: vscode.Disposable; saveListener?: vscode.Disposable }>();
     const debounceMap = new Map<string, Function>();
 
-    let reloadWhileTyping = vscode.workspace.getConfiguration('P5Studio').get<boolean>('reloadWhileTyping', true);
-    let reloadOnSave = vscode.workspace.getConfiguration('P5Studio').get<boolean>('reloadOnSave', true);
+    let reloadWhileTyping = cfg.getReloadWhileTyping();
+    let reloadOnSave = cfg.getReloadOnSave();
 
     async function updateConfig() {
         try {
-            reloadWhileTyping = vscode.workspace.getConfiguration('P5Studio').get<boolean>('reloadWhileTyping', true);
-            reloadOnSave = vscode.workspace.getConfiguration('P5Studio').get<boolean>('reloadOnSave', true);
+            reloadWhileTyping = cfg.getReloadWhileTyping();
+            reloadOnSave = cfg.getReloadOnSave();
             await vscode.commands.executeCommand('setContext', 'liveP5ReloadWhileTypingEnabled', reloadWhileTyping);
         } catch { /* ignore */ }
     }

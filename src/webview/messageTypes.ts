@@ -1,0 +1,42 @@
+import type { GlobalVar, TopInputItem } from '../types';
+
+// Messages sent FROM the webview TO the extension host
+export type WebviewToExtensionMessage =
+    | { type: 'setGlobalVars'; variables: GlobalVar[] }
+    | { type: 'updateGlobalVar'; name: string; value: any }
+    | { type: 'focus-script-tab' }
+    | { type: 'captureVisibilityChanged'; visible: boolean }
+    | { type: 'log'; message: string }
+    | { type: 'showError'; message: string }
+    | { type: 'submitTopInputs'; values: any[] }
+    | { type: 'reload-button-clicked'; preserveGlobals?: boolean }
+    | { type: 'step-run-clicked' }
+    | { type: 'single-step-clicked' }
+    | { type: 'highlightLine'; line: number }
+    | { type: 'clearHighlight' }
+    | { type: 'oscSend'; address: string; args?: any[] }
+    | { type: 'saveCanvasImage'; dataUrl: string; fileName?: string }
+    | { type: 'copyCanvasImage'; dataUrl?: string }
+    | { type: 'showInfo'; message: string };
+
+// Messages sent FROM the extension host TO the webview
+export type ExtensionToWebviewMessage =
+    | { type: 'reload'; code: string; preserveGlobals?: boolean }
+    | { type: 'syntaxError'; message: string }
+    | { type: 'showWarning'; message: string }
+    | { type: 'showTopInputs'; items: TopInputItem[] }
+    | { type: 'toggleFPS'; show: boolean }
+    | { type: 'updateVarDebounceDelay'; value: number }
+    | { type: 'setGlobalVars'; variables: GlobalVar[]; readOnly?: boolean }
+    | { type: 'requestGlobalsSnapshot' }
+    | { type: 'step-advance' }
+    | { type: 'updateOverlayFontSize'; value: number }
+    // Additional control/event messages used by the extension
+    | { type: 'oscReceive'; address: string; args?: any[] }
+    | { type: 'showError'; message: string }
+    | { type: 'invokeStepRun' }
+    | { type: 'invokeSingleStep' }
+    | { type: 'invokeReload' }
+    | { type: 'toggleCaptureVisibility' };
+
+export type AnyWebviewMessage = WebviewToExtensionMessage | ExtensionToWebviewMessage;

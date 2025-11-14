@@ -119,15 +119,7 @@ export function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: 
         if (stmt.type === 'VariableDeclaration') {
             for (const decl of stmt.declarations) {
                 if (decl.id && decl.id.name && globalNames.has(decl.id.name) && decl.init) {
-                    globalAssignments.push(
-                        recast.types.builders.expressionStatement(
-                            recast.types.builders.assignmentExpression(
-                                '=',
-                                recast.types.builders.identifier(decl.id.name),
-                                decl.init
-                            )
-                        )
-                    );
+                    globalAssignments.push(recast.types.builders.expressionStatement(recast.types.builders.assignmentExpression('=', recast.types.builders.identifier(decl.id.name), decl.init)));
                 }
             }
         }
@@ -135,19 +127,7 @@ export function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: 
 
     // Insert window.<global> = undefined for all globals at the very top
     for (const g of globals) {
-        newBody.push(
-            recast.types.builders.expressionStatement(
-                recast.types.builders.assignmentExpression(
-                    '=',
-                    recast.types.builders.memberExpression(
-                        recast.types.builders.identifier('window'),
-                        recast.types.builders.identifier(g.name),
-                        false
-                    ),
-                    recast.types.builders.identifier('undefined')
-                )
-            )
-        );
+        newBody.push(recast.types.builders.expressionStatement(recast.types.builders.assignmentExpression('=', recast.types.builders.memberExpression(recast.types.builders.identifier('window'), recast.types.builders.identifier(g.name), false), recast.types.builders.identifier('undefined'))));
     }
 
     for (let i = 0; i < programBody.length; i++) {
@@ -163,16 +143,7 @@ export function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: 
             newBody.push(stmt);
             for (const decl of stmt.declarations) {
                 if (decl.id && decl.id.name && globalNames.has(decl.id.name)) {
-                    newBody.push(recast.types.builders.expressionStatement(
-                        recast.types.builders.assignmentExpression('=',
-                            recast.types.builders.memberExpression(
-                                recast.types.builders.identifier('window'),
-                                recast.types.builders.identifier(decl.id.name),
-                                false
-                            ),
-                            recast.types.builders.identifier(decl.id.name)
-                        )
-                    ));
+                    newBody.push(recast.types.builders.expressionStatement(recast.types.builders.assignmentExpression('=', recast.types.builders.memberExpression(recast.types.builders.identifier('window'), recast.types.builders.identifier(decl.id.name), false), recast.types.builders.identifier(decl.id.name))));
                 }
             }
             continue;
@@ -182,19 +153,7 @@ export function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: 
             setupFound = true;
             const originalStmt: any = stmt;
             const newSetupBody = [...globalAssignments, ...stmt.body.body];
-            newSetupBody.push(
-                recast.types.builders.expressionStatement(
-                    recast.types.builders.assignmentExpression(
-                        '=',
-                        recast.types.builders.memberExpression(
-                            recast.types.builders.identifier('window'),
-                            recast.types.builders.identifier('_p5SetupDone'),
-                            false
-                        ),
-                        recast.types.builders.literal(true)
-                    )
-                )
-            );
+            newSetupBody.push(recast.types.builders.expressionStatement(recast.types.builders.assignmentExpression('=', recast.types.builders.memberExpression(recast.types.builders.identifier('window'), recast.types.builders.identifier('_p5SetupDone'), false), recast.types.builders.literal(true))));
             let newFn = recast.types.builders.functionDeclaration(stmt.id, stmt.params, recast.types.builders.blockStatement(newSetupBody));
             (newFn as any).async = !!(originalStmt as any).async;
             stmt = newFn as any;
@@ -205,21 +164,7 @@ export function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: 
         if (stmt.type === 'FunctionDeclaration' && stmt.id && P5_EVENT_HANDLERS.includes(stmt.id.name)) {
             const originalStmt: any = stmt;
             const origBody = stmt.body.body;
-            const guardedBody = [
-                recast.types.builders.ifStatement(
-                    recast.types.builders.unaryExpression('!',
-                        recast.types.builders.memberExpression(
-                            recast.types.builders.identifier('window'),
-                            recast.types.builders.identifier('_p5SetupDone'),
-                            false
-                        )
-                    ),
-                    recast.types.builders.blockStatement([
-                        recast.types.builders.returnStatement(null)
-                    ])
-                ),
-                ...origBody
-            ];
+            const guardedBody = [recast.types.builders.ifStatement(recast.types.builders.unaryExpression('!', recast.types.builders.memberExpression(recast.types.builders.identifier('window'), recast.types.builders.identifier('_p5SetupDone'), false)), recast.types.builders.blockStatement([recast.types.builders.returnStatement(null)])), ...origBody];
             let newFn = recast.types.builders.functionDeclaration(stmt.id, stmt.params, recast.types.builders.blockStatement(guardedBody));
             (newFn as any).async = !!(originalStmt as any).async;
             stmt = newFn as any;
@@ -228,20 +173,7 @@ export function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: 
     }
 
     if (!setupFound) {
-        const setupBody = [
-            ...globalAssignments,
-            recast.types.builders.expressionStatement(
-                recast.types.builders.assignmentExpression(
-                    '=',
-                    recast.types.builders.memberExpression(
-                        recast.types.builders.identifier('window'),
-                        recast.types.builders.identifier('_p5SetupDone'),
-                        false
-                    ),
-                    recast.types.builders.literal(true)
-                )
-            )
-        ];
+        const setupBody = [...globalAssignments, recast.types.builders.expressionStatement(recast.types.builders.assignmentExpression('=', recast.types.builders.memberExpression(recast.types.builders.identifier('window'), recast.types.builders.identifier('_p5SetupDone'), false), recast.types.builders.literal(true)))];
         newBody.push(recast.types.builders.functionDeclaration(recast.types.builders.identifier('setup'), [], recast.types.builders.blockStatement(setupBody)));
     }
 
@@ -250,15 +182,11 @@ export function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: 
     recast.types.visit(ast, {
         visitIdentifier(path) {
             const name = (path.value as any).name;
-            if (
-                (globalNames as any).has(name) &&
-                !(path.parentPath && path.parentPath.value && path.parentPath.value.type === 'MemberExpression' && (path.parentPath.value as any).property === path.value && (path.parentPath.value as any).object.type === 'Identifier' && (path.parentPath.value as any).object.name === 'window') &&
-                !(path.parentPath && path.parentPath.value && ((path.parentPath.value as any).type === 'VariableDeclarator' && (path.parentPath.value as any).id === path.value) ||
-                    ((path.parentPath.value as any).type === 'FunctionDeclaration' && (path.parentPath.value as any).id === path.value) ||
-                    ((path.parentPath.value as any).type === 'FunctionExpression' && (path.parentPath.value as any).id === path.value) ||
-                    ((path.parentPath.value as any).type === 'ClassDeclaration' && (path.parentPath.value as any).id === path.value)) &&
-                !(path.parentPath && path.parentPath.value && path.parentPath.value.type === 'MemberExpression' && (path.parentPath.value as any).property === path.value && (((path.parentPath.value as any).object.type === 'ThisExpression') || ((path.parentPath.value as any).object.type === 'MemberExpression' && (path.parentPath.value as any).object.object && (path.parentPath.value as any).object.object.type === 'ThisExpression' && (path.parentPath.value as any).object.property && (path.parentPath.value as any).object.property.name === 'window')))
-            ) {
+            const isGlobalName = (globalNames as any).has(name);
+            const isMemberOfWindow = !!(path.parentPath && path.parentPath.value && path.parentPath.value.type === 'MemberExpression' && (path.parentPath.value as any).property === path.value && (path.parentPath.value as any).object.type === 'Identifier' && (path.parentPath.value as any).object.name === 'window');
+            const isDeclarationId = !!(path.parentPath && path.parentPath.value && (((path.parentPath.value as any).type === 'VariableDeclarator' && (path.parentPath.value as any).id === path.value) || ((path.parentPath.value as any).type === 'FunctionDeclaration' && (path.parentPath.value as any).id === path.value) || ((path.parentPath.value as any).type === 'FunctionExpression' && (path.parentPath.value as any).id === path.value) || ((path.parentPath.value as any).type === 'ClassDeclaration' && (path.parentPath.value as any).id === path.value)));
+            const isThisMemberWindowProperty = !!(path.parentPath && path.parentPath.value && path.parentPath.value.type === 'MemberExpression' && (path.parentPath.value as any).property === path.value && (((path.parentPath.value as any).object.type === 'ThisExpression') || ((path.parentPath.value as any).object.type === 'MemberExpression' && (path.parentPath.value as any).object.object && (path.parentPath.value as any).object.object.type === 'ThisExpression' && (path.parentPath.value as any).object.property && (path.parentPath.value as any).object.property.name === 'window')));
+            if (isGlobalName && !isMemberOfWindow && !isDeclarationId && !isThisMemberWindowProperty) {
                 return recast.types.builders.memberExpression(recast.types.builders.identifier('window'), recast.types.builders.identifier(name), false);
             }
             this.traverse(path);

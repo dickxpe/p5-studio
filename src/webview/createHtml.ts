@@ -4,12 +4,14 @@ import * as path from 'path';
 import { preprocessTopLevelInputs } from '../processing/topInputs';
 import { extractGlobalVariablesWithConflicts, rewriteUserCodeWithWindowGlobals } from '../processing/codeRewriter';
 import { listFilesRecursively } from '../utils/helpers';
+import { config as cfg } from '../config/index';
+import { getP5AssetUris } from '../assets/resolver';
 
 export async function createHtml(
   userCode: string,
   panel: vscode.WebviewPanel,
   extensionPath: string,
-  opts?: { allowInteractiveTopInputs?: boolean; initialCaptureVisible?: boolean }
+  opts?: { allowInteractiveTopInputs?: boolean; initialCaptureVisible?: boolean; p5Version?: string }
 ): Promise<string> {
   const allowInteractive = typeof opts?.allowInteractiveTopInputs === 'boolean' ? opts!.allowInteractiveTopInputs! : true;
   const initialCaptureVisible = !!(opts && opts.initialCaptureVisible);
@@ -21,52 +23,12 @@ export async function createHtml(
   if (panel && (panel as any)._sketchFilePath) {
     sketchFileName = path.basename((panel as any)._sketchFilePath);
   }
-  // Choose p5 version from settings; fall back gracefully if missing
-  let selectedP5Version = vscode.workspace.getConfiguration('P5Studio').get<string>('P5jsVersion', '1.11') || '1.11';
-  const p5VersionedPathFs = path.join(extensionPath, 'assets', selectedP5Version, 'p5.min.js');
-  let p5ResolvedFs = p5VersionedPathFs;
-  if (!fs.existsSync(p5ResolvedFs)) {
-    if (selectedP5Version === '1.11') {
-      const legacy = path.join(extensionPath, 'assets', 'p5.min.js');
-      p5ResolvedFs = legacy;
-    } else {
-      // For 2.1 or any non-1.11 version, do NOT fallback to 1.11; leave unresolved to surface error/overlay
-      p5ResolvedFs = p5VersionedPathFs; // keep as-is; will 404 in webview if missing
-    }
-  }
-  const p5Path = vscode.Uri.file(p5ResolvedFs);
-  const p5Uri = panel.webview.asWebviewUri(p5Path);
+  // Resolve p5 asset URIs via centralized resolver helper, honoring an explicit version when provided
+  const { p5Uri, p5SoundUri, p5CaptureUri } = getP5AssetUris(panel, extensionPath, opts?.p5Version ? { version: opts.p5Version } : undefined);
 
-  // Add p5.sound.min.js
-  const p5SoundVersionedPathFs = path.join(extensionPath, 'assets', selectedP5Version, 'p5.sound.min.js');
-  let p5SoundResolvedFs = p5SoundVersionedPathFs;
-  if (!fs.existsSync(p5SoundResolvedFs)) {
-    if (selectedP5Version === '1.11') {
-      const legacy = path.join(extensionPath, 'assets', 'p5.sound.min.js');
-      p5SoundResolvedFs = legacy;
-    } else {
-      p5SoundResolvedFs = p5SoundVersionedPathFs;
-    }
-  }
-  const p5SoundPath = vscode.Uri.file(p5SoundResolvedFs);
-  const p5SoundUri = panel.webview.asWebviewUri(p5SoundPath);
-
-  const p5CaptureVersionedPathFs = path.join(extensionPath, 'assets', selectedP5Version, 'p5.capture.umd.min.js');
-  let p5CaptureResolvedFs = p5CaptureVersionedPathFs;
-  if (!fs.existsSync(p5CaptureResolvedFs)) {
-    if (selectedP5Version === '1.11') {
-      const legacy = path.join(extensionPath, 'assets', 'p5.capture.umd.min.js');
-      p5CaptureResolvedFs = legacy;
-    } else {
-      p5CaptureResolvedFs = p5CaptureVersionedPathFs;
-    }
-  }
-  const p5CapturePath = vscode.Uri.file(p5CaptureResolvedFs);
-  const p5CaptureUri = panel.webview.asWebviewUri(p5CapturePath);
-
-  const stepRunDelayMs = vscode.workspace.getConfiguration('P5Studio').get<number>('stepRunDelayMs', 500);
-  const showDebugButton = vscode.workspace.getConfiguration('P5Studio').get<boolean>('ShowDebugButton', true);
-  const showFPS = vscode.workspace.getConfiguration('P5Studio').get<boolean>('showFPS', false);
+  const stepRunDelayMs = cfg.getStepRunDelayMs();
+  const showDebugButton = cfg.getShowDebugButton();
+  const showFPS = cfg.getShowFPS();
 
   function escapeBackticks(str: string) {
     return str.replace(/`/g, '\\`');
@@ -118,10 +80,8 @@ export async function createHtml(
   } catch (e) { /* ignore */ }
 
   // In createHtml, get debounceDelay from config and pass to webview
-  const debounceDelay = vscode.workspace.getConfiguration('P5Studio').get<number>('debounceDelay', 500);
-  // Use the new setting key only (no backward compatibility)
-  const cfgVarDelay = vscode.workspace.getConfiguration('P5Studio');
-  const varControlDebounceDelay = cfgVarDelay.get<number>('variablePanelDebounceDelay', 500);
+  const debounceDelay = cfg.getDebounceDelay();
+  const varControlDebounceDelay = cfg.getVariablePanelDebounceDelay();
 
   // Get the webview URI for the media folder (if it exists)
   let mediaWebviewUriPrefix = '';
@@ -524,8 +484,6 @@ document.addEventListener('contextmenu', function(e) {
 <script>
 // --- Provide MEDIA_FOLDER global for user sketches ---
 const MEDIA_FOLDER = ${JSON.stringify(mediaWebviewUriPrefix)};
-
-window._p5UserCode = ${JSON.stringify(escapedCode)};
 const vscode = acquireVsCodeApi();
 window._p5Instance = null;
 window._p5UserDefinedCanvas = false;
