@@ -386,13 +386,13 @@
             "default": 250,
             "minimum": 0,
             "description": "Delay (in milliseconds) used by the Step-Run button between setup() statements and at the start of each loop iteration.",
-            "order": 16
+            "order": 17
           },
           "P5Studio.debug.ShowDebugButton": {
             "type": "boolean",
             "default": true,
-            "description": "Show the Debug button in the P5 webview title bar.",
-            "order": 17
+            "description": "BETA FEATURE: Show the Debug button in the P5 webview title bar. Allows step-wise execution of the sketch for debugging purposes. Doesnt work correctly yet for sketches without setup/draw",
+            "order": 16
           },
         
           "P5Studio.lint.StrictSemicolonWarning": {
