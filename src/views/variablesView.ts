@@ -3,38 +3,38 @@ import * as vscode from 'vscode';
 export type GlobalVar = { name: string; value: any; type: string };
 
 export interface VariablesViewDeps {
-    getActiveP5Panel: () => vscode.WebviewPanel | undefined;
-    getDocUriForPanel: (panel: vscode.WebviewPanel | undefined) => vscode.Uri | undefined;
-    getVarsForDoc: (docUri: string) => GlobalVar[];
-    setVarsForDoc: (docUri: string, list: GlobalVar[]) => void;
+  getActiveP5Panel: () => vscode.WebviewPanel | undefined;
+  getDocUriForPanel: (panel: vscode.WebviewPanel | undefined) => vscode.Uri | undefined;
+  getVarsForDoc: (docUri: string) => GlobalVar[];
+  setVarsForDoc: (docUri: string, list: GlobalVar[]) => void;
 }
 
 let variablesPanelView: vscode.WebviewView | undefined;
 
 export function registerVariablesView(context: vscode.ExtensionContext, deps: VariablesViewDeps) {
-    function updateVariablesPanel() {
-        if (!variablesPanelView) return;
-        try {
-            const panel = deps.getActiveP5Panel();
-            let vars: GlobalVar[] = [];
-            if (panel) {
-                const docUri = deps.getDocUriForPanel(panel)?.toString();
-                if (docUri) {
-                    vars = deps.getVarsForDoc(docUri) || [];
-                }
-            }
-            variablesPanelView.webview.postMessage({ type: 'setGlobalVars', variables: vars });
-        } catch { }
-    }
+  function updateVariablesPanel() {
+    if (!variablesPanelView) return;
+    try {
+      const panel = deps.getActiveP5Panel();
+      let vars: GlobalVar[] = [];
+      if (panel) {
+        const docUri = deps.getDocUriForPanel(panel)?.toString();
+        if (docUri) {
+          vars = deps.getVarsForDoc(docUri) || [];
+        }
+      }
+      variablesPanelView.webview.postMessage({ type: 'setGlobalVars', variables: vars });
+    } catch { }
+  }
 
-    const provider: vscode.WebviewViewProvider = {
-        resolveWebviewView(webviewView: vscode.WebviewView) {
-            variablesPanelView = webviewView;
-            webviewView.webview.options = {
-                enableScripts: true,
-                localResourceRoots: [vscode.Uri.file(context.extensionPath)]
-            } as any;
-            webviewView.webview.html = `<!DOCTYPE html>
+  const provider: vscode.WebviewViewProvider = {
+    resolveWebviewView(webviewView: vscode.WebviewView) {
+      variablesPanelView = webviewView;
+      webviewView.webview.options = {
+        enableScripts: true,
+        localResourceRoots: [vscode.Uri.file(context.extensionPath)]
+      } as any;
+      webviewView.webview.html = `<!DOCTYPE html>
 <html>
   <head>
     <meta charset="UTF-8" />
@@ -54,7 +54,7 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
         display: block;
       }
       input[type="checkbox"] { transform: scale(1.2); }
-      .error { border-color: var(--vscode-inputValidation-errorBorder, #f14c4c); background-color: var(--vscode-inputValidation-errorBackground, #5a1d1d); }
+      .error { border-color:  #FF0000; background-color: #f14c4c; }
     </style>
   </head>
   <body>
@@ -232,44 +232,44 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
     </script>
   </body>
 </html>`;
-            // On first load, show latest vars if available
-            setTimeout(updateVariablesPanel, 100);
+      // On first load, show latest vars if available
+      setTimeout(updateVariablesPanel, 100);
 
-            // Attach message listener for updates coming from VARIABLES panel
-            webviewView.webview.onDidReceiveMessage((msg) => {
-                if (msg && msg.type === 'updateGlobalVar' && msg.name) {
-                    try {
-                        const name = String(msg.name);
-                        const value = msg.value;
-                        const panel = deps.getActiveP5Panel();
-                        const docUri = panel ? deps.getDocUriForPanel(panel)?.toString() : undefined;
-                        if (docUri) {
-                            const list = [...(deps.getVarsForDoc(docUri) || [])];
-                            const idx = list.findIndex(v => v.name === name);
-                            if (idx >= 0) {
-                                list[idx] = { ...list[idx], value };
-                            } else {
-                              const isArr = Array.isArray(value);
-                              const t = typeof value;
-                              const type = isArr ? 'array' : ((t === 'boolean' || t === 'number') ? t : 'string');
-                              list.push({ name, value, type });
-                            }
-                            deps.setVarsForDoc(docUri, list);
-                        }
-                        updateVariablesPanel();
-                    } catch { }
+      // Attach message listener for updates coming from VARIABLES panel
+      webviewView.webview.onDidReceiveMessage((msg) => {
+        if (msg && msg.type === 'updateGlobalVar' && msg.name) {
+          try {
+            const name = String(msg.name);
+            const value = msg.value;
+            const panel = deps.getActiveP5Panel();
+            const docUri = panel ? deps.getDocUriForPanel(panel)?.toString() : undefined;
+            if (docUri) {
+              const list = [...(deps.getVarsForDoc(docUri) || [])];
+              const idx = list.findIndex(v => v.name === name);
+              if (idx >= 0) {
+                list[idx] = { ...list[idx], value };
+              } else {
+                const isArr = Array.isArray(value);
+                const t = typeof value;
+                const type = isArr ? 'array' : ((t === 'boolean' || t === 'number') ? t : 'string');
+                list.push({ name, value, type });
+              }
+              deps.setVarsForDoc(docUri, list);
+            }
+            updateVariablesPanel();
+          } catch { }
 
-                    const activePanel = deps.getActiveP5Panel();
-                    if (activePanel && activePanel.webview) {
-                        activePanel.webview.postMessage({ type: 'updateGlobalVar', name: msg.name, value: msg.value });
-                    }
-                }
-            });
+          const activePanel = deps.getActiveP5Panel();
+          if (activePanel && activePanel.webview) {
+            activePanel.webview.postMessage({ type: 'updateGlobalVar', name: msg.name, value: msg.value });
+          }
         }
-    };
-    context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider('p5studioVariablesView', provider)
-    );
+      });
+    }
+  };
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider('p5studioVariablesView', provider)
+  );
 
-    return { updateVariablesPanel };
+  return { updateVariablesPanel };
 }
