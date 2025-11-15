@@ -189,7 +189,7 @@ export async function prepareSketch(opts: SketchPrepOptions): Promise<SketchPrep
     let readOnly = false;
     try {
         const globalsInfo = extractGlobalVariablesWithConflicts(code);
-        filteredGlobals = globalsInfo.globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+        filteredGlobals = globalsInfo.globals.filter(g => ['number', 'string', 'boolean', 'array'].includes(g.type));
         const hiddenSet = getHiddenGlobalsByDirective(originalCode);
         if (hiddenSet.size > 0) {
             filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name));

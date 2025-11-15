@@ -15,6 +15,12 @@ export function extractGlobalVariablesWithConflicts(code: string): { globals: { 
                 if (decl.init && decl.init.type === 'Literal') {
                     value = decl.init.value;
                     type = typeof value;
+                } else if (decl.init && decl.init.type === 'ArrayExpression') {
+                    try {
+                        const arr = Function('Array', `return (${recast.print(decl.init).code});`)(Array);
+                        if (Array.isArray(arr)) { value = arr; type = 'array'; }
+                        else { value = undefined; type = 'other'; }
+                    } catch { value = undefined; type = 'other'; }
                 } else if (decl.init && decl.init.type === 'UnaryExpression' && decl.init.argument.type === 'Literal') {
                     value = decl.init.operator === '-' ? -decl.init.argument.value : decl.init.argument.value;
                     type = typeof value;
@@ -26,10 +32,14 @@ export function extractGlobalVariablesWithConflicts(code: string): { globals: { 
                 } else if (decl.init) {
                     try {
                         const safeGlobals = { Math, Number, String, Boolean, Array, Object };
-                        value = Function(...Object.keys(safeGlobals), `return (${recast.print(decl.init).code});`)
+                        const evaluated = Function(...Object.keys(safeGlobals), `return (${recast.print(decl.init).code});`)
                             (...Object.values(safeGlobals));
-                        type = typeof value;
-                        if (!['number', 'string', 'boolean'].includes(type)) { value = undefined; type = 'other'; }
+                        if (Array.isArray(evaluated)) {
+                            value = evaluated; type = 'array';
+                        } else {
+                            value = evaluated; type = typeof evaluated;
+                            if (!['number', 'string', 'boolean'].includes(type)) { value = undefined; type = 'other'; }
+                        }
                     } catch { value = undefined; type = 'other'; }
                 }
                 if (RESERVED_GLOBALS.has(decl.id.name)) {
@@ -68,6 +78,12 @@ export function extractGlobalVariables(code: string): { name: string, value: any
                 let type = 'other';
                 if (decl.init && decl.init.type === 'Literal') {
                     value = decl.init.value; type = typeof value;
+                } else if (decl.init && decl.init.type === 'ArrayExpression') {
+                    try {
+                        const arr = Function('Array', `return (${recast.print(decl.init).code});`)(Array);
+                        if (Array.isArray(arr)) { value = arr; type = 'array'; }
+                        else { value = undefined; type = 'other'; }
+                    } catch { value = undefined; type = 'other'; }
                 } else if (decl.init && decl.init.type === 'UnaryExpression' && decl.init.argument.type === 'Literal') {
                     value = decl.init.operator === '-' ? -decl.init.argument.value : decl.init.argument.value; type = typeof value;
                 } else if (decl.init && decl.init.type === 'Identifier') {
@@ -77,10 +93,14 @@ export function extractGlobalVariables(code: string): { name: string, value: any
                 } else if (decl.init) {
                     try {
                         const safeGlobals = { Math, Number, String, Boolean, Array, Object };
-                        value = Function(...Object.keys(safeGlobals), `return (${recast.print(decl.init).code});`)
+                        const evaluated = Function(...Object.keys(safeGlobals), `return (${recast.print(decl.init).code});`)
                             (...Object.values(safeGlobals));
-                        type = typeof value;
-                        if (!['number', 'string', 'boolean'].includes(type)) { value = undefined; type = 'other'; }
+                        if (Array.isArray(evaluated)) {
+                            value = evaluated; type = 'array';
+                        } else {
+                            value = evaluated; type = typeof evaluated;
+                            if (!['number', 'string', 'boolean'].includes(type)) { value = undefined; type = 'other'; }
+                        }
                     } catch { value = undefined; type = 'other'; }
                 }
                 globals.push({ name: decl.id.name, value, type });

@@ -54,6 +54,7 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
         display: block;
       }
       input[type="checkbox"] { transform: scale(1.2); }
+      .error { border-color: var(--vscode-inputValidation-errorBorder, #f14c4c); background-color: var(--vscode-inputValidation-errorBackground, #5a1d1d); }
     </style>
   </head>
   <body>
@@ -78,6 +79,11 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
           var n = Number(v);
           return Number.isNaN(n) ? '' : String(n);
         }
+        if (type === 'array') {
+          try {
+            return JSON.stringify(v);
+          } catch { return ''; }
+        }
         if (type === 'boolean') return !!v;
         return (v === undefined || v === null) ? '' : String(v);
       }
@@ -99,6 +105,8 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
             html += '<input type="checkbox" data-var="' + v.name + '"' + (v.value ? ' checked' : '') + ' />';
           } else if (v.type === 'number') {
             html += '<input type="number" data-var="' + v.name + '" value="' + normalizeForInput('number', v.value) + '" step="any" />';
+          } else if (v.type === 'array') {
+            html += '<input type="text" data-var="' + v.name + '" data-type="array" value="' + normalizeForInput('array', v.value).replace(/"/g, '&quot;') + '" />';
           } else {
             html += '<input type="text" data-var="' + v.name + '" value="' + normalizeForInput('text', v.value) + '" />';
           }
@@ -128,6 +136,42 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
               if (input.value === '') { sendVarUpdate(name, ''); return; }
               var num = Number(input.value);
               if (!Number.isNaN(num)) sendVarUpdate(name, num); else sendVarUpdate(name, '');
+            });
+          } else if (input.getAttribute('data-type') === 'array') {
+            // Array: treat value as JSON; validate on change
+            let arrDebounceTimer = null;
+            input.addEventListener('input', function() {
+              if (arrDebounceTimer) clearTimeout(arrDebounceTimer);
+              arrDebounceTimer = setTimeout(function() {
+                var raw = input.value;
+                if (raw.trim() === '') { return; }
+                try {
+                  var parsed = JSON.parse(raw);
+                  if (Array.isArray(parsed)) {
+                    input.classList.remove('error');
+                    sendVarUpdate(name, parsed);
+                  } else {
+                    input.classList.add('error');
+                  }
+                } catch {
+                  input.classList.add('error');
+                }
+              }, 150);
+            });
+            input.addEventListener('blur', function() {
+              var raw = input.value;
+              if (raw.trim() === '') { return; }
+              try {
+                var parsed = JSON.parse(raw);
+                if (Array.isArray(parsed)) {
+                  input.classList.remove('error');
+                  sendVarUpdate(name, parsed);
+                } else {
+                  input.classList.add('error');
+                }
+              } catch {
+                input.classList.add('error');
+              }
             });
           } else {
             // Text: live updates while typing
@@ -168,6 +212,10 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
           } else if (vv.type === 'number') {
             var valStr = normalizeForInput('number', vv.value);
             if (input.value !== valStr) input.value = valStr;
+          } else if (vv.type === 'array') {
+            var arrStr = normalizeForInput('array', vv.value);
+            if (input.value !== arrStr) input.value = arrStr;
+            input.classList.remove('error');
           } else {
             var tStr = normalizeForInput('text', vv.value);
             if (input.value !== tStr) input.value = tStr;
@@ -201,9 +249,10 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
                             if (idx >= 0) {
                                 list[idx] = { ...list[idx], value };
                             } else {
-                                const t = typeof value;
-                                const type = (t === 'boolean' || t === 'number') ? t : 'string';
-                                list.push({ name, value, type });
+                              const isArr = Array.isArray(value);
+                              const t = typeof value;
+                              const type = isArr ? 'array' : ((t === 'boolean' || t === 'number') ? t : 'string');
+                              list.push({ name, value, type });
                             }
                             deps.setVarsForDoc(docUri, list);
                         }
