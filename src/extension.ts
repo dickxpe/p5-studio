@@ -89,7 +89,7 @@ export function activate(context: vscode.ExtensionContext) {
   try { (globalThis as any).RESERVED_GLOBALS = RESERVED_GLOBALS; } catch { }
   // VARIABLES SERVICE
   let variablesService: VariablesServiceApi;
-  // Initialize OSC service with broadcast to all open P5 panels
+  // OSC service is now started/stopped manually via status bar
   let oscService: OscServiceApi | null = null;
   const broadcastOscToPanels = (address: string, args: any[]) => {
     for (const [, panel] of webviewPanelMap.entries()) {
@@ -98,7 +98,59 @@ export function activate(context: vscode.ExtensionContext) {
       } catch { }
     }
   };
-  oscService = initOsc(broadcastOscToPanels);
+
+  // --- OSC Status Bar Button ---
+  const oscStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
+  oscStatusBar.command = 'P5Studio.toggleOscServer';
+  oscStatusBar.text = '▶️ Start OSC';
+  oscStatusBar.tooltip = 'Start OSC server for p5-studio';
+  oscStatusBar.color = '#307dc1';
+  context.subscriptions.push(oscStatusBar);
+  oscStatusBar.show();
+
+  let oscRunning = false;
+  function updateOscStatusBar() {
+    if (oscRunning) {
+      oscStatusBar.text = '🛑 Stop OSC';
+      oscStatusBar.tooltip = 'Stop OSC server for p5-studio';
+      oscStatusBar.color = '#00bfae';
+    } else {
+      oscStatusBar.text = '▶️ Start OSC';
+      oscStatusBar.tooltip = 'Start OSC server for p5-studio';
+      oscStatusBar.color = '#307dc1';
+    }
+  }
+
+  async function startOscServer() {
+    if (oscService) return;
+    // Get config (address/port) from settings
+    const cfg = require('./config/index');
+    const address = cfg.getOscAddress ? cfg.getOscAddress() : '127.0.0.1';
+    const port = cfg.getOscPort ? cfg.getOscPort() : 57120;
+    oscService = require('./osc/oscService').initOsc(broadcastOscToPanels, { address, port });
+    oscRunning = true;
+    updateOscStatusBar();
+    vscode.window.setStatusBarMessage(`OSC server started on ${address}:${port}`, 2000);
+  }
+
+  async function stopOscServer() {
+    if (!oscService) return;
+    try { oscService.dispose(); } catch { }
+    oscService = null;
+    oscRunning = false;
+    updateOscStatusBar();
+    vscode.window.setStatusBarMessage('OSC server stopped', 2000);
+  }
+
+  context.subscriptions.push(vscode.commands.registerCommand('P5Studio.toggleOscServer', async () => {
+    if (oscRunning) {
+      await stopOscServer();
+    } else {
+      await startOscServer();
+    }
+  }));
+
+  // (No auto-start of OSC server)
   // Helper: find active P5 panel
   function getActiveP5Panel(): vscode.WebviewPanel | undefined {
     // 1) If a webview tab is focused, resolve by matching the tab label to a panel title

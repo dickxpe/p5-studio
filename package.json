@@ -84,6 +84,11 @@
          "category": "P5 Studio"
       },
       {
+        "command": "P5Studio.toggleOscServer",
+        "title": "Start/Stop OSC Server",
+        "category": "P5 Studio"
+      },
+      {
         "command": "P5Studio.toggleReloadWhileTypingOn",
         "title": "Disable Reload on Typing",
         "icon": {
