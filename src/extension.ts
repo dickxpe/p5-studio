@@ -162,7 +162,7 @@ export function activate(context: vscode.ExtensionContext) {
       // For status message, get config from oscService after start
       usedConfig = oscService && typeof oscService.getConfig === 'function' ? oscService.getConfig() : undefined;
     }
-    oscRunning = true
+    oscRunning = true;
     updateOscStatusBar();
     if (usedConfig) {
       vscode.window.setStatusBarMessage(`OSC server started on ${usedConfig.localAddress}:${usedConfig.localPort} → ${usedConfig.remoteAddress}:${usedConfig.remotePort}`, 2000);

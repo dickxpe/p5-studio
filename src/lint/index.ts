@@ -59,47 +59,71 @@ export function registerLinting(
         if (level === 'ignore') { semicolonDiagnostics.delete(document.uri); return; }
         const text = document.getText();
         const diagnostics: vscode.Diagnostic[] = [];
-        // Prefer TS AST for JS/TS/JSX/TSX
+        // Prefer TS AST only for JavaScript/JSX; for TypeScript we defer to the
+        // simpler line-based heuristic to avoid noisy false positives.
         let usedAst = false;
-        try {
-            const ts = require('typescript');
-            const scriptKind = ((): any => {
-                if (lang === 'typescript') return ts.ScriptKind.TS;
-                if (lang === 'typescriptreact') return ts.ScriptKind.TSX;
-                if (lang === 'javascriptreact') return ts.ScriptKind.JSX;
-                return ts.ScriptKind.JS;
-            })();
-            const sf = ts.createSourceFile(document.fileName, text, ts.ScriptTarget.Latest, true, scriptKind);
-            usedAst = true;
-            const wants = new Set<number>([
-                ts.SyntaxKind.ExpressionStatement,
-                ts.SyntaxKind.VariableStatement,
-                ts.SyntaxKind.ReturnStatement,
-                ts.SyntaxKind.ThrowStatement,
-                ts.SyntaxKind.BreakStatement,
-                ts.SyntaxKind.ContinueStatement
-            ]);
-            function addDiagAt(endIndex: number) {
-                if (endIndex > 0 && text[endIndex - 1] === ';') return;
-                const endPos = document.positionAt(endIndex);
-                const range = new vscode.Range(endPos, endPos);
-                const diag = new vscode.Diagnostic(range, 'Missing semicolon.', vscode.DiagnosticSeverity.Warning);
-                diag.source = 'Semicolon Linter';
-                diagnostics.push(diag);
-            }
-            function walk(node: any) {
-                try {
-                    if (!node) return;
-                    const kind = node.kind;
-                    if (wants.has(kind)) {
-                        const end = node.getEnd();
-                        addDiagAt(end);
-                    }
-                } catch { }
-                try { node.forEachChild((c: any) => walk(c)); } catch { }
-            }
-            walk(sf);
-        } catch { usedAst = false; }
+        if (lang === 'javascript' || lang === 'javascriptreact') {
+            try {
+                const ts = require('typescript');
+                const scriptKind = ((): any => {
+                    if (lang === 'javascriptreact') return ts.ScriptKind.JSX;
+                    return ts.ScriptKind.JS;
+                })();
+                const sf = ts.createSourceFile(document.fileName, text, ts.ScriptTarget.Latest, true, scriptKind);
+                usedAst = true;
+                const wants = new Set<number>([
+                    ts.SyntaxKind.ExpressionStatement,
+                    ts.SyntaxKind.VariableStatement,
+                    ts.SyntaxKind.ReturnStatement,
+                    ts.SyntaxKind.ThrowStatement,
+                    ts.SyntaxKind.BreakStatement,
+                    ts.SyntaxKind.ContinueStatement
+                ]);
+                // Parents to skip: inside object/array literals, class members, etc.
+                const skipParents = new Set<number>([
+                    ts.SyntaxKind.ObjectLiteralExpression,
+                    ts.SyntaxKind.ArrayLiteralExpression,
+                    ts.SyntaxKind.PropertyAssignment,
+                    ts.SyntaxKind.ShorthandPropertyAssignment,
+                    ts.SyntaxKind.MethodDeclaration,
+                    ts.SyntaxKind.GetAccessor,
+                    ts.SyntaxKind.SetAccessor,
+                    ts.SyntaxKind.PropertyDeclaration,
+                    ts.SyntaxKind.EnumDeclaration,
+                    ts.SyntaxKind.EnumMember
+                ]);
+                function addDiagAt(endIndex: number) {
+                    if (endIndex > 0 && text[endIndex - 1] === ';') return;
+                    const endPos = document.positionAt(endIndex);
+                    const range = new vscode.Range(endPos, endPos);
+                    const diag = new vscode.Diagnostic(range, 'Missing semicolon.', vscode.DiagnosticSeverity.Warning);
+                    diag.source = 'Semicolon Linter';
+                    diagnostics.push(diag);
+                }
+                function walk(node: any) {
+                    try {
+                        if (!node) return;
+                        const kind = node.kind;
+                        if (wants.has(kind)) {
+                            const parent = (node as any).parent;
+                            const grand = parent && (parent as any).parent;
+                            if (
+                                (parent && skipParents.has(parent.kind)) ||
+                                (grand && skipParents.has(grand.kind))
+                            ) {
+                                // e.g. object literal property or nested inside one; no semicolon required
+                                // Skip to avoid false positives like last property in an object literal
+                            } else {
+                                const end = node.getEnd();
+                                addDiagAt(end);
+                            }
+                        }
+                    } catch { }
+                    try { node.forEachChild((c: any) => walk(c)); } catch { }
+                }
+                walk(sf);
+            } catch { usedAst = false; }
+        }
 
         if (!usedAst && (lang === 'javascript' || lang === 'javascriptreact')) {
             try {
@@ -143,10 +167,31 @@ export function registerLinting(
             const lines = text.split(/\r?\n/);
             let paren = 0, bracket = 0, brace = 0, inTemplate = false;
             const isEscaped = (s: string, i: number): boolean => i > 0 && s[i - 1] === '\\' && !isEscaped(s, i - 1);
+            const hasAssignmentInStatement = (linesArr: string[], currentIndex: number): boolean => {
+                // Look backwards from the current line, within the same logical statement,
+                // for an '=' that isn't part of an '=>' arrow function.
+                for (let k = currentIndex; k >= 0; k--) {
+                    const rawLine = linesArr[k];
+                    let line = rawLine;
+                    const slIdx = line.indexOf('//');
+                    if (slIdx >= 0) line = line.slice(0, slIdx);
+                    const trimmedLine = line.trim();
+                    if (!trimmedLine) break; // stop at blank line: new statement block
+                    if (/[;}]\s*$/.test(trimmedLine) && k !== currentIndex) {
+                        // Previous statement terminated; don't cross this boundary
+                        break;
+                    }
+                    if (/=([^=>]|$)/.test(trimmedLine)) return true;
+                }
+                return false;
+            };
+
             for (let i = 0; i < lines.length; i++) {
                 let line = lines[i];
                 const slIdx = line.indexOf('//');
                 if (slIdx >= 0) line = line.slice(0, slIdx);
+
+                // Track basic nesting and template literals to detect obvious continuations
                 for (let j = 0; j < line.length; j++) {
                     const ch = line[j];
                     if (ch === '`' && !isEscaped(line, j)) inTemplate = !inTemplate;
@@ -155,20 +200,59 @@ export function registerLinting(
                     else if (ch === '[') bracket++; else if (ch === ']') bracket = Math.max(0, bracket - 1);
                     else if (ch === '{') brace++; else if (ch === '}') brace = Math.max(0, brace - 1);
                 }
+
+                const raw = line;
                 const trimmed = line.trimEnd();
                 if (trimmed.length === 0) continue;
+
                 const lower = trimmed.toLowerCase();
                 const endsWith = (s: string) => trimmed.endsWith(s);
-                const skipEndChars = [';', '{', '}', ',', ':', '(', ')', '[', ']', '`'];
+
+                // Quick skip for lines that clearly aren't standalone statements
+                const skipEndChars = [';', '{', ',', ':', '(', ')', '[', ']', '`'];
                 const skipEndings = ['=>', '++', '--', '.', '?', '?.', '??', '||', '&&', '+', '-', '*', '/', '%', '=', '+=', '-=', '*=', '/=', '%=', '?:', ','];
                 const startsWithKeywords = ['if', 'for', 'while', 'switch', 'else', 'do', 'try', 'catch', 'finally', 'class', 'interface', 'enum'];
                 const startsWithTsTypes = ['type '];
+
+                // We intentionally do NOT treat '}' and ']' as automatic continuations,
+                // because lines like `foo = { ... }` or `bar = [ ... ]` should still
+                // be checked for a trailing semicolon.
                 const continued = (paren + bracket) > 0 || skipEndChars.some(c => endsWith(c)) || skipEndings.some(s => endsWith(s));
                 if (continued || startsWithKeywords.some(k => lower.startsWith(k + ' ')) || startsWithTsTypes.some(k => lower.startsWith(k))) {
                     continue;
                 }
-                if (!endsWith(';')) {
-                    const eolPos = new vscode.Position(i, lines[i].length);
+
+                // Heuristic: skip lines that look like object literal properties, e.g. "foo: bar" or "foo," etc.
+                // But do NOT skip if the line also looks like it is part of an assignment,
+                // such as `usedConfig = { foo: bar }`.
+                const noTrailing = trimmed.replace(/[;,]$/, '');
+                const hasAssignmentLike = /[=]([^=>]|$)/.test(noTrailing);
+                const propertyLike = /:\s*[^:]+$/.test(noTrailing) && !/^\s*(if|for|while|switch|return|throw|case)\b/.test(lower);
+                if (propertyLike && !hasAssignmentLike) {
+                    continue;
+                }
+
+                // Special case: lines ending with '}' or ']' that are likely
+                // to be the end of an assignment or expression should still
+                // require a semicolon. Example:
+                //   usedConfig = { ... }   // should warn
+                // but not for compact control/try forms on a single line
+                // such as:
+                //   if (cond) { ... }
+                //   while (cond) { ... }
+                //   for (...) { ... }
+                //   try { ... } catch { }
+                const endsWithBraceOrBracket = /[\]}]$/.test(trimmed);
+                const assignmentInStatement = hasAssignmentInStatement(lines, i);
+
+                // Skip compact single-line control/try statements that already
+                // contain their own braces, e.g. `if (...) { ... }` or
+                // a trailing `catch { ... }` block.
+                const isCompactControl = /^\s*(if|for|while|switch|try|catch|finally)\b[\s\S]*[\]}]\s*$/.test(trimmed)
+                    || /^\s*\}\s*catch\b[\s\S]*$/.test(trimmed);
+
+                if (!isCompactControl && !endsWith(';') && (!endsWithBraceOrBracket || assignmentInStatement)) {
+                    const eolPos = new vscode.Position(i, raw.length);
                     const range = new vscode.Range(eolPos, eolPos);
                     const diag = new vscode.Diagnostic(range, 'Missing semicolon.', vscode.DiagnosticSeverity.Warning);
                     diag.source = 'Semicolon Linter';

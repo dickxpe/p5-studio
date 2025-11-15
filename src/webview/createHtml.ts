@@ -34,7 +34,9 @@ export async function createHtml(
     return str.replace(/`/g, '\\`');
   }
 
-  // Sanitize user code: replace literal \n in string literals with a space
+  // Sanitize user code: replace literal two-character "\\" + "n" sequences
+  // in string literals with a space, but do NOT touch actual backslash
+  // characters like "\\" that are already correctly escaped.
   function sanitizeUserCode(code: string): string {
     // This regex replaces \n in single/double/backtick-quoted string literals with a space
     return code.replace(/(['"`])((?:\\\1|.)*?)\\n((?:\\\1|.)*?)\1/g, (match, quote, before, after) => {
@@ -593,6 +595,10 @@ function _p5ShouldSuppressError(raw){
 
 window.onerror = function(message, source, lineno, colno, error) {
   let msg = message && message.toString ? message.toString() : String(message);
+  // Normalize the noisy appendChild/SyntaxError into a clearer message
+  if (msg && msg.indexOf("Failed to execute 'appendChild' on 'Node': Invalid or unexpected token") !== -1) {
+    msg = 'Uncaught SyntaxError: Invalid or unexpected character';
+  }
   if (_p5ShouldSuppressError(msg)) {
     // Let it go to the browser console but do not show overlay or VS Code output
     return false;
