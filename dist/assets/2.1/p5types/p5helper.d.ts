@@ -1,3 +1,20 @@
+ * Start the OSC server.If address and port are given, use them; otherwise use settings.
+ * @param address Optional address to bind the OSC server.
+ * @param port Optional port to bind the OSC server.
+ */
+/**
+ * Start the OSC server. If parameters are given, use them; otherwise use settings.
+ * @param localAddress Optional local address to bind the OSC server.
+ * @param localPort Optional local port to bind the OSC server.
+ * @param remoteAddress Optional remote address to send OSC messages.
+ * @param remotePort Optional remote port to send OSC messages.
+ */
+declare function startOSC(localAddress?: string, localPort?: number, remoteAddress?: string, remotePort?: number): void;
+
+/**
+ * Stop the OSC server if running.
+ */
+declare function stopOSC(): void;
 /**
  * The recommended global for loading media files in the VS Code webview.
  * Example: loadSound(MEDIA_FOLDER + '/mysound.mp3')

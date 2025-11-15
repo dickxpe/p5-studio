@@ -147,6 +147,23 @@ window.sendOSC = function(address, args) {
     vscode.postMessage({ type: "oscSend", address, args: Array.isArray(args) ? args : [] });
   }
 };
+// --- OSC START/STOP API for user sketches ---
+window.startOSC = function(localAddress, localPort, remoteAddress, remotePort) {
+  if (typeof vscode !== "undefined") {
+    vscode.postMessage({
+      type: "startOSC",
+      localAddress: localAddress,
+      localPort: localPort,
+      remoteAddress: remoteAddress,
+      remotePort: remotePort
+    });
+  }
+};
+window.stopOSC = function() {
+  if (typeof vscode !== "undefined") {
+    vscode.postMessage({ type: "stopOSC" });
+  }
+};
 // Helper: normalize OSC args (supports osc.js metadata objects)
 // Example inputs: 42, [1,2], [{type:'i', value: 3}] -> returns plain JS values array
 window.oscArgsToArray = function(args) {

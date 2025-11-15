@@ -4,68 +4,78 @@ import { config as cfg } from '../config/index';
 
 export type OscArgs = Array<{ type: string; value?: any } | number | string | boolean>;
 export type BroadcastFn = (address: string, args: any[]) => void;
+export type OscConfig = {
+    localAddress: string;
+    remoteAddress: string;
+    localPort: number;
+    remotePort: number;
+};
 
 export interface OscServiceApi {
-    send: (address: string, args: any[]) => void;
-    reload: () => void;
-    dispose: () => void;
-    getConfig: () => { localAddress: string; remoteAddress: string; localPort: number; remotePort: number };
-    handleConfigChange: (e: vscode.ConfigurationChangeEvent) => void;
+    send(address: string, args: any[]): void;
+    reload(): void;
+    dispose(): void;
+    getConfig(): OscConfig;
+    handleConfigChange(e: vscode.ConfigurationChangeEvent): void;
 }
-
 let port: osc.UDPPort | null = null; // receiver
 let sendPort: osc.UDPPort | null = null; // sender
 let broadcast: BroadcastFn | null = null;
 let output: vscode.OutputChannel | null = null;
+let runningConfig: OscConfig | null = null;
 
-function getConfig() { return cfg.getOscConfig(); }
+function getConfig(): OscConfig {
+    // Return the actual running config (including overrides)
+    return runningConfig || cfg.getOscConfig();
+}
 
 function ensureOutput() {
     if (!output) output = vscode.window.createOutputChannel('LIVE P5: OSC');
     return output!;
 }
 
-function openPort() {
+function openPort(override?: { localAddress?: string; localPort?: number; remoteAddress?: string; remotePort?: number }) {
     // Close previous ports if any
     if (port) { try { port.close(); } catch { } port = null; }
     if (sendPort) { try { sendPort.close(); } catch { } sendPort = null; }
-    const cfg = getConfig();
-    // Receiver port
+    let baseCfg = cfg.getOscConfig();
+    let localAddress = (override && override.localAddress) ? override.localAddress : baseCfg.localAddress;
+    let localPort = (override && typeof override.localPort === 'number') ? override.localPort : baseCfg.localPort;
+    let remoteAddress = (override && override.remoteAddress) ? override.remoteAddress : baseCfg.remoteAddress;
+    let remotePort = (override && typeof override.remotePort === 'number') ? override.remotePort : baseCfg.remotePort;
+    runningConfig = { localAddress, localPort, remoteAddress, remotePort };
 
     const receiveOptions = {
         remoteAddress: "127.0.0.1", // required by osc.js
         remotePort: Math.floor(20000 + Math.random() * 40000), // random high port
-        localAddress: cfg.localAddress,
-        localPort: cfg.localPort,
+        localAddress,
+        localPort,
         metadata: true
     };
     port = new osc.UDPPort(receiveOptions);
 
     const sendOptions = {
-        remoteAddress: cfg.remoteAddress,
-        remotePort: cfg.remotePort,
+        remoteAddress,
+        remotePort,
         localAddress: "127.0.0.1", // required by osc.js
         localPort: Math.floor(20000 + Math.random() * 40000), // random high port
         metadata: true
     };
-    // Sender port (do not bind localAddress/localPort, just set remote)
     sendPort = new osc.UDPPort(sendOptions);
     const ch = ensureOutput();
-    ch.appendLine(`[DEBUG] Opening OSC receive port on ${cfg.localAddress}:${cfg.localPort}`);
-    ch.appendLine(`[DEBUG] Opening OSC send port to ${cfg.remoteAddress}:${cfg.remotePort}`);
+    ch.appendLine(`[DEBUG] Opening OSC receive port on ${localAddress}:${localPort}`);
+    ch.appendLine(`[DEBUG] Opening OSC send port to ${remoteAddress}:${remotePort}`);
     port.open();
     sendPort.open();
 
     port.on('ready', () => {
         try {
-            const c = getConfig();
-            ch.appendLine(`[${new Date().toLocaleTimeString()}] [OSC] Listening on ${c.localAddress}:${c.localPort}`);
+            ch.appendLine(`[${new Date().toLocaleTimeString()}] [OSC] Listening on ${localAddress}:${localPort}`);
         } catch { }
     });
     sendPort.on('ready', () => {
         try {
-            const c = getConfig();
-            ch.appendLine(`[${new Date().toLocaleTimeString()}] [OSC] Sending to ${c.remoteAddress}:${c.remotePort}`);
+            ch.appendLine(`[${new Date().toLocaleTimeString()}] [OSC] Sending to ${remoteAddress}:${remotePort}`);
         } catch { }
     });
     port.on('message', (msg: any) => {
@@ -105,9 +115,10 @@ function toPacket(address: string, args: any[]) {
     };
 }
 
-export function initOsc(bcast: BroadcastFn): OscServiceApi {
+// Accepts optional override: { localAddress, localPort, remoteAddress, remotePort }
+export function initOsc(bcast: BroadcastFn, override?: { localAddress?: string; localPort?: number; remoteAddress?: string; remotePort?: number }): OscServiceApi {
     broadcast = bcast;
-    openPort();
+    openPort(override);
 
     function send(address: string, args: any[]) {
         const ch = ensureOutput();
@@ -129,7 +140,10 @@ export function initOsc(bcast: BroadcastFn): OscServiceApi {
 
     function dispose() {
         try { if (port) port.close(); } catch { }
+        try { if (sendPort) sendPort.close(); } catch { }
         port = null;
+        sendPort = null;
+        runningConfig = null;
     }
 
     function handleConfigChange(e: vscode.ConfigurationChangeEvent) {

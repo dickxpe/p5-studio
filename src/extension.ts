@@ -14,7 +14,7 @@ import { createHtml } from './webview/createHtml';
 import { rewriteFrameCountRefs, wrapInSetupIfNeeded, formatSyntaxErrorMsg, stripLeadingTimestamp, hasOnlySetup, getHiddenGlobalsByDirective } from './processing/astHelpers';
 import { clearStepHighlight, applyStepHighlight } from './editors/stepHighlight';
 import { instrumentSetupForSingleStep } from './processing/instrumentation';
-import { initOsc, OscServiceApi } from './osc/oscService';
+import { OscServiceApi } from './osc/oscService';
 import { registerVariablesService, VariablesServiceApi } from './variables';
 import { registerBlockly, BlocklyApi } from './blockly/blocklyPanel';
 import { registerLinting, LintApi } from './lint';
@@ -100,37 +100,75 @@ export function activate(context: vscode.ExtensionContext) {
   };
 
   // --- OSC Status Bar Button ---
-  const oscStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
+  const oscStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
   oscStatusBar.command = 'P5Studio.toggleOscServer';
+  const cfg = require('./config/index');
+  const oscCfg = cfg.getOscConfig ? cfg.getOscConfig() : { localAddress: '127.0.0.1', localPort: 57121, remoteAddress: '127.0.0.1', remotePort: 57122 };
   oscStatusBar.text = '▶️ Start OSC';
-  oscStatusBar.tooltip = 'Start OSC server for p5-studio';
+  oscStatusBar.tooltip = `Start OSC server \nListen on: ${oscCfg.localAddress}:${oscCfg.localPort} \nSend to: ${oscCfg.remoteAddress}:${oscCfg.remotePort}`;
   oscStatusBar.color = '#307dc1';
   context.subscriptions.push(oscStatusBar);
   oscStatusBar.show();
 
   let oscRunning = false;
   function updateOscStatusBar() {
-    if (oscRunning) {
+    if (oscRunning && oscService && typeof oscService.getConfig === 'function') {
+      const runningCfg = oscService.getConfig();
+      // Prefer to show the actual address/port the server is bound to, including any custom overrides
+      // These fields always reflect the actual running values, including custom overrides
       oscStatusBar.text = '🛑 Stop OSC';
-      oscStatusBar.tooltip = 'Stop OSC server for p5-studio';
+      oscStatusBar.tooltip = `Server is running\nListening on: ${runningCfg.localAddress}:${runningCfg.localPort}\nSending to: ${runningCfg.remoteAddress}:${runningCfg.remotePort}`;
       oscStatusBar.color = '#00bfae';
     } else {
+      // Show what will be used from settings
+      const cfg = require('./config/index');
+      const oscCfg = cfg.getOscConfig ? cfg.getOscConfig() : { localAddress: '127.0.0.1', localPort: 57121, remoteAddress: '127.0.0.1', remotePort: 57122 };
       oscStatusBar.text = '▶️ Start OSC';
-      oscStatusBar.tooltip = 'Start OSC server for p5-studio';
+      oscStatusBar.tooltip = `Start OSC server\nListen on: ${oscCfg.localAddress}:${oscCfg.localPort}\nSend to: ${oscCfg.remoteAddress}:${oscCfg.remotePort}`;
       oscStatusBar.color = '#307dc1';
     }
   }
 
-  async function startOscServer() {
+  async function startOscServer(
+    localAddressOverride?: string,
+    localPortOverride?: number,
+    remoteAddressOverride?: string,
+    remotePortOverride?: number
+  ) {
     if (oscService) return;
-    // Get config (address/port) from settings
-    const cfg = require('./config/index');
-    const address = cfg.getOscAddress ? cfg.getOscAddress() : '127.0.0.1';
-    const port = cfg.getOscPort ? cfg.getOscPort() : 57120;
-    oscService = require('./osc/oscService').initOsc(broadcastOscToPanels, { address, port });
+    let usedConfig;
+    if (
+      typeof localAddressOverride === 'string' ||
+      typeof localPortOverride === 'number' ||
+      typeof remoteAddressOverride === 'string' ||
+      typeof remotePortOverride === 'number'
+    ) {
+      // At least one override provided: use explicit values (fallback to undefined for missing)
+      oscService = require('./osc/oscService').initOsc(broadcastOscToPanels, {
+        localAddress: localAddressOverride,
+        localPort: localPortOverride,
+        remoteAddress: remoteAddressOverride,
+        remotePort: remotePortOverride
+      });
+      usedConfig = {
+        localAddress: localAddressOverride,
+        localPort: localPortOverride,
+        remoteAddress: remoteAddressOverride,
+        remotePort: remotePortOverride
+      };
+    } else {
+      // No overrides: let oscService use its own config logic
+      oscService = require('./osc/oscService').initOsc(broadcastOscToPanels);
+      // For status message, get config from oscService after start
+      usedConfig = oscService && typeof oscService.getConfig === 'function' ? oscService.getConfig() : undefined;
+    }
     oscRunning = true;
     updateOscStatusBar();
-    vscode.window.setStatusBarMessage(`OSC server started on ${address}:${port}`, 2000);
+    if (usedConfig) {
+      vscode.window.setStatusBarMessage(`OSC server started on ${usedConfig.localAddress}:${usedConfig.localPort} → ${usedConfig.remoteAddress}:${usedConfig.remotePort}`, 2000);
+    } else {
+      vscode.window.setStatusBarMessage('OSC server started', 2000);
+    }
   }
 
   async function stopOscServer() {
@@ -919,6 +957,19 @@ export function activate(context: vscode.ExtensionContext) {
               getInitialCaptureVisible: (p) => getInitialCaptureVisible(p),
               getExtensionPath: () => context.extensionPath,
             });
+          }
+          else if (msg.type === 'startOSC') {
+            // Start OSC server, use args if provided (all four override params)
+            await startOscServer(
+              msg.localAddress,
+              msg.localPort,
+              msg.remoteAddress,
+              msg.remotePort
+            );
+            return;
+          } else if (msg.type === 'stopOSC') {
+            await stopOscServer();
+            return;
           }
           // --- HIGHLIGHT CURRENT LINE HANDLER ---
           else if (msg.type === 'highlightLine') {

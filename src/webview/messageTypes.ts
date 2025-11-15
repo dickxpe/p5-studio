@@ -15,6 +15,14 @@ export type WebviewToExtensionMessage =
     | { type: 'highlightLine'; line: number }
     | { type: 'clearHighlight' }
     | { type: 'oscSend'; address: string; args?: any[] }
+    | {
+        type: 'startOSC';
+        localAddress?: string;
+        localPort?: number;
+        remoteAddress?: string;
+        remotePort?: number;
+    }
+    | { type: 'stopOSC' }
     | { type: 'saveCanvasImage'; dataUrl: string; fileName?: string }
     | { type: 'copyCanvasImage'; dataUrl?: string }
     | { type: 'showInfo'; message: string };
