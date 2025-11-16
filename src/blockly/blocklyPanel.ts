@@ -720,17 +720,20 @@ export function registerBlockly(
             const mapping = blocklyLineMapForDocument.get(docUri);
             if (panel) { try { sendBlockly(panel, { type: 'clearBlocklyHighlight' }); } catch { } }
             if (panel && Array.isArray(mapping) && mapping.length > 0) {
-                const sorted = [...mapping].sort((a, b) => (a.line || 0) - (b.line || 0));
-                let entry = sorted.find(m => m && typeof m.line === 'number' && m.line === line);
-                if (!entry) {
-                    let idx = -1;
-                    for (let i = 0; i < sorted.length; i++) {
-                        if (sorted[i] && typeof sorted[i].line === 'number' && sorted[i].line <= line) idx = i; else break;
+                const sorted = [...mapping].filter(m => m && typeof m.line === 'number' && typeof m.blockId === 'string');
+                if (!sorted.length) return;
+                let closest = sorted[0];
+                let bestDiff = Math.abs((closest.line || 0) - line);
+                for (let i = 1; i < sorted.length; i++) {
+                    const candidate = sorted[i];
+                    const diff = Math.abs((candidate.line || 0) - line);
+                    if (diff < bestDiff || (diff === bestDiff && (candidate.line || 0) < (closest.line || 0))) {
+                        closest = candidate;
+                        bestDiff = diff;
                     }
-                    if (idx >= 0) entry = sorted[idx];
                 }
-                if (entry && entry.blockId) {
-                    sendBlockly(panel, { type: 'highlightBlocklyBlock', blockId: entry.blockId });
+                if (closest && closest.blockId) {
+                    sendBlockly(panel, { type: 'highlightBlocklyBlock', blockId: closest.blockId });
                 }
             }
         } catch { }
