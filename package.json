@@ -391,7 +391,7 @@
           "P5Studio.debug.ShowDebugButton": {
             "type": "boolean",
             "default": true,
-            "description": "BETA FEATURE: Show the Debug button in the P5 webview title bar. Allows step-wise execution of the sketch for debugging purposes. Doesnt work correctly yet for sketches without setup/draw",
+            "description": "BETA FEATURE: Show the Debug button in the P5 webview title bar. Allows step-wise execution of the sketch for debugging purposes. Doesnt work correctly yet for sketches without setup/draw and in more complex sketches",
             "order": 16
           },
         

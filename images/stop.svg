@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 128 128">
+  <!-- Generator: Adobe Illustrator 29.8.3, SVG Export Plug-In . SVG Version: 2.1.1 Build 3)  -->
+  <defs>
+    <style>
+      .st0 {
+        fill: #fff;
+      }
+
+      .st1 {
+        fill: #307dc1;
+      }
+    </style>
+  </defs>
+  <rect class="st1" x="14" y="14" width="100" height="100" rx="28.35" ry="28.35"/>
+  <rect class="st0" x="39.27" y="39.27" width="49.46" height="49.46" rx="10" ry="10"/>
+</svg>
