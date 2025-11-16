@@ -21,6 +21,8 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
         const b = recast.types.builders;
         const stepMap = buildStepMap(code);
         const normalizedOffset = typeof lineOffset === 'number' ? lineOffset : 0;
+        const topLevelBody: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
+        const hasSetupFunctionDecl = topLevelBody.some((n: any) => n && n.type === 'FunctionDeclaration' && n.id && n.id.name === 'setup');
 
         const getExecutableLoc = (node: any) => {
             if (!node) return null;
@@ -54,6 +56,30 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                 ]
             );
         };
+
+        // Build lookup of steps per phase for quick access.
+        const topSteps = stepMap.steps.filter(s => s.phase === 'top-level');
+        const setupSteps = stepMap.steps.filter(s => s.phase === 'setup');
+        const drawSteps = stepMap.steps.filter(s => s.phase === 'draw');
+
+        const markSetupDoneExpr = () => b.expressionStatement(
+            b.assignmentExpression('=',
+                b.memberExpression(b.identifier('window'), b.identifier('__liveP5SetupDone')),
+                b.literal(true)
+            )
+        );
+        const setFrameWaitExpr = (value: boolean) => b.expressionStatement(
+            b.assignmentExpression('=',
+                b.memberExpression(b.identifier('window'), b.identifier('__liveP5ShouldWaitForFrame')),
+                b.literal(value)
+            )
+        );
+        const setFrameInProgressExpr = (value: boolean) => b.expressionStatement(
+            b.assignmentExpression('=',
+                b.memberExpression(b.identifier('window'), b.identifier('__liveP5FrameInProgress')),
+                b.literal(value)
+            )
+        );
 
         // Controller helpers placed at top of program so both setup and draw can use them.
         const helpers: any[] = [];
@@ -170,9 +196,15 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                 )
             )
         ];
-        helpers.push(highlightDecl, clearDecl, waitDecl, advanceDecl, ...exposeHelpers);
-
-        const topLevelBody: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
+        const setupDoneInit = b.expressionStatement(
+            b.assignmentExpression('=',
+                b.memberExpression(b.identifier('window'), b.identifier('__liveP5SetupDone')),
+                hasSetupFunctionDecl ? b.literal(false) : b.literal(true)
+            )
+        );
+        const frameWaitInit = setFrameWaitExpr(true);
+        const frameInProgressInit = setFrameInProgressExpr(false);
+        helpers.push(highlightDecl, clearDecl, waitDecl, advanceDecl, setupDoneInit, frameWaitInit, frameInProgressInit, ...exposeHelpers);
 
         // Helper to create a highlight call from a StepTarget.
         const makeHighlightFromStep = (step: { loc: { line: number; column: number; endLine: number; endColumn: number } }) =>
@@ -192,11 +224,6 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                 b.awaitExpression(b.callExpression(b.identifier('__waitStep'), []))
             );
 
-        // Build lookup of steps per phase for quick access.
-        const topSteps = stepMap.steps.filter(s => s.phase === 'top-level');
-        const setupSteps = stepMap.steps.filter(s => s.phase === 'setup');
-        const drawSteps = stepMap.steps.filter(s => s.phase === 'draw');
-
         // Insert helpers at the very top of the program.
         (ast.program as any).body = [...helpers, ...topLevelBody];
 
@@ -210,6 +237,30 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                 }
                 node.async = true;
                 const phaseSteps = node.id.name === 'setup' ? setupSteps : drawSteps;
+
+                if (node.id.name === 'draw') {
+                    const setupGuard = b.ifStatement(
+                        b.unaryExpression('!', b.memberExpression(b.identifier('window'), b.identifier('__liveP5SetupDone'))),
+                        b.blockStatement([b.returnStatement(null)])
+                    );
+                    const inProgressGuard = b.ifStatement(
+                        b.memberExpression(b.identifier('window'), b.identifier('__liveP5FrameInProgress')),
+                        b.blockStatement([b.returnStatement(null)])
+                    );
+                    const frameWaitGuard = b.ifStatement(
+                        b.unaryExpression('!', b.memberExpression(b.identifier('window'), b.identifier('__liveP5ShouldWaitForFrame'))),
+                        b.blockStatement([
+                            setFrameWaitExpr(true)
+                        ]),
+                        b.blockStatement([
+                            b.expressionStatement(b.awaitExpression(b.callExpression(b.identifier('__waitStep'), []))),
+                            setFrameWaitExpr(true)
+                        ])
+                    );
+                    const startFrame = setFrameInProgressExpr(true);
+                    const existingBody = node.body && Array.isArray(node.body.body) ? node.body.body : [];
+                    node.body.body = [setupGuard, inProgressGuard, frameWaitGuard, startFrame, ...existingBody];
+                }
 
                 // For setup: emit top-level steps first, then setup body.
                 if (node.id.name === 'setup' && topSteps.length > 0 && !opts?.disableTopLevelPreSteps) {
@@ -237,11 +288,19 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                             if (lastStep && match.loc.line === lastStep.loc.line && match.loc.column === lastStep.loc.column) {
                                 // Last step: wait once more, then clear highlight automatically.
                                 result.push(makeAwaitStep());
+                                if (node.id.name === 'setup') {
+                                    result.push(markSetupDoneExpr());
+                                    result.push(setFrameWaitExpr(false));
+                                }
                                 result.push(
                                     b.expressionStatement(
                                         b.callExpression(b.identifier('__clearHighlight'), [])
                                     )
                                 );
+                                if (node.id.name === 'draw') {
+                                    result.push(setFrameWaitExpr(false));
+                                    result.push(setFrameInProgressExpr(false));
+                                }
                             } else {
                                 result.push(makeAwaitStep());
                             }
@@ -299,6 +358,13 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                 };
 
                 node.body.body = injectIntoStatements(node.body.body || []);
+                if (node.id.name === 'setup') {
+                    node.body.body.push(markSetupDoneExpr());
+                    node.body.body.push(setFrameWaitExpr(false));
+                } else if (node.id.name === 'draw') {
+                    node.body.body.push(setFrameWaitExpr(false));
+                    node.body.body.push(setFrameInProgressExpr(false));
+                }
                 return false;
             }
         });
