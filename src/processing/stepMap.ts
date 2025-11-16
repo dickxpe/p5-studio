@@ -15,6 +15,7 @@ export interface StepTarget {
     loc: StepLoc;
     // For function steps, name of the function
     functionName?: string;
+    nodeType: string;
 }
 
 export interface StepMap {
@@ -36,9 +37,32 @@ export function buildStepMap(code: string): StepMap {
 
         let id = 1;
 
+        const getExecutableLoc = (node: any) => {
+            if (!node) return null;
+            switch (node.type) {
+                case 'ExpressionStatement':
+                    if (node.expression && node.expression.loc) return node.expression.loc;
+                    break;
+                case 'VariableDeclaration': {
+                    const withLoc = (node.declarations || []).find((d: any) => (d && d.init && d.init.loc) || (d && d.id && d.id.loc));
+                    if (withLoc) {
+                        if (withLoc.init && withLoc.init.loc) return withLoc.init.loc;
+                        if (withLoc.id && withLoc.id.loc) return withLoc.id.loc;
+                    }
+                    break;
+                }
+                case 'ReturnStatement':
+                case 'ThrowStatement':
+                    if (node.argument && node.argument.loc) return node.argument.loc;
+                    break;
+            }
+            return node.loc || null;
+        };
+
         const pushStep = (phase: StepPhase, node: any, functionName?: string) => {
-            if (!node || !node.loc) return;
-            const loc = node.loc;
+            if (!node) return;
+            const loc = getExecutableLoc(node);
+            if (!loc) return;
             const start = loc.start || { line: 1, column: 0 };
             const end = loc.end || start;
             steps.push({
@@ -51,6 +75,7 @@ export function buildStepMap(code: string): StepMap {
                     endColumn: end.column + 1,
                 },
                 functionName,
+                nodeType: node.type || 'Unknown',
             });
         };
 

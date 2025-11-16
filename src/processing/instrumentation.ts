@@ -11,15 +11,49 @@ export function instrumentSetupWithDelays(code: string, _delayMs: number): strin
 // the webview drives stepping with `step-advance` messages.
 export function instrumentSetupForSingleStep(code: string, lineOffset: number, opts?: { disableTopLevelPreSteps?: boolean }): string {
     try {
-        const acorn = require('acorn');
+        const acornParser = require('recast/parsers/acorn');
         const ast = recast.parse(code, {
             parser: {
-                parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script', locations: true })
+                parse: (src: string) => acornParser.parse(src, { ecmaVersion: 2020, sourceType: 'script', locations: true })
             }
         });
 
         const b = recast.types.builders;
         const stepMap = buildStepMap(code);
+        const normalizedOffset = typeof lineOffset === 'number' ? lineOffset : 0;
+
+        const getExecutableLoc = (node: any) => {
+            if (!node) return null;
+            switch (node.type) {
+                case 'ExpressionStatement':
+                    if (node.expression && node.expression.loc) return node.expression.loc;
+                    break;
+                case 'VariableDeclaration': {
+                    const withLoc = (node.declarations || []).find((d: any) => (d && d.init && d.init.loc) || (d && d.id && d.id.loc));
+                    if (withLoc) {
+                        if (withLoc.init && withLoc.init.loc) return withLoc.init.loc;
+                        if (withLoc.id && withLoc.id.loc) return withLoc.id.loc;
+                    }
+                    break;
+                }
+                case 'ReturnStatement':
+                case 'ThrowStatement':
+                    if (node.argument && node.argument.loc) return node.argument.loc;
+                    break;
+            }
+            return node.loc || null;
+        };
+
+        const toDocumentLine = (identifier: string) => {
+            if (!normalizedOffset) return b.identifier(identifier);
+            return b.callExpression(
+                b.memberExpression(b.identifier('Math'), b.identifier('max')),
+                [
+                    b.binaryExpression('-', b.identifier(identifier), b.literal(normalizedOffset)),
+                    b.literal(1)
+                ]
+            );
+        };
 
         // Controller helpers placed at top of program so both setup and draw can use them.
         const helpers: any[] = [];
@@ -36,16 +70,15 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                                         b.memberExpression(b.identifier('vscode'), b.identifier('postMessage')),
                                         [b.objectExpression([
                                             b.property('init', b.identifier('type'), b.literal('highlightLine')),
-                                            b.property('init', b.identifier('line'), b.binaryExpression('-', b.identifier('l'), b.literal(lineOffset || 0))),
+                                            b.property('init', b.identifier('line'), toDocumentLine('l')),
                                             b.property('init', b.identifier('column'), b.identifier('c')),
-                                            b.property('init', b.identifier('endLine'), b.identifier('el')),
+                                            b.property('init', b.identifier('endLine'), toDocumentLine('el')),
                                             b.property('init', b.identifier('endColumn'), b.identifier('ec'))
                                         ])]
                                     )
                                 )
                             ]),
-                            b.catchClause(b.identifier('_'), null, b.blockStatement([])),
-                            null
+                            b.catchClause(b.identifier('_'), null, b.blockStatement([]))
                         )
                     ])
                 )
@@ -66,8 +99,7 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                                     )
                                 )
                             ]),
-                            b.catchClause(b.identifier('_'), null, b.blockStatement([])),
-                            null
+                            b.catchClause(b.identifier('_'), null, b.blockStatement([]))
                         )
                     ])
                 )
@@ -197,7 +229,8 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                     const result: any[] = [];
                     for (const stmt of stmts) {
                         if (!stmt) continue;
-                        const loc = stmt.loc && stmt.loc.start ? stmt.loc.start : null;
+                        const execLoc = getExecutableLoc(stmt);
+                        const loc = execLoc && execLoc.start ? execLoc.start : null;
                         const match = loc ? phaseSteps.find(s => s.loc.line === loc.line && s.loc.column - 1 === loc.column) : undefined;
                         if (match) {
                             result.push(makeHighlightFromStep(match));
@@ -218,9 +251,7 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                         switch (stmt.type) {
                             case 'IfStatement': {
                                 if (stmt.consequent) {
-                                    const bodyNodes = stmt.consequent.body && Array.isArray(stmt.consequent.body)
-                                        ? stmt.consequent.body
-                                        : [stmt.consequent];
+                                    const bodyNodes = (stmt.consequent.body && Array.isArray(stmt.consequent.body)) ? stmt.consequent.body : [stmt.consequent];
                                     stmt.consequent.body = injectIntoStatements(bodyNodes);
                                 }
                                 if (stmt.alternate) {
@@ -245,9 +276,7 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                             case 'WhileStatement':
                             case 'DoWhileStatement': {
                                 if (stmt.body) {
-                                    const bodyNodes = stmt.body.body && Array.isArray(stmt.body.body)
-                                        ? stmt.body.body
-                                        : [stmt.body];
+                                    const bodyNodes = (stmt.body.body && Array.isArray(stmt.body.body)) ? stmt.body.body : [stmt.body];
                                     const injectedBody = injectIntoStatements(bodyNodes);
                                     if (Array.isArray(stmt.body.body)) stmt.body.body = injectedBody;
                                     else stmt.body = injectedBody[0] || stmt.body;

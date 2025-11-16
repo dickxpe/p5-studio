@@ -1,5 +1,53 @@
 import * as vscode from 'vscode';
 import { config as cfg } from '../../config';
+import { buildStepMap } from '../../processing/stepMap';
+
+function findFirstExecutableLine(code: string): number | null {
+  try {
+    const acorn = require('acorn');
+    const ast = acorn.parse(code, { ecmaVersion: 2020, sourceType: 'script', locations: true });
+    const body: any[] = Array.isArray((ast as any).body) ? (ast as any).body : [];
+    for (const stmt of body) {
+      if (!stmt || !stmt.loc) continue;
+      switch (stmt.type) {
+        case 'EmptyStatement':
+        case 'VariableDeclaration':
+        case 'FunctionDeclaration':
+        case 'ClassDeclaration':
+        case 'ImportDeclaration':
+        case 'ExportNamedDeclaration':
+        case 'ExportDefaultDeclaration':
+        case 'ExportAllDeclaration':
+          continue;
+        default: {
+          if (stmt.type === 'ExpressionStatement' && stmt.expression && stmt.expression.type === 'Literal') {
+            // Skip directive prologues such as 'use strict'.
+            continue;
+          }
+          return stmt.loc.start ? stmt.loc.start.line : null;
+        }
+      }
+    }
+  } catch {
+    // ignore parse failures and fall back to default offset
+  }
+  return null;
+}
+
+function computeLineOffset(rawCode: string, wrappedCode: string, didWrap: boolean): number {
+  if (!didWrap) return 0;
+  try {
+    const firstExecutable = findFirstExecutableLine(rawCode);
+    const stepMap = buildStepMap(wrappedCode);
+    const firstSetupStep = stepMap.steps.find(s => s.phase === 'setup');
+    if (typeof firstExecutable === 'number' && firstSetupStep && typeof firstSetupStep.loc?.line === 'number') {
+      return firstSetupStep.loc.line - firstExecutable;
+    }
+  } catch {
+    // fall back below
+  }
+  return 1;
+}
 
 export async function handleStepRunClicked(
   params: { panel: vscode.WebviewPanel; editor: vscode.TextEditor },
@@ -110,10 +158,10 @@ export async function handleStepRunClicked(
   }
 
   let wrapped = deps.wrapInSetupIfNeeded(codeForRun);
-  wrapped = deps.rewriteFrameCountRefs(wrapped);
   const didWrap = wrapped !== codeForRun;
+  wrapped = deps.rewriteFrameCountRefs(wrapped);
   const preGlobals = deps.extractGlobalVariables(wrapped);
-  const lineOffsetTotal = (didWrap ? 1 : 0);
+  const lineOffsetTotal = computeLineOffset(codeForRun, wrapped, didWrap);
   let instrumented = deps.instrumentSetupForSingleStep(wrapped, lineOffsetTotal, { disableTopLevelPreSteps: didWrap });
   try {
     const ch = deps.getOrCreateOutputChannel(docUri, fileName);
@@ -251,10 +299,10 @@ export async function handleSingleStepClicked(
   }
 
   let wrapped = deps.wrapInSetupIfNeeded(codeForRun);
-  wrapped = deps.rewriteFrameCountRefs(wrapped);
   const didWrap = wrapped !== codeForRun;
+  wrapped = deps.rewriteFrameCountRefs(wrapped);
   const preGlobals = deps.extractGlobalVariables(wrapped);
-  const lineOffsetTotal = (didWrap ? 1 : 0);
+  const lineOffsetTotal = computeLineOffset(codeForRun, wrapped, didWrap);
   let instrumented = deps.instrumentSetupForSingleStep(wrapped, lineOffsetTotal, { disableTopLevelPreSteps: didWrap });
   const globals = preGlobals;
   let rewrittenCode = deps.rewriteUserCodeWithWindowGlobals(instrumented, globals);

@@ -2,9 +2,9 @@ import * as recast from 'recast';
 
 export function rewriteFrameCountRefs(code: string): string {
     try {
-        const acorn = require('acorn');
+        const acornParser = require('recast/parsers/acorn');
         const ast = recast.parse(code, {
-            parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) }
+            parser: { parse: (src: string) => acornParser.parse(src, { ecmaVersion: 2020, sourceType: 'script', locations: true }) }
         });
         const b = recast.types.builders;
 
@@ -62,8 +62,8 @@ export function wrapInSetupIfNeeded(code: string): string {
     const hasSetup = /\bfunction\s+setup\s*\(/.test(code);
     if (hasSetup) return code;
     try {
-        const acorn = require('acorn');
-        const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
+        const acornParser = require('recast/parsers/acorn');
+        const ast = recast.parse(code, { parser: { parse: (src: string) => acornParser.parse(src, { ecmaVersion: 2020, sourceType: 'script', locations: true }) } });
         const b = recast.types.builders;
         const body: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
         const moved: any[] = [];
@@ -148,8 +148,8 @@ export function stripLeadingTimestamp(msg: string): string {
 
 export function hasOnlySetup(code: string): boolean {
     try {
-        const acorn = require('acorn');
-        const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
+        const acornParser = require('recast/parsers/acorn');
+        const ast = recast.parse(code, { parser: { parse: (src: string) => acornParser.parse(src, { ecmaVersion: 2020, sourceType: 'script', locations: true }) } });
         if (!ast.program || !Array.isArray(ast.program.body)) return false;
         let hasSetup = false;
         for (const node of ast.program.body as any[]) {
