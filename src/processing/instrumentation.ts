@@ -61,6 +61,16 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
         const topSteps = stepMap.steps.filter(s => s.phase === 'top-level');
         const setupSteps = stepMap.steps.filter(s => s.phase === 'setup');
         const drawSteps = stepMap.steps.filter(s => s.phase === 'draw');
+        const functionStepsByName = new Map<string, any[]>();
+        for (const step of stepMap.steps) {
+            if (step.phase === 'function' && step.functionName) {
+                if (!functionStepsByName.has(step.functionName)) {
+                    functionStepsByName.set(step.functionName, []);
+                }
+                functionStepsByName.get(step.functionName)!.push(step);
+            }
+        }
+        const asyncFunctionNames = new Set(Array.from(functionStepsByName.keys()));
 
         const markSetupDoneExpr = () => b.expressionStatement(
             b.assignmentExpression('=',
@@ -227,16 +237,19 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
         // Insert helpers at the very top of the program.
         (ast.program as any).body = [...helpers, ...topLevelBody];
 
-        // Instrument setup/draw bodies to emit highlight/wait in the order given by the map.
+        // Instrument setup/draw/custom bodies to emit highlight/wait in the order given by the map.
         recast.types.visit(ast, {
             visitFunctionDeclaration(path) {
                 const node: any = path.value;
-                if (!node || !node.id || (node.id.name !== 'setup' && node.id.name !== 'draw')) {
+                if (!node || !node.id || (node.id.name !== 'setup' && node.id.name !== 'draw' && !asyncFunctionNames.has(node.id.name))) {
                     this.traverse(path);
                     return;
                 }
                 node.async = true;
-                const phaseSteps = node.id.name === 'setup' ? setupSteps : drawSteps;
+                let phaseSteps: any[];
+                if (node.id.name === 'setup') phaseSteps = setupSteps;
+                else if (node.id.name === 'draw') phaseSteps = drawSteps;
+                else phaseSteps = functionStepsByName.get(node.id.name) || [];
 
                 if (node.id.name === 'draw') {
                     const setupGuard = b.ifStatement(
@@ -280,6 +293,31 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                     const result: any[] = [];
                     for (const stmt of stmts) {
                         if (!stmt) continue;
+                        const postActions: any[] = [];
+
+                        if (asyncFunctionNames.size > 0) {
+                            if (stmt.type === 'ExpressionStatement' && stmt.expression) {
+                                if (stmt.expression.type === 'CallExpression') {
+                                    const cal = stmt.expression.callee;
+                                    if (cal && cal.type === 'Identifier' && asyncFunctionNames.has(cal.name)) {
+                                        const originalCall = stmt.expression;
+                                        const awaited = b.awaitExpression(originalCall);
+                                        awaited.loc = originalCall.loc;
+                                        stmt.expression = awaited;
+                                    }
+                                }
+                            } else if (stmt.type === 'ReturnStatement' && stmt.argument) {
+                                if (stmt.argument.type === 'CallExpression') {
+                                    const cal = stmt.argument.callee;
+                                    if (cal && cal.type === 'Identifier' && asyncFunctionNames.has(cal.name)) {
+                                        const originalReturnCall = stmt.argument;
+                                        const awaitedReturn = b.awaitExpression(originalReturnCall);
+                                        awaitedReturn.loc = originalReturnCall.loc;
+                                        stmt.argument = awaitedReturn;
+                                    }
+                                }
+                            }
+                        }
                         const execLoc = getExecutableLoc(stmt);
                         const loc = execLoc && execLoc.start ? execLoc.start : null;
                         const match = loc ? phaseSteps.find(s => s.loc.line === loc.line && s.loc.column - 1 === loc.column) : undefined;
@@ -289,8 +327,8 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                                 // Last step: wait once more, then clear highlight automatically.
                                 result.push(makeAwaitStep());
                                 if (node.id.name === 'setup') {
-                                    result.push(markSetupDoneExpr());
-                                    result.push(setFrameWaitExpr(false));
+                                    postActions.push(markSetupDoneExpr());
+                                    postActions.push(setFrameWaitExpr(false));
                                 }
                                 result.push(
                                     b.expressionStatement(
@@ -298,8 +336,8 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                                     )
                                 );
                                 if (node.id.name === 'draw') {
-                                    result.push(setFrameWaitExpr(false));
-                                    result.push(setFrameInProgressExpr(false));
+                                    postActions.push(setFrameWaitExpr(false));
+                                    postActions.push(setFrameInProgressExpr(false));
                                 }
                             } else {
                                 result.push(makeAwaitStep());
@@ -352,6 +390,10 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                             }
                             default:
                                 result.push(stmt);
+                        }
+
+                        if (postActions.length > 0) {
+                            result.push(...postActions);
                         }
                     }
                     return result;
