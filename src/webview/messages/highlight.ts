@@ -18,7 +18,7 @@ export function handleHighlightLine(
     ed = vscode.window.activeTextEditor;
   }
   if (ed && ed.document) {
-    console.log(`[handleHighlightLine] Highlighting line: ${line}`);
+    //console.log(`[handleHighlightLine] Highlighting line: ${line}`);
     deps.applyStepHighlight(ed, line);
     try {
       if ((panel as any)._autoStepMode && deps.hasBreakpointOnLine(docUri, line)) {
@@ -51,6 +51,7 @@ export async function handleClearHighlight(
     getOrCreateOutputChannel: (docUri: string, fileName: string) => vscode.OutputChannel;
     setDebugPrimedFalse: (docUri: string) => void;
     setPrimedContextFalse: () => void | Thenable<any>;
+    setSteppingActive: (docUri: string, value: boolean) => void;
   }
 ) {
   const { panel, editor, final: finalFromMsg } = params;
@@ -77,6 +78,7 @@ export async function handleClearHighlight(
       const ch = deps.getOrCreateOutputChannel(docUri, fileName);
       ch.appendLine(`${deps.getTime()} [▶️INFO] Code stepping finished.`);
       (panel as any)._steppingActive = false;
+      try { deps.setSteppingActive(docUri, false); } catch { }
       deps.setDebugPrimedFalse(docUri);
       try { await deps.setPrimedContextFalse(); } catch { }
     }

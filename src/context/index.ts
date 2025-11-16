@@ -14,12 +14,15 @@ export type ContextServiceApi = {
   getDebugPrimed: (docUri: string) => boolean;
   setCaptureVisible: (docUri: string, value: boolean) => void;
   getCaptureVisible: (docUri: string) => boolean;
+  setSteppingActive: (docUri: string, value: boolean) => void;
+  getSteppingActive: (docUri: string) => boolean;
   clearForDoc: (docUri: string) => void;
   getInitialCaptureVisible: (panel: vscode.WebviewPanel) => boolean;
 };
 
 const debugPrimedMap = new Map<string, boolean>();
 const captureVisibleMap = new Map<string, boolean>();
+const steppingActiveMap = new Map<string, boolean>();
 
 export function registerContextService(
   context: vscode.ExtensionContext,
@@ -57,12 +60,15 @@ export function registerContextService(
       const uri = getDocUriForActivePanel();
       const primed = uri ? !!debugPrimedMap.get(uri.toString()) : false;
       const cap = uri ? !!captureVisibleMap.get(uri.toString()) : false;
+      const stepping = uri ? !!steppingActiveMap.get(uri.toString()) : false;
       setContext('p5DebugPrimed', primed);
       setContext('p5CaptureVisible', cap);
+      setContext('p5SteppingActive', stepping);
       deps.updateVariablesPanel();
     } else {
       setContext('p5DebugPrimed', false);
       setContext('p5CaptureVisible', false);
+      setContext('p5SteppingActive', false);
       deps.updateVariablesPanel();
     }
   }
@@ -81,7 +87,17 @@ export function registerContextService(
     getDebugPrimed: (docUri: string) => { try { return !!debugPrimedMap.get(docUri); } catch { return false; } },
     setCaptureVisible: (docUri: string, value: boolean) => { try { captureVisibleMap.set(docUri, !!value); } catch { } },
     getCaptureVisible: (docUri: string) => { try { return !!captureVisibleMap.get(docUri); } catch { return false; } },
-    clearForDoc: (docUri: string) => { try { debugPrimedMap.delete(docUri); captureVisibleMap.delete(docUri); } catch { } },
+    setSteppingActive: (docUri: string, value: boolean) => {
+      try { steppingActiveMap.set(docUri, !!value); } catch { }
+      try {
+        const activeUri = getDocUriForActivePanel();
+        if (activeUri && activeUri.toString() === docUri) {
+          setContext('p5SteppingActive', !!value);
+        }
+      } catch { }
+    },
+    getSteppingActive: (docUri: string) => { try { return !!steppingActiveMap.get(docUri); } catch { return false; } },
+    clearForDoc: (docUri: string) => { try { debugPrimedMap.delete(docUri); captureVisibleMap.delete(docUri); steppingActiveMap.delete(docUri); } catch { } },
     getInitialCaptureVisible: (panel: vscode.WebviewPanel): boolean => {
       try {
         const uri = deps.getDocUriForPanel(panel);

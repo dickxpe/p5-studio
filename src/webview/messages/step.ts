@@ -83,6 +83,7 @@ export async function handleStepRunClicked(
     getExtensionPath: () => string;
     getAllowInteractiveTopInputs: () => boolean;
     setAllowInteractiveTopInputs: (v: boolean) => void;
+    setSteppingActive?: (docUri: string, value: boolean) => void;
   }
 ) {
   const { panel, editor } = params;
@@ -100,6 +101,7 @@ export async function handleStepRunClicked(
     if ((panel as any)._autoStepTimer) { try { clearInterval((panel as any)._autoStepTimer); } catch { } (panel as any)._autoStepTimer = null; }
     (panel as any)._autoStepMode = true;
     (panel as any)._autoStepTimer = setInterval(() => { try { panel.webview.postMessage({ type: 'step-advance' }); } catch { } }, delayMs);
+    try { deps.setSteppingActive?.(docUri, true); } catch { }
     return;
   }
 
@@ -181,6 +183,7 @@ export async function handleStepRunClicked(
     const readOnly = deps.hasOnlySetup(editor.document.getText());
     panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
     (panel as any)._steppingActive = true;
+    try { deps.setSteppingActive?.(docUri, true); } catch { }
     if ((panel as any)._autoStepTimer) { try { clearInterval((panel as any)._autoStepTimer); } catch { } (panel as any)._autoStepTimer = null; }
     (panel as any)._autoStepMode = true;
     (panel as any)._autoStepTimer = setInterval(() => { try { panel.webview.postMessage({ type: 'step-advance' }); } catch { } }, delayMs);
@@ -224,6 +227,7 @@ export async function handleSingleStepClicked(
     createHtml: (code: string, panel: vscode.WebviewPanel, extensionPath: string, opts?: { allowInteractiveTopInputs?: boolean; initialCaptureVisible?: boolean }) => Promise<string>;
     getInitialCaptureVisible: (panel: vscode.WebviewPanel) => boolean;
     getExtensionPath: () => string;
+    setSteppingActive?: (docUri: string, value: boolean) => void;
   }
 ) {
   const { panel, editor } = params;
@@ -243,6 +247,7 @@ export async function handleSingleStepClicked(
     if (wasAutoStepMode) {
       try { const ch = deps.getOrCreateOutputChannel(docUri, fileName); ch.appendLine(`${deps.getTime()} [⏯️INFO] Switched to SINGLE-STEP, click again to step trough statements.`); } catch { }
     }
+    try { deps.setSteppingActive?.(docUri, true); } catch { }
     panel.webview.postMessage({ type: 'step-advance' });
     return;
   }
@@ -319,6 +324,7 @@ export async function handleSingleStepClicked(
       const readOnly = deps.hasOnlySetup(editor.document.getText());
       panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
       (panel as any)._steppingActive = true;
+      try { deps.setSteppingActive?.(docUri, true); } catch { }
     }, 200);
   } else {
     panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: false });
@@ -330,6 +336,7 @@ export async function handleSingleStepClicked(
       const readOnly = deps.hasOnlySetup(editor.document.getText());
       panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
       (panel as any)._steppingActive = true;
+      try { deps.setSteppingActive?.(docUri, true); } catch { }
     }, 200);
   }
 }

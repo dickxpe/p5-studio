@@ -158,6 +158,15 @@
           "category": "P5 Studio"
         },
         {
+          "command": "P5Studio.stopStepping",
+          "title": "Stop Stepping",
+          "icon": {
+            "light": "images/stop.svg",
+            "dark": "images/stop.svg"
+          },
+          "category": "P5 Studio"
+        },
+        {
           "command": "P5Studio.debugPrime",
           "title": "Debug",
           "icon": {
@@ -215,7 +224,12 @@
         {
           "command": "P5Studio.reloadWebpanel",
           "group": "navigation",
-          "when": "p5WebviewTabFocused"
+          "when": "p5WebviewTabFocused && !p5SteppingActive"
+        },
+        {
+          "command": "P5Studio.stopStepping",
+          "group": "navigation",
+          "when": "p5WebviewTabFocused && p5SteppingActive"
         },
         {
           "command": "P5Studio.debugPrime",

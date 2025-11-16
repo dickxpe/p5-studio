@@ -221,6 +221,23 @@ export function activate(context: vscode.ExtensionContext) {
   async function invokeReload(panel: vscode.WebviewPanel) {
     try { sendToWebview(panel, { type: 'invokeReload' }); } catch { }
   }
+
+  async function performPanelReload(panel: vscode.WebviewPanel) {
+    const uri = getDocUriForPanel(panel);
+    const uriStr = uri ? uri.toString() : undefined;
+    if (uriStr) {
+      try { contextService.setDebugPrimed(uriStr, false); } catch { }
+      try { contextService.setContext('p5DebugPrimed', false); } catch { }
+      try { contextService.setSteppingActive(uriStr, false); } catch { }
+    }
+    try { (panel as any)._steppingActive = false; } catch { }
+    if ((panel as any)._autoStepTimer) {
+      try { clearInterval((panel as any)._autoStepTimer); } catch { }
+      (panel as any)._autoStepTimer = null;
+    }
+    (panel as any)._autoStepMode = false;
+    await invokeReload(panel);
+  }
   async function toggleCapture(panel: vscode.WebviewPanel) {
     sendToWebview(panel, { type: 'toggleCaptureVisibility' });
   }
@@ -273,15 +290,13 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.commands.registerCommand('P5Studio.reloadWebpanel', async () => {
     const panel = getActiveP5Panel();
     if (!panel) return;
-    // Reset primed state on reload for the active panel
-    try {
-      const uri = getDocUriForPanel(panel);
-      if (uri) {
-        contextService.setDebugPrimed(uri.toString(), false);
-        contextService.setContext('p5DebugPrimed', false);
-      }
-    } catch { }
-    await invokeReload(panel);
+    await performPanelReload(panel);
+  }));
+
+  context.subscriptions.push(vscode.commands.registerCommand('P5Studio.stopStepping', async () => {
+    const panel = getActiveP5Panel();
+    if (!panel) return;
+    await performPanelReload(panel);
   }));
   registerClearHighlightCommand(context);
 
@@ -808,12 +823,14 @@ export function activate(context: vscode.ExtensionContext) {
         // Initialize primed state for this sketch
         contextService.setDebugPrimed(docUri, false);
         panel.onDidDispose(() => {
+          try { contextService.setSteppingActive(docUri, false); } catch { }
           contextService.clearForDoc(docUri);
           try { variablesService.clearForDoc(docUri); } catch { }
           try { disposeOutputForDoc(docUri); } catch { }
           if (activeP5Panel === panel) {
             vscode.commands.executeCommand('setContext', 'p5DebugPrimed', false);
             vscode.commands.executeCommand('setContext', 'p5CaptureVisible', false);
+            vscode.commands.executeCommand('setContext', 'p5SteppingActive', false);
             // If the disposed panel was active, refresh VARIABLES panel to reflect no active sketch
             updateVariablesPanel();
           }
@@ -906,10 +923,12 @@ export function activate(context: vscode.ExtensionContext) {
               rewriteUserCodeWithWindowGlobals,
               getHiddenGlobalsByDirective,
               hasOnlySetup,
+              setSteppingActive: (docUri: string, active: boolean) => { try { contextService.setSteppingActive(docUri, active); } catch { } },
             });
           }
           // --- STEP RUN HANDLER (merged with single-step instrumentation + auto-advance) ---
           else if (msg.type === 'step-run-clicked') {
+            try { contextService.setSteppingActive(docUri, true); } catch { }
             await handleStepRunClicked({ panel, editor }, {
               getTime,
               getOrCreateOutputChannel,
@@ -931,10 +950,19 @@ export function activate(context: vscode.ExtensionContext) {
               getExtensionPath: () => context.extensionPath,
               getAllowInteractiveTopInputs: () => _allowInteractiveTopInputs,
               setAllowInteractiveTopInputs: (v: boolean) => { _allowInteractiveTopInputs = v; },
+              setSteppingActive: (docUri: string, active: boolean) => { try { contextService.setSteppingActive(docUri, active); } catch { } },
             });
+            setTimeout(() => {
+              try {
+                if (!(panel as any)._steppingActive) {
+                  contextService.setSteppingActive(docUri, false);
+                }
+              } catch { }
+            }, 400);
           }
           // --- SINGLE STEP HANDLER ---
           else if (msg.type === 'single-step-clicked') {
+            try { contextService.setSteppingActive(docUri, true); } catch { }
             await handleSingleStepClicked({ panel, editor }, {
               getTime,
               getOrCreateOutputChannel,
@@ -954,7 +982,15 @@ export function activate(context: vscode.ExtensionContext) {
               createHtml: (code: string, p: vscode.WebviewPanel, extPath: string, opts?: any) => createHtml(code, p, extPath, { ...(opts || {}), p5Version: (p as any)._p5Version }),
               getInitialCaptureVisible: (p) => getInitialCaptureVisible(p),
               getExtensionPath: () => context.extensionPath,
+              setSteppingActive: (docUri: string, active: boolean) => { try { contextService.setSteppingActive(docUri, active); } catch { } },
             });
+            setTimeout(() => {
+              try {
+                if (!(panel as any)._steppingActive) {
+                  contextService.setSteppingActive(docUri, false);
+                }
+              } catch { }
+            }, 400);
           }
           else if (msg.type === 'startOSC') {
             // Start OSC server, use args if provided (all four override params)
@@ -988,6 +1024,7 @@ export function activate(context: vscode.ExtensionContext) {
               getOrCreateOutputChannel,
               setDebugPrimedFalse: (docUri: string) => { try { contextService.setDebugPrimed(docUri, false); } catch { } },
               setPrimedContextFalse: () => contextService.setContext('p5DebugPrimed', false),
+              setSteppingActive: (docUri: string, active: boolean) => { try { contextService.setSteppingActive(docUri, active); } catch { } },
             });
           }
           // --- OSC SEND HANDLER ---
@@ -1028,6 +1065,7 @@ export function activate(context: vscode.ExtensionContext) {
           // Also clear any Blockly block highlight for this document when the LIVE P5 panel closes
           try { blocklyApi.clearHighlight(docUri); } catch { }
           (panel as any)._steppingActive = false;
+          try { contextService.setSteppingActive(docUri, false); } catch { }
           // Stop auto-step timer if running
           if ((panel as any)._autoStepTimer) {
             try { clearInterval((panel as any)._autoStepTimer); } catch { }

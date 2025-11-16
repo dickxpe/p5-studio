@@ -39,13 +39,14 @@ export async function handleReloadClicked(
     rewriteUserCodeWithWindowGlobals: (code: string, globals: Array<{ name: string; value?: any }>) => string;
     getHiddenGlobalsByDirective: (code: string) => Set<string>;
     hasOnlySetup: (code: string) => boolean;
+    setSteppingActive?: (docUri: string, value: boolean) => void;
   }
 ) {
   const { panel, editor } = params;
+  const docUri = editor.document.uri.toString();
+  const fileName = require('path').basename(editor.document.fileName);
   // Log reload action to output channel
   try {
-    const docUri = editor.document.uri.toString();
-    const fileName = require('path').basename(editor.document.fileName);
     const ch = deps.getOrCreateOutputChannel(docUri, fileName);
     ch.appendLine(`${deps.getTime()} [🔄INFO] Reload`);
   } catch { /* ignore */ }
@@ -54,14 +55,13 @@ export async function handleReloadClicked(
   try { deps.clearStepHighlight(editor); } catch { }
   try { deps.blocklyClearHighlight(editor.document.uri.toString()); } catch { }
   (panel as any)._steppingActive = false;
+  try { deps.setSteppingActive?.(docUri, false); } catch { }
   if ((panel as any)._autoStepTimer) {
     try { clearInterval((panel as any)._autoStepTimer); } catch { }
     (panel as any)._autoStepTimer = null;
   }
   (panel as any)._autoStepMode = false;
 
-  const docUri = editor.document.uri.toString();
-  const fileName = require('path').basename(editor.document.fileName);
   const rawCode = editor.document.getText();
   const drawRegex = /\bfunction\s+draw\s*\(/;
 

@@ -7,7 +7,11 @@ export function registerDebugCommands(
     getDocUriForPanel: (panel: vscode.WebviewPanel) => vscode.Uri | undefined;
     invokeStepRun: (panel: vscode.WebviewPanel, editor: vscode.TextEditor) => Promise<void>;
     invokeSingleStep: (panel: vscode.WebviewPanel, editor: vscode.TextEditor) => Promise<void>;
-    contextService: { setDebugPrimed: (docUri: string, value: boolean) => void; setContext: (k: string, v: any) => Thenable<unknown> };
+    contextService: {
+      setDebugPrimed: (docUri: string, value: boolean) => void;
+      setContext: (k: string, v: any) => Thenable<unknown>;
+      setSteppingActive: (docUri: string, value: boolean) => void;
+    };
   }
 ) {
   context.subscriptions.push(vscode.commands.registerCommand('P5Studio.stepRun', async () => {
@@ -21,6 +25,11 @@ export function registerDebugCommands(
       }
     }
     if (!editor) return;
+    try {
+      const docUri = editor.document.uri.toString();
+      deps.contextService.setSteppingActive(docUri, true);
+      await deps.contextService.setContext('p5SteppingActive', true);
+    } catch { }
     await deps.invokeStepRun(panel, editor);
   }));
 
@@ -35,6 +44,11 @@ export function registerDebugCommands(
       }
     }
     if (!editor) return;
+    try {
+      const docUri = editor.document.uri.toString();
+      deps.contextService.setSteppingActive(docUri, true);
+      await deps.contextService.setContext('p5SteppingActive', true);
+    } catch { }
     await deps.invokeSingleStep(panel, editor);
   }));
 
@@ -49,6 +63,11 @@ export function registerDebugCommands(
       }
     }
     if (!editor) return;
+    try {
+      const docUri = editor.document.uri.toString();
+      deps.contextService.setSteppingActive(docUri, true);
+      await deps.contextService.setContext('p5SteppingActive', true);
+    } catch { }
     await deps.invokeSingleStep(panel, editor);
     try {
       const docUri = editor.document.uri.toString();

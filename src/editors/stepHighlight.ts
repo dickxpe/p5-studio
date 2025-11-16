@@ -27,7 +27,7 @@ export function applyStepHighlight(editor: vscode.TextEditor, line: number) {
     const deco = ensureStepHighlightDecoration();
     const lineIdx = Math.max(0, Math.min(editor.document.lineCount - 1, line - 1));
     const range = new vscode.Range(lineIdx, 0, lineIdx, editor.document.lineAt(lineIdx).text.length);
-    console.log(`[applyStepHighlight] Applying highlight to line: ${line} (zero-based: ${lineIdx})`);
+    // console.log(`[applyStepHighlight] Applying highlight to line: ${line} (zero-based: ${lineIdx})`);
     editor.setDecorations(deco, [range]);
     try { editor.revealRange(range, vscode.TextEditorRevealType.InCenterIfOutsideViewport); } catch { }
 }
