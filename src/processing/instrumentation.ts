@@ -120,7 +120,7 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                 )
             )
         );
-        const clearDecl = b.variableDeclaration('const', [
+        const clearDecl = b.variableDeclaration('var', [
             b.variableDeclarator(
                 b.identifier('__clearHighlight'),
                 b.arrowFunctionExpression(
@@ -141,7 +141,7 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                 )
             )
         ]);
-        const waitDecl = b.variableDeclaration('const', [
+        const waitDecl = b.variableDeclaration('var', [
             b.variableDeclarator(
                 b.identifier('__waitStep'),
                 b.arrowFunctionExpression(
