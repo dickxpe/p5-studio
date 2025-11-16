@@ -126,9 +126,17 @@ export function extractGlobalVariables(code: string): { name: string, value: any
 // Rewrite user code so global variables are attached to window and event handlers are guarded
 export function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: string, value?: any }[]): string {
     if (!globals.length) return code;
+    // Stepping helpers are managed by instrumentation and must not be treated as user globals.
+    const STEPPING_HELPERS = new Set([
+        '__highlight',
+        '__clearHighlight',
+        '__waitStep',
+        '__liveP5StepAdvance',
+        '__liveP5StepResolve'
+    ]);
     const acorn = require('acorn');
     const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
-    const globalNames = new Set(globals.map(g => g.name));
+    const globalNames = new Set(globals.map(g => g.name).filter(n => !STEPPING_HELPERS.has(n)));
     const programBody = (ast as any).program.body;
     const newBody: any[] = [];
     let setupFound = false;
@@ -146,7 +154,7 @@ export function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: 
     }
 
     // Insert window.<global> = undefined for globals that have initializers only
-    for (const g of globals) {
+    for (const g of globals.filter(g => !STEPPING_HELPERS.has(g.name))) {
         // Only assign window.<name> = undefined if the original declaration had an initializer
         const hadInit = programBody.some(stmt => stmt.type === 'VariableDeclaration' && stmt.declarations.some((decl: any) => decl.id && decl.id.name === g.name && decl.init));
         if (hadInit) {
