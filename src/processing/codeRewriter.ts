@@ -228,6 +228,80 @@ export function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: 
 
     (ast as any).program.body = newBody;
 
+    function isFunctionParam(path: any): boolean {
+        const parent = path.parentPath && path.parentPath.value;
+        if (!parent) return false;
+        if (parent.type === 'FunctionDeclaration' || parent.type === 'FunctionExpression' || parent.type === 'ArrowFunctionExpression') {
+            return Array.isArray(parent.params) && parent.params.includes(path.value);
+        }
+        return false;
+    }
+
+    function isInBindingPattern(path: any): boolean {
+        let p: any = path;
+        while (p && p.parentPath) {
+            const v = p.parentPath.value;
+            if (!v) break;
+            if (v.type === 'ObjectPattern' || v.type === 'ArrayPattern' || v.type === 'RestElement' || v.type === 'AssignmentPattern') return true;
+            if (v.type === 'VariableDeclarator' && p.name === 'id') return true;
+            if (v.type === 'FunctionDeclaration' || v.type === 'FunctionExpression' || v.type === 'ArrowFunctionExpression') {
+                if (Array.isArray(v.params)) {
+                    for (const prm of v.params) {
+                        if (prm === p.value) return true;
+                        // If parameters are patterns, treat as binding positions
+                        if (prm && (prm.type === 'ObjectPattern' || prm.type === 'ArrayPattern' || prm.type === 'RestElement' || prm.type === 'AssignmentPattern')) return true;
+                    }
+                }
+                return false;
+            }
+            p = p.parentPath;
+        }
+        return false;
+    }
+
+    function collectBoundNamesFromPattern(pattern: any, out: Set<string>) {
+        if (!pattern) return;
+        if (pattern.type === 'Identifier') { out.add(pattern.name); return; }
+        if (pattern.type === 'ObjectPattern') {
+            for (const prop of (pattern.properties || [])) {
+                if (!prop) continue;
+                if (prop.type === 'Property') collectBoundNamesFromPattern(prop.value, out);
+                else if (prop.type === 'RestElement') collectBoundNamesFromPattern(prop.argument, out);
+            }
+            return;
+        }
+        if (pattern.type === 'ArrayPattern') {
+            for (const el of (pattern.elements || [])) {
+                if (!el) continue;
+                if (el.type === 'RestElement') collectBoundNamesFromPattern(el.argument, out);
+                else collectBoundNamesFromPattern(el, out);
+            }
+            return;
+        }
+        if (pattern.type === 'RestElement') { collectBoundNamesFromPattern(pattern.argument, out); return; }
+        if (pattern.type === 'AssignmentPattern') { collectBoundNamesFromPattern(pattern.left, out); return; }
+    }
+
+    function isShadowedByParams(path: any, name: string): boolean {
+        // Find nearest function ancestor and check its parameter bindings
+        let p: any = path;
+        while (p && p.parentPath) {
+            const v = p.parentPath.value;
+            if (!v) break;
+            if (v.type === 'FunctionDeclaration' || v.type === 'FunctionExpression' || v.type === 'ArrowFunctionExpression') {
+                const bound = new Set<string>();
+                if (Array.isArray(v.params)) {
+                    for (const prm of v.params) {
+                        collectBoundNamesFromPattern(prm, bound);
+                    }
+                }
+                return bound.has(name);
+            }
+            p = p.parentPath;
+        }
+        return false;
+    }
+
     recast.types.visit(ast, {
         visitIdentifier(path) {
             const name = (path.value as any).name;
@@ -235,6 +309,10 @@ export function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: 
             const isMemberOfWindow = !!(path.parentPath && path.parentPath.value && path.parentPath.value.type === 'MemberExpression' && (path.parentPath.value as any).property === path.value && (path.parentPath.value as any).object.type === 'Identifier' && (path.parentPath.value as any).object.name === 'window');
             const isDeclarationId = !!(path.parentPath && path.parentPath.value && (((path.parentPath.value as any).type === 'VariableDeclarator' && (path.parentPath.value as any).id === path.value) || ((path.parentPath.value as any).type === 'FunctionDeclaration' && (path.parentPath.value as any).id === path.value) || ((path.parentPath.value as any).type === 'FunctionExpression' && (path.parentPath.value as any).id === path.value) || ((path.parentPath.value as any).type === 'ClassDeclaration' && (path.parentPath.value as any).id === path.value)));
             const isThisMemberWindowProperty = !!(path.parentPath && path.parentPath.value && path.parentPath.value.type === 'MemberExpression' && (path.parentPath.value as any).property === path.value && (((path.parentPath.value as any).object.type === 'ThisExpression') || ((path.parentPath.value as any).object.type === 'MemberExpression' && (path.parentPath.value as any).object.object && (path.parentPath.value as any).object.object.type === 'ThisExpression' && (path.parentPath.value as any).object.property && (path.parentPath.value as any).object.property.name === 'window')));
+            // Do not rewrite function parameter identifiers
+            if (isFunctionParam(path) || isInBindingPattern(path) || isShadowedByParams(path, name)) {
+                return false;
+            }
             if (isGlobalName && !isMemberOfWindow && !isDeclarationId && !isThisMemberWindowProperty) {
                 return recast.types.builders.memberExpression(recast.types.builders.identifier('window'), recast.types.builders.identifier(name), false);
             }
