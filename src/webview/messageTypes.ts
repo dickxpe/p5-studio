@@ -13,7 +13,7 @@ export type WebviewToExtensionMessage =
     | { type: 'step-run-clicked' }
     | { type: 'single-step-clicked' }
     | { type: 'highlightLine'; line: number }
-    | { type: 'clearHighlight' }
+    | { type: 'clearHighlight'; final?: boolean }
     | { type: 'oscSend'; address: string; args?: any[] }
     | {
         type: 'startOSC';

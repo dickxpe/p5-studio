@@ -16,6 +16,7 @@ export interface StepTarget {
     // For function steps, name of the function
     functionName?: string;
     nodeType: string;
+    snippet?: string;
 }
 
 export interface StepMap {
@@ -34,8 +35,34 @@ export function buildStepMap(code: string): StepMap {
         });
         const steps: StepTarget[] = [];
         const b: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
+        const lines = typeof code === 'string' ? code.split(/\r?\n/) : [];
 
         let id = 1;
+
+        const normalizeSnippet = (text: string) => text.replace(/\s+/g, ' ').trim();
+
+        const extractSnippet = (loc: any): string => {
+            try {
+                if (!loc || !loc.start || !loc.end || !Array.isArray(lines) || lines.length === 0) return '';
+                const startLine = Math.max(loc.start.line - 1, 0);
+                const endLine = Math.max(loc.end.line - 1, 0);
+                if (startLine === endLine) {
+                    const line = lines[startLine] || '';
+                    return normalizeSnippet(line.slice(loc.start.column, loc.end.column));
+                }
+                const parts: string[] = [];
+                const first = lines[startLine] || '';
+                parts.push(first.slice(loc.start.column));
+                for (let lineIndex = startLine + 1; lineIndex < endLine; lineIndex++) {
+                    parts.push(lines[lineIndex] || '');
+                }
+                const last = lines[endLine] || '';
+                parts.push(last.slice(0, loc.end.column));
+                return normalizeSnippet(parts.join('\n'));
+            } catch {
+                return '';
+            }
+        };
 
         const getExecutableLoc = (node: any) => {
             if (!node) return null;
@@ -63,6 +90,7 @@ export function buildStepMap(code: string): StepMap {
             if (!node) return;
             const loc = getExecutableLoc(node);
             if (!loc) return;
+            const snippet = extractSnippet(loc);
             const start = loc.start || { line: 1, column: 0 };
             const end = loc.end || start;
             steps.push({
@@ -76,6 +104,7 @@ export function buildStepMap(code: string): StepMap {
                 },
                 functionName,
                 nodeType: node.type || 'Unknown',
+                snippet,
             });
         };
 

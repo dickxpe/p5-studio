@@ -43,7 +43,7 @@ export function handleHighlightLine(
 }
 
 export async function handleClearHighlight(
-  params: { panel: vscode.WebviewPanel; editor: vscode.TextEditor },
+  params: { panel: vscode.WebviewPanel; editor: vscode.TextEditor; final?: boolean },
   deps: {
     clearStepHighlight: (editor?: vscode.TextEditor) => void;
     blocklyClearHighlight: (docUri: string) => void;
@@ -53,7 +53,7 @@ export async function handleClearHighlight(
     setPrimedContextFalse: () => void | Thenable<any>;
   }
 ) {
-  const { panel, editor } = params;
+  const { panel, editor, final: finalFromMsg } = params;
   const docUri = editor.document.uri.toString();
   let ed = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === docUri) || null;
   if (!ed && vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.uri.toString() === docUri) {
@@ -62,9 +62,17 @@ export async function handleClearHighlight(
   if (ed && ed.document) { deps.clearStepHighlight(ed); }
   try { deps.blocklyClearHighlight(docUri); } catch { }
   try {
+    const hasExplicitFinal = typeof finalFromMsg === 'boolean';
+    const isFinal = hasExplicitFinal && finalFromMsg;
     const codeText = editor.document.getText();
     const hasDraw = /\bfunction\s+draw\s*\(/.test(codeText);
-    if (!hasDraw) {
+    const shouldStopStepping = (hasExplicitFinal ? isFinal : !hasDraw);
+    if (shouldStopStepping) {
+      if ((panel as any)._autoStepTimer) {
+        try { clearInterval((panel as any)._autoStepTimer); } catch { }
+        (panel as any)._autoStepTimer = null;
+      }
+      (panel as any)._autoStepMode = false;
       const fileName = require('path').basename(editor.document.fileName);
       const ch = deps.getOrCreateOutputChannel(docUri, fileName);
       ch.appendLine(`${deps.getTime()} [▶️INFO] Code stepping finished.`);

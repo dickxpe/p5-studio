@@ -448,8 +448,6 @@ export function activate(context: vscode.ExtensionContext) {
       panel.reveal(panel.viewColumn, true);
       activeP5Panel = panel;
       vscode.commands.executeCommand('setContext', 'hasP5Webview', true);
-    } else {
-      vscode.commands.executeCommand('setContext', 'hasP5Webview', false);
     }
     // Restore focus for Blockly panel if it exists
     try {
@@ -983,7 +981,7 @@ export function activate(context: vscode.ExtensionContext) {
           }
           // --- CLEAR HIGHLIGHT HANDLER ---
           else if (msg.type === 'clearHighlight') {
-            await handleClearHighlight({ panel, editor }, {
+            await handleClearHighlight({ panel, editor, final: msg.final }, {
               clearStepHighlight,
               blocklyClearHighlight: (docUri: string) => { try { blocklyApi.clearHighlight(docUri); } catch { } },
               getTime,

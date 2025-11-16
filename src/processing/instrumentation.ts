@@ -1,5 +1,5 @@
 import * as recast from 'recast';
-import { buildStepMap } from './stepMap';
+import { buildStepMap, StepMap, StepTarget } from './stepMap';
 
 // Step-run: still no-op for now (we only use single-step instrumentation).
 export function instrumentSetupWithDelays(code: string, _delayMs: number): string {
@@ -9,7 +9,11 @@ export function instrumentSetupWithDelays(code: string, _delayMs: number): strin
 // Single-step instrumentation using the declarative step map.
 // We inject minimal helpers and highlight calls in setup()/draw() only;
 // the webview drives stepping with `step-advance` messages.
-export function instrumentSetupForSingleStep(code: string, lineOffset: number, opts?: { disableTopLevelPreSteps?: boolean }): string {
+export function instrumentSetupForSingleStep(
+    code: string,
+    lineOffset: number,
+    opts?: { disableTopLevelPreSteps?: boolean; docStepMap?: StepMap }
+): string {
     try {
         const acornParser = require('recast/parsers/acorn');
         const ast = recast.parse(code, {
@@ -20,9 +24,11 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
 
         const b = recast.types.builders;
         const stepMap = buildStepMap(code);
+        const docStepMap = opts?.docStepMap;
         const normalizedOffset = typeof lineOffset === 'number' ? lineOffset : 0;
         const topLevelBody: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
         const hasSetupFunctionDecl = topLevelBody.some((n: any) => n && n.type === 'FunctionDeclaration' && n.id && n.id.name === 'setup');
+        const allowTopLevelPreSteps = !opts?.disableTopLevelPreSteps && !hasSetupFunctionDecl;
 
         const getExecutableLoc = (node: any) => {
             if (!node) return null;
@@ -44,17 +50,6 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                     break;
             }
             return node.loc || null;
-        };
-
-        const toDocumentLine = (identifier: string) => {
-            if (!normalizedOffset) return b.identifier(identifier);
-            return b.callExpression(
-                b.memberExpression(b.identifier('Math'), b.identifier('max')),
-                [
-                    b.binaryExpression('-', b.identifier(identifier), b.literal(normalizedOffset)),
-                    b.literal(1)
-                ]
-            );
         };
 
         // Build lookup of steps per phase for quick access.
@@ -93,12 +88,33 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
 
         // Controller helpers placed at top of program so both setup and draw can use them.
         const helpers: any[] = [];
+        const createAdjustedLineExpr = (identifier: string) => {
+            if (!normalizedOffset) {
+                return b.identifier(identifier);
+            }
+            return b.conditionalExpression(
+                b.identifier('n'),
+                b.identifier(identifier),
+                b.callExpression(
+                    b.memberExpression(b.identifier('Math'), b.identifier('max')),
+                    [
+                        b.binaryExpression('-', b.identifier(identifier), b.literal(normalizedOffset)),
+                        b.literal(1)
+                    ]
+                )
+            );
+        };
+
         const highlightDecl = b.expressionStatement(
             b.assignmentExpression('=',
                 b.memberExpression(b.identifier('window'), b.identifier('__highlight')),
                 b.arrowFunctionExpression(
-                    [b.identifier('l'), b.identifier('c'), b.identifier('el'), b.identifier('ec')],
+                    [b.identifier('l'), b.identifier('c'), b.identifier('el'), b.identifier('ec'), b.identifier('n')],
                     b.blockStatement([
+                        b.ifStatement(
+                            b.memberExpression(b.identifier('window'), b.identifier('__liveP5SteppingDone')),
+                            b.blockStatement([b.returnStatement(null)])
+                        ),
                         b.tryStatement(
                             b.blockStatement([
                                 b.expressionStatement(
@@ -106,9 +122,9 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                                         b.memberExpression(b.identifier('vscode'), b.identifier('postMessage')),
                                         [b.objectExpression([
                                             b.property('init', b.identifier('type'), b.literal('highlightLine')),
-                                            b.property('init', b.identifier('line'), toDocumentLine('l')),
+                                            b.property('init', b.identifier('line'), createAdjustedLineExpr('l')),
                                             b.property('init', b.identifier('column'), b.identifier('c')),
-                                            b.property('init', b.identifier('endLine'), toDocumentLine('el')),
+                                            b.property('init', b.identifier('endLine'), createAdjustedLineExpr('el')),
                                             b.property('init', b.identifier('endColumn'), b.identifier('ec'))
                                         ])]
                                     )
@@ -124,14 +140,47 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
             b.variableDeclarator(
                 b.identifier('__clearHighlight'),
                 b.arrowFunctionExpression(
-                    [],
+                    [b.identifier('f')],
                     b.blockStatement([
                         b.tryStatement(
                             b.blockStatement([
+                                b.variableDeclaration('const', [
+                                    b.variableDeclarator(
+                                        b.identifier('msg'),
+                                        b.objectExpression([
+                                            b.property('init', b.identifier('type'), b.literal('clearHighlight'))
+                                        ])
+                                    )
+                                ]),
+                                b.ifStatement(
+                                    b.binaryExpression('===',
+                                        b.unaryExpression('typeof', b.identifier('f'), true),
+                                        b.literal('boolean')
+                                    ),
+                                    b.blockStatement([
+                                        b.ifStatement(
+                                            b.identifier('f'),
+                                            b.blockStatement([
+                                                b.expressionStatement(
+                                                    b.assignmentExpression('=',
+                                                        b.memberExpression(b.identifier('window'), b.identifier('__liveP5SteppingDone')),
+                                                        b.literal(true)
+                                                    )
+                                                )
+                                            ])
+                                        ),
+                                        b.expressionStatement(
+                                            b.assignmentExpression('=',
+                                                b.memberExpression(b.identifier('msg'), b.identifier('final')),
+                                                b.identifier('f')
+                                            )
+                                        )
+                                    ])
+                                ),
                                 b.expressionStatement(
                                     b.callExpression(
                                         b.memberExpression(b.identifier('vscode'), b.identifier('postMessage')),
-                                        [b.objectExpression([b.property('init', b.identifier('type'), b.literal('clearHighlight'))])]
+                                        [b.identifier('msg')]
                                     )
                                 )
                             ]),
@@ -214,24 +263,71 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
         );
         const frameWaitInit = setFrameWaitExpr(true);
         const frameInProgressInit = setFrameInProgressExpr(false);
-        helpers.push(highlightDecl, clearDecl, waitDecl, advanceDecl, setupDoneInit, frameWaitInit, frameInProgressInit, ...exposeHelpers);
+        const steppingDoneInit = b.expressionStatement(
+            b.assignmentExpression('=',
+                b.memberExpression(b.identifier('window'), b.identifier('__liveP5SteppingDone')),
+                b.literal(false)
+            )
+        );
+        helpers.push(highlightDecl, clearDecl, waitDecl, advanceDecl, setupDoneInit, frameWaitInit, frameInProgressInit, steppingDoneInit, ...exposeHelpers);
 
         // Helper to create a highlight call from a StepTarget.
-        const makeHighlightFromStep = (step: { loc: { line: number; column: number; endLine: number; endColumn: number } }) =>
-            b.expressionStatement(
+        const docLookup = (() => {
+            if (!docStepMap || !Array.isArray(docStepMap.steps)) return null;
+            const normalizeSnippet = (text: string) => (text || '').replace(/\s+/g, ' ').trim();
+            const map = new Map<string, StepTarget[]>();
+            for (const s of docStepMap.steps) {
+                if (!s || !s.loc) continue;
+                const key = `${s.nodeType}::${normalizeSnippet(s.snippet || '')}::${s.functionName || ''}`;
+                if (!map.has(key)) {
+                    map.set(key, []);
+                }
+                map.get(key)!.push(s);
+            }
+            return { map, normalizeSnippet, usage: new Map<string, number>() };
+        })();
+
+        const resolveDocLocForStep = (step: StepTarget) => {
+            if (!docLookup) return null;
+            const { map, normalizeSnippet, usage } = docLookup;
+            const key = `${step.nodeType}::${normalizeSnippet(step.snippet || '')}::${step.functionName || ''}`;
+            const matches = map.get(key);
+            if (!matches || matches.length === 0) return null;
+            const used = usage.get(key) || 0;
+            const idx = Math.min(used, matches.length - 1);
+            usage.set(key, used + 1);
+            return matches[idx]?.loc || null;
+        };
+
+        const makeHighlightFromStep = (step: StepTarget) => {
+            const docLoc = resolveDocLocForStep(step);
+            const useLoc = docLoc && typeof docLoc.line === 'number' ? docLoc : step.loc;
+            const alreadyNormalized = !!docLoc;
+            const line = typeof useLoc?.line === 'number' ? useLoc.line : 1;
+            const column = typeof useLoc?.column === 'number' ? useLoc.column : 1;
+            const endLine = typeof useLoc?.endLine === 'number' ? useLoc.endLine : line;
+            const endColumn = typeof useLoc?.endColumn === 'number' ? useLoc.endColumn : column;
+            return b.expressionStatement(
                 b.callExpression(
                     b.memberExpression(b.identifier('window'), b.identifier('__highlight')),
                     [
-                        b.literal(step.loc.line),
-                        b.literal(step.loc.column),
-                        b.literal(step.loc.endLine),
-                        b.literal(step.loc.endColumn)
+                        b.literal(line),
+                        b.literal(column),
+                        b.literal(endLine),
+                        b.literal(endColumn),
+                        alreadyNormalized ? b.literal(true) : b.literal(false)
                     ]
                 )
             );
+        };
         const makeAwaitStep = () =>
-            b.expressionStatement(
-                b.awaitExpression(b.callExpression(b.identifier('__waitStep'), []))
+            b.ifStatement(
+                b.unaryExpression('!', b.memberExpression(b.identifier('window'), b.identifier('__liveP5SteppingDone'))),
+                b.blockStatement([
+                    b.expressionStatement(
+                        b.awaitExpression(b.callExpression(b.identifier('__waitStep'), []))
+                    )
+                ])
             );
 
         // Insert helpers at the very top of the program.
@@ -276,7 +372,7 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                 }
 
                 // For setup: emit top-level steps first, then setup body.
-                if (node.id.name === 'setup' && topSteps.length > 0 && !opts?.disableTopLevelPreSteps) {
+                if (node.id.name === 'setup' && topSteps.length > 0 && allowTopLevelPreSteps) {
                     const injected: any[] = [];
                     for (const step of topSteps) {
                         injected.push(makeHighlightFromStep(step));
@@ -323,7 +419,16 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                         const match = loc ? phaseSteps.find(s => s.loc.line === loc.line && s.loc.column - 1 === loc.column) : undefined;
                         if (match) {
                             result.push(makeHighlightFromStep(match));
-                            if (lastStep && match.loc.line === lastStep.loc.line && match.loc.column === lastStep.loc.column) {
+                            const isLastPhaseStep = !!(lastStep && match.loc.line === lastStep.loc.line && match.loc.column === lastStep.loc.column);
+                            let shouldStopAfterThisStep = false;
+                            if (isLastPhaseStep) {
+                                if (node.id.name === 'setup') {
+                                    shouldStopAfterThisStep = drawSteps.length === 0;
+                                } else if (node.id.name === 'draw') {
+                                    shouldStopAfterThisStep = false;
+                                }
+                            }
+                            if (isLastPhaseStep) {
                                 // Last step: wait once more, then clear highlight automatically.
                                 result.push(makeAwaitStep());
                                 if (node.id.name === 'setup') {
@@ -332,7 +437,10 @@ export function instrumentSetupForSingleStep(code: string, lineOffset: number, o
                                 }
                                 result.push(
                                     b.expressionStatement(
-                                        b.callExpression(b.identifier('__clearHighlight'), [])
+                                        b.callExpression(
+                                            b.identifier('__clearHighlight'),
+                                            [shouldStopAfterThisStep ? b.literal(true) : b.literal(false)]
+                                        )
                                     )
                                 );
                                 if (node.id.name === 'draw') {

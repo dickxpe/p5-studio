@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { config as cfg } from '../../config';
-import { buildStepMap } from '../../processing/stepMap';
+import { buildStepMap, StepMap } from '../../processing/stepMap';
 
 function findFirstExecutableLine(code: string): number | null {
   try {
@@ -72,7 +72,7 @@ export async function handleStepRunClicked(
     preprocessTopLevelInputs: (code: string, opts: { key: string; interactive: boolean }) => Promise<string>;
     wrapInSetupIfNeeded: (code: string) => string;
     rewriteFrameCountRefs: (code: string) => string;
-    instrumentSetupForSingleStep: (code: string, lineOffset: number, opts?: { disableTopLevelPreSteps?: boolean }) => string;
+    instrumentSetupForSingleStep: (code: string, lineOffset: number, opts?: { disableTopLevelPreSteps?: boolean; docStepMap?: StepMap }) => string;
     extractGlobalVariablesWithConflicts: (code: string) => { globals: Array<{ name: string; value: any; type: string }>; conflicts: string[] };
     extractGlobalVariables: (code: string) => Array<{ name: string; value: any; type: string }>;
     rewriteUserCodeWithWindowGlobals: (code: string, globals: Array<{ name: string; value?: any }>) => string;
@@ -89,6 +89,7 @@ export async function handleStepRunClicked(
   const docUri = editor.document.uri.toString();
   const fileName = require('path').basename(editor.document.fileName);
   const rawCode = editor.document.getText();
+  const docStepMap = buildStepMap(rawCode);
   const delayMs = cfg.getStepRunDelayMs();
 
   // If already stepping, enable auto-advance from current position
@@ -162,7 +163,7 @@ export async function handleStepRunClicked(
   wrapped = deps.rewriteFrameCountRefs(wrapped);
   const preGlobals = deps.extractGlobalVariables(wrapped);
   const lineOffsetTotal = computeLineOffset(codeForRun, wrapped, didWrap);
-  let instrumented = deps.instrumentSetupForSingleStep(wrapped, lineOffsetTotal, { disableTopLevelPreSteps: didWrap });
+  let instrumented = deps.instrumentSetupForSingleStep(wrapped, lineOffsetTotal, { disableTopLevelPreSteps: didWrap, docStepMap });
   try {
     const ch = deps.getOrCreateOutputChannel(docUri, fileName);
     ch.appendLine(`${deps.getTime()} [DEBUG] Instrumented code for STEP-RUN (didWrap=${didWrap}, lineOffset=${lineOffsetTotal}):`);
@@ -214,7 +215,7 @@ export async function handleSingleStepClicked(
     preprocessTopLevelInputs: (code: string, opts: { key: string; interactive: boolean }) => Promise<string>;
     wrapInSetupIfNeeded: (code: string) => string;
     rewriteFrameCountRefs: (code: string) => string;
-    instrumentSetupForSingleStep: (code: string, lineOffset: number, opts?: { disableTopLevelPreSteps?: boolean }) => string;
+    instrumentSetupForSingleStep: (code: string, lineOffset: number, opts?: { disableTopLevelPreSteps?: boolean; docStepMap?: StepMap }) => string;
     extractGlobalVariablesWithConflicts: (code: string) => { globals: Array<{ name: string; value: any; type: string }>; conflicts: string[] };
     extractGlobalVariables: (code: string) => Array<{ name: string; value: any; type: string }>;
     rewriteUserCodeWithWindowGlobals: (code: string, globals: Array<{ name: string; value?: any }>) => string;
@@ -229,6 +230,7 @@ export async function handleSingleStepClicked(
   const docUri = editor.document.uri.toString();
   const fileName = require('path').basename(editor.document.fileName);
   const rawCode = editor.document.getText();
+  const docStepMap = buildStepMap(rawCode);
 
   let wasAutoStepMode = (panel as any)._autoStepMode;
   if ((panel as any)._autoStepTimer) {
@@ -303,7 +305,7 @@ export async function handleSingleStepClicked(
   wrapped = deps.rewriteFrameCountRefs(wrapped);
   const preGlobals = deps.extractGlobalVariables(wrapped);
   const lineOffsetTotal = computeLineOffset(codeForRun, wrapped, didWrap);
-  let instrumented = deps.instrumentSetupForSingleStep(wrapped, lineOffsetTotal, { disableTopLevelPreSteps: didWrap });
+  let instrumented = deps.instrumentSetupForSingleStep(wrapped, lineOffsetTotal, { disableTopLevelPreSteps: didWrap, docStepMap });
   const globals = preGlobals;
   let rewrittenCode = deps.rewriteUserCodeWithWindowGlobals(instrumented, globals);
   const hasDraw = /\bfunction\s+draw\s*\(/.test(wrapped);
