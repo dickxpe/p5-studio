@@ -385,7 +385,8 @@ export function instrumentSetupForSingleStep(
                 const allPhaseSteps = phaseSteps.slice().sort((a, b) => a.loc.line - b.loc.line || a.loc.column - b.loc.column);
                 const lastStep = allPhaseSteps[allPhaseSteps.length - 1];
 
-                const injectIntoStatements = (stmts: any[]): any[] => {
+                let _insertedFinalClear = false;
+                const injectIntoStatements = (stmts: any[], inLoop: boolean = false): any[] => {
                     const result: any[] = [];
                     for (const stmt of stmts) {
                         if (!stmt) continue;
@@ -428,7 +429,12 @@ export function instrumentSetupForSingleStep(
                                     shouldStopAfterThisStep = false;
                                 }
                             }
-                            if (isLastPhaseStep) {
+                            const isLoopStmt = (
+                                stmt.type === 'ForStatement' || stmt.type === 'ForInStatement' || stmt.type === 'ForOfStatement'
+                                || stmt.type === 'WhileStatement' || stmt.type === 'DoWhileStatement'
+                            );
+                            const isEffectiveLast = isLastPhaseStep && !(inLoop || isLoopStmt);
+                            if (isEffectiveLast) {
                                 // Last step: wait once more, then clear highlight automatically.
                                 result.push(makeAwaitStep());
                                 if (node.id.name === 'setup') {
@@ -443,6 +449,7 @@ export function instrumentSetupForSingleStep(
                                         )
                                     )
                                 );
+                                _insertedFinalClear = true;
                                 if (node.id.name === 'draw') {
                                     postActions.push(setFrameWaitExpr(false));
                                     postActions.push(setFrameInProgressExpr(false));
@@ -457,13 +464,13 @@ export function instrumentSetupForSingleStep(
                             case 'IfStatement': {
                                 if (stmt.consequent) {
                                     const bodyNodes = (stmt.consequent.body && Array.isArray(stmt.consequent.body)) ? stmt.consequent.body : [stmt.consequent];
-                                    stmt.consequent.body = injectIntoStatements(bodyNodes);
+                                    stmt.consequent.body = injectIntoStatements(bodyNodes, inLoop);
                                 }
                                 if (stmt.alternate) {
                                     if (stmt.alternate.body && Array.isArray(stmt.alternate.body)) {
-                                        stmt.alternate.body = injectIntoStatements(stmt.alternate.body);
+                                        stmt.alternate.body = injectIntoStatements(stmt.alternate.body, inLoop);
                                     } else {
-                                        const altInjected = injectIntoStatements([stmt.alternate]);
+                                        const altInjected = injectIntoStatements([stmt.alternate], inLoop);
                                         stmt.alternate = altInjected[0] || stmt.alternate;
                                     }
                                 }
@@ -471,7 +478,7 @@ export function instrumentSetupForSingleStep(
                                 break;
                             }
                             case 'BlockStatement': {
-                                stmt.body = injectIntoStatements(stmt.body || []);
+                                stmt.body = injectIntoStatements(stmt.body || [], inLoop);
                                 result.push(stmt);
                                 break;
                             }
@@ -482,7 +489,7 @@ export function instrumentSetupForSingleStep(
                             case 'DoWhileStatement': {
                                 if (stmt.body) {
                                     const bodyNodes = (stmt.body.body && Array.isArray(stmt.body.body)) ? stmt.body.body : [stmt.body];
-                                    const injectedBody = injectIntoStatements(bodyNodes);
+                                    const injectedBody = injectIntoStatements(bodyNodes, true);
                                     if (Array.isArray(stmt.body.body)) stmt.body.body = injectedBody;
                                     else stmt.body = injectedBody[0] || stmt.body;
                                 }
@@ -491,7 +498,7 @@ export function instrumentSetupForSingleStep(
                             }
                             case 'SwitchStatement': {
                                 for (const cs of stmt.cases || []) {
-                                    cs.consequent = injectIntoStatements(cs.consequent || []);
+                                    cs.consequent = injectIntoStatements(cs.consequent || [], inLoop);
                                 }
                                 result.push(stmt);
                                 break;
@@ -507,10 +514,22 @@ export function instrumentSetupForSingleStep(
                     return result;
                 };
 
-                node.body.body = injectIntoStatements(node.body.body || []);
+                node.body.body = injectIntoStatements(node.body.body || [], false);
                 if (node.id.name === 'setup') {
                     node.body.body.push(markSetupDoneExpr());
                     node.body.body.push(setFrameWaitExpr(false));
+                    // If we didn't emit a final clear inside the last step (e.g., last step was inside a loop),
+                    // clear once at the end of setup. Mark final=true only when there is no draw().
+                    if (!_insertedFinalClear) {
+                        node.body.body.push(
+                            b.expressionStatement(
+                                b.callExpression(
+                                    b.identifier('__clearHighlight'),
+                                    [drawSteps.length === 0 ? b.literal(true) : b.literal(false)]
+                                )
+                            )
+                        );
+                    }
                 } else if (node.id.name === 'draw') {
                     node.body.body.push(setFrameWaitExpr(false));
                     node.body.body.push(setFrameInProgressExpr(false));

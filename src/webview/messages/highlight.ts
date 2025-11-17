@@ -65,9 +65,10 @@ export async function handleClearHighlight(
   try {
     const hasExplicitFinal = typeof finalFromMsg === 'boolean';
     const isFinal = hasExplicitFinal && finalFromMsg;
-    const codeText = editor.document.getText();
-    const hasDraw = /\bfunction\s+draw\s*\(/.test(codeText);
-    const shouldStopStepping = (hasExplicitFinal ? isFinal : !hasDraw);
+    // Only stop stepping when an explicit final=true is provided by the instrumenter.
+    // Do NOT infer finalization from absence of draw(); this caused premature stops
+    // during STEP-RUN when a timer tick arrived between awaited steps.
+    const shouldStopStepping = isFinal;
     if (shouldStopStepping) {
       if ((panel as any)._autoStepTimer) {
         try { clearInterval((panel as any)._autoStepTimer); } catch { }
