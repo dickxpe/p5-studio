@@ -695,6 +695,23 @@
     } catch (e) { /* ignore */ }
   }
 
+  // Ensure custom 'output' block gets a default text value "abc"
+  function ensureOutputDefault(block) {
+    try {
+      if (!block || block.type !== 'output') return;
+      const inp = block.getInput && block.getInput('TEXT');
+      const conn = inp && inp.connection;
+      if (conn && !conn.targetConnection) {
+        const tb = ws.newBlock('text');
+        try { tb.setFieldValue('abc', 'TEXT'); } catch (e) { }
+        try { if (typeof tb.setShadow === 'function') tb.setShadow(false); } catch (e) { }
+        try { tb.initSvg && tb.initSvg(); } catch (e) { }
+        try { tb.render && tb.render(); } catch (e) { }
+        try { conn.connect(tb.outputConnection); } catch (e) { }
+      }
+    } catch (e) { /* ignore */ }
+  }
+
   function recolorFlyoutVisuals() {
     try {
       // Find selected category name in the toolbox
@@ -740,6 +757,8 @@
               try { ensureRepeatDefaults(b); } catch (e) { }
               // Ensure for blocks default to from 0 to 1 by 1
               try { ensureForDefaults(b); } catch (e) { }
+              // Ensure output block has default text "abc"
+              try { ensureOutputDefault(b); } catch (e) { }
               // Auto-create variables for event block parameters (e.g., receivedOSC: address, args)
               try { ensureEventParamVariables(b); } catch (e) { }
             }
@@ -759,7 +778,7 @@
     try { sanitizeWorkspaceDoThenLabels(); } catch (e) { }
     try {
       const all = ws.getAllBlocks(false);
-      all.forEach(b => { try { ensureDefaultTypedShadows(b); ensureRepeatDefaults(b); ensureForDefaults(b); } catch (e) { } });
+      all.forEach(b => { try { ensureDefaultTypedShadows(b); ensureRepeatDefaults(b); ensureForDefaults(b); ensureOutputDefault(b); } catch (e) { } });
     } catch (e) { }
   }, 200);
 

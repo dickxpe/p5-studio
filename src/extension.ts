@@ -296,6 +296,21 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.commands.registerCommand('P5Studio.stopStepping', async () => {
     const panel = getActiveP5Panel();
     if (!panel) return;
+    try {
+      const docUri = getDocUriForPanel(panel)?.toString();
+      if (docUri) {
+        // Clear editor-line highlight for the sketch tied to this panel
+        const edToClear = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === docUri);
+        try { if (edToClear) clearStepHighlight(edToClear); } catch { }
+        // Clear any Blockly block highlight for this document
+        try { (blocklyApi as any)?.clearHighlight?.(docUri); } catch { }
+        // Immediately drop stepping/debug UI state for this doc
+        try { contextService.setSteppingActive(docUri, false); } catch { }
+        try { contextService.setDebugPrimed(docUri, false); } catch { }
+        try { contextService.setContext('p5SteppingActive', false); } catch { }
+        try { contextService.setContext('p5DebugPrimed', false); } catch { }
+      }
+    } catch { }
     await performPanelReload(panel);
   }));
   registerClearHighlightCommand(context);
@@ -468,6 +483,20 @@ export function activate(context: vscode.ExtensionContext) {
     // Clear highlight in the previously active editor (if any)
     if (_lastStepHighlightEditor && _lastStepHighlightEditor !== editor) {
       clearStepHighlight(_lastStepHighlightEditor);
+      try {
+        const prevDocUri = _lastStepHighlightEditor.document?.uri?.toString();
+        if (prevDocUri) { try { blocklyApi.clearHighlight(prevDocUri); } catch { } }
+        // If stepping was active for the previous panel, fully reload it so a future debug prime starts from the beginning
+        try {
+          if (prevDocUri && webviewPanelMap.has(prevDocUri)) {
+            const prevPanel = webviewPanelMap.get(prevDocUri);
+            if (prevPanel && (prevPanel as any)._steppingActive) {
+              // Hard reset stepping state by performing a panel reload
+              await performPanelReload(prevPanel);
+            }
+          }
+        } catch { }
+      } catch { }
     }
     updateP5Context(editor);
     updateJsOrTsContext(editor);
