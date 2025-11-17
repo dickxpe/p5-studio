@@ -21,7 +21,7 @@ export function registerDebugCommands(
     if (!editor) {
       const uri = deps.getDocUriForPanel(panel);
       if (uri) {
-        try { editor = await vscode.window.showTextDocument(uri, { preview: true, preserveFocus: true }); } catch { /* ignore */ }
+        try { editor = await vscode.window.showTextDocument(uri, { preview: true, preserveFocus: true, viewColumn: vscode.ViewColumn.One }); } catch { /* ignore */ }
       }
     }
     if (!editor) return;
@@ -40,7 +40,7 @@ export function registerDebugCommands(
     if (!editor) {
       const uri = deps.getDocUriForPanel(panel);
       if (uri) {
-        try { editor = await vscode.window.showTextDocument(uri, { preview: true, preserveFocus: true }); } catch { /* ignore */ }
+        try { editor = await vscode.window.showTextDocument(uri, { preview: true, preserveFocus: true, viewColumn: vscode.ViewColumn.One }); } catch { /* ignore */ }
       }
     }
     if (!editor) return;
@@ -59,7 +59,7 @@ export function registerDebugCommands(
     if (!editor) {
       const uri = deps.getDocUriForPanel(panel);
       if (uri) {
-        try { editor = await vscode.window.showTextDocument(uri, { preview: true, preserveFocus: true }); } catch { /* ignore */ }
+        try { editor = await vscode.window.showTextDocument(uri, { preview: true, preserveFocus: true, viewColumn: vscode.ViewColumn.One }); } catch { /* ignore */ }
       }
     }
     if (!editor) return;

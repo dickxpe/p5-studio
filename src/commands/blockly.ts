@@ -13,7 +13,7 @@ export function registerBlocklyCommands(context: vscode.ExtensionContext) {
         const legacy = path.join(context.extensionPath, 'blockly', 'blockly_categories.json');
         const chosen = fs.existsSync(versioned) ? versioned : (fs.existsSync(fallbackV1) ? fallbackV1 : legacy);
         const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(chosen));
-        await vscode.window.showTextDocument(doc, { preview: false });
+        await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: false, viewColumn: vscode.ViewColumn.One });
       } catch (e) {
         vscode.window.showErrorMessage('Could not open blockly_categories.json');
       }

@@ -523,6 +523,8 @@ export function activate(context: vscode.ExtensionContext) {
         }
       }
     } catch { /* ignore */ }
+    // Ensure active editor is anchored in the top-left group
+    try { await layoutService.ensureEditorInLeftColumn(editor); } catch { }
     if (editor && autoReload) autoReload.setupAutoReloadForDoc(editor);
     // Track the last editor for highlight clearing
     _lastStepHighlightEditor = editor;
@@ -1426,7 +1428,7 @@ export function activate(context: vscode.ExtensionContext) {
           // Open sketch1.js only if it was created just now and we remain in the same workspace
           if (!sketch1Existed) {
             const doc = await vscode.workspace.openTextDocument(sketch1Path);
-            await vscode.window.showTextDocument(doc, { preview: false });
+            await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: false, viewColumn: vscode.ViewColumn.One });
           }
         }
       } catch (e) {
@@ -1594,7 +1596,7 @@ export function activate(context: vscode.ExtensionContext) {
         } catch (e) { /* ignore */ }
         // Optionally open the new file
         const doc = await vscode.workspace.openTextDocument(newPath);
-        await vscode.window.showTextDocument(doc, { preview: false });
+        await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: false, viewColumn: vscode.ViewColumn.One });
       } catch (e: any) {
         vscode.window.showErrorMessage('Failed to duplicate file: ' + (e.message || e));
       }
