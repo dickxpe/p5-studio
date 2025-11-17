@@ -385,7 +385,9 @@ export function instrumentSetupForSingleStep(
                 const allPhaseSteps = phaseSteps.slice().sort((a, b) => a.loc.line - b.loc.line || a.loc.column - b.loc.column);
                 const lastStep = allPhaseSteps[allPhaseSteps.length - 1];
 
+                // For custom functions, ensure we clear highlight and mark stepping done only after the last function step, not after the call site.
                 let _insertedFinalClear = false;
+                const isCustomFunction = node.id.name && asyncFunctionNames.has(node.id.name);
                 const injectIntoStatements = (stmts: any[], inLoop: boolean = false): any[] => {
                     const result: any[] = [];
                     for (const stmt of stmts) {
@@ -421,14 +423,6 @@ export function instrumentSetupForSingleStep(
                         if (match) {
                             result.push(makeHighlightFromStep(match));
                             const isLastPhaseStep = !!(lastStep && match.loc.line === lastStep.loc.line && match.loc.column === lastStep.loc.column);
-                            let shouldStopAfterThisStep = false;
-                            if (isLastPhaseStep) {
-                                if (node.id.name === 'setup') {
-                                    shouldStopAfterThisStep = drawSteps.length === 0;
-                                } else if (node.id.name === 'draw') {
-                                    shouldStopAfterThisStep = false;
-                                }
-                            }
                             const isLoopStmt = (
                                 stmt.type === 'ForStatement' || stmt.type === 'ForInStatement' || stmt.type === 'ForOfStatement'
                                 || stmt.type === 'WhileStatement' || stmt.type === 'DoWhileStatement'
@@ -441,18 +435,30 @@ export function instrumentSetupForSingleStep(
                                     postActions.push(markSetupDoneExpr());
                                     postActions.push(setFrameWaitExpr(false));
                                 }
-                                result.push(
-                                    b.expressionStatement(
-                                        b.callExpression(
-                                            b.identifier('__clearHighlight'),
-                                            [shouldStopAfterThisStep ? b.literal(true) : b.literal(false)]
+                                if (isCustomFunction) {
+                                    // Only clear highlight for custom function after its last step, but do NOT mark stepping done.
+                                    result.push(
+                                        b.expressionStatement(
+                                            b.callExpression(
+                                                b.identifier('__clearHighlight'),
+                                                [b.literal(false)]
+                                            )
                                         )
-                                    )
-                                );
-                                _insertedFinalClear = true;
-                                if (node.id.name === 'draw') {
+                                    );
+                                    _insertedFinalClear = true;
+                                } else if (node.id.name === 'draw') {
                                     postActions.push(setFrameWaitExpr(false));
                                     postActions.push(setFrameInProgressExpr(false));
+                                } else {
+                                    result.push(
+                                        b.expressionStatement(
+                                            b.callExpression(
+                                                b.identifier('__clearHighlight'),
+                                                [b.literal(false)]
+                                            )
+                                        )
+                                    );
+                                    _insertedFinalClear = true;
                                 }
                             } else {
                                 result.push(makeAwaitStep());
@@ -461,6 +467,57 @@ export function instrumentSetupForSingleStep(
 
                         // Recurse into nested blocks/control-flow.
                         switch (stmt.type) {
+                            case 'ExpressionStatement': {
+                                // Capture simple assignments and ++/-- updates to identifiers
+                                try {
+                                    const expr: any = (stmt as any).expression;
+                                    if (expr) {
+                                        let identName: string | null = null;
+                                        if (expr.type === 'AssignmentExpression') {
+                                            if (expr.left && expr.left.type === 'Identifier') identName = expr.left.name;
+                                        } else if (expr.type === 'UpdateExpression') {
+                                            if (expr.argument && expr.argument.type === 'Identifier') identName = expr.argument.name;
+                                        }
+                                        if (identName) {
+                                            const valueExpr = b.identifier(identName);
+                                            const postMsg = b.tryStatement(
+                                                b.blockStatement([
+                                                    b.expressionStatement(
+                                                        b.callExpression(
+                                                            b.memberExpression(b.identifier('vscode'), b.identifier('postMessage')),
+                                                            [b.objectExpression([
+                                                                b.property('init', b.identifier('type'), b.literal('updateGlobalVar')),
+                                                                b.property('init', b.identifier('name'), b.literal(identName)),
+                                                                b.property('init', b.identifier('value'), valueExpr)
+                                                            ])]
+                                                        )
+                                                    )
+                                                ]),
+                                                b.catchClause(b.identifier('_'), null, b.blockStatement([
+                                                    b.tryStatement(
+                                                        b.blockStatement([
+                                                            b.expressionStatement(
+                                                                b.callExpression(
+                                                                    b.memberExpression(b.identifier('vscode'), b.identifier('postMessage')),
+                                                                    [b.objectExpression([
+                                                                        b.property('init', b.identifier('type'), b.literal('updateGlobalVar')),
+                                                                        b.property('init', b.identifier('name'), b.literal(identName)),
+                                                                        b.property('init', b.identifier('value'), b.memberExpression(b.identifier('window'), b.identifier(identName)))
+                                                                    ])]
+                                                                )
+                                                            )
+                                                        ]),
+                                                        b.catchClause(b.identifier('__'), null, b.blockStatement([]))
+                                                    )
+                                                ]))
+                                            );
+                                            postActions.push(postMsg as any);
+                                        }
+                                    }
+                                } catch { }
+                                result.push(stmt);
+                                break;
+                            }
                             case 'IfStatement': {
                                 if (stmt.consequent) {
                                     const bodyNodes = (stmt.consequent.body && Array.isArray(stmt.consequent.body)) ? stmt.consequent.body : [stmt.consequent];
@@ -475,6 +532,57 @@ export function instrumentSetupForSingleStep(
                                     }
                                 }
                                 result.push(stmt);
+                                break;
+                            }
+                            case 'VariableDeclaration': {
+                                // After executing a declaration, push live updates for declared identifiers
+                                try {
+                                    const decls = (stmt as any).declarations || [];
+                                    for (const d of decls) {
+                                        if (d && d.id && d.id.type === 'Identifier') {
+                                            const name = d.id.name;
+                                            // Prefer the identifier value itself (captures initialized local or global value immediately after declaration).
+                                            // Fallback to window[name] only if identifier not accessible (wrapped in try/catch in runtime).
+                                            const valueExpr = b.identifier(name);
+                                            const postMsg = b.tryStatement(
+                                                b.blockStatement([
+                                                    b.expressionStatement(
+                                                        b.callExpression(
+                                                            b.memberExpression(b.identifier('vscode'), b.identifier('postMessage')),
+                                                            [b.objectExpression([
+                                                                b.property('init', b.identifier('type'), b.literal('updateGlobalVar')),
+                                                                b.property('init', b.identifier('name'), b.literal(name)),
+                                                                b.property('init', b.identifier('value'), valueExpr)
+                                                            ])]
+                                                        )
+                                                    )
+                                                ]),
+                                                b.catchClause(b.identifier('_'), null, b.blockStatement([
+                                                    b.tryStatement(
+                                                        b.blockStatement([
+                                                            b.expressionStatement(
+                                                                b.callExpression(
+                                                                    b.memberExpression(b.identifier('vscode'), b.identifier('postMessage')),
+                                                                    [b.objectExpression([
+                                                                        b.property('init', b.identifier('type'), b.literal('updateGlobalVar')),
+                                                                        b.property('init', b.identifier('name'), b.literal(name)),
+                                                                        b.property('init', b.identifier('value'), b.memberExpression(b.identifier('window'), b.identifier(name)))
+                                                                    ])]
+                                                                )
+                                                            )
+                                                        ]),
+                                                        b.catchClause(b.identifier('__'), null, b.blockStatement([]))
+                                                    )
+                                                ]))
+                                            );
+                                            postActions.push(postMsg as any);
+                                        }
+                                    }
+                                } catch { }
+                                result.push(stmt);
+                                if (postActions.length) {
+                                    result.push(...postActions);
+                                }
                                 break;
                             }
                             case 'BlockStatement': {
@@ -534,6 +642,7 @@ export function instrumentSetupForSingleStep(
                     node.body.body.push(setFrameWaitExpr(false));
                     node.body.body.push(setFrameInProgressExpr(false));
                 }
+                this.traverse(path);
                 return false;
             }
         });

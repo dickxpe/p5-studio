@@ -188,7 +188,8 @@ export async function prepareSketch(opts: SketchPrepOptions): Promise<SketchPrep
     let filteredGlobals: Array<{ name: string; type: string }> = [];
     let readOnly = false;
     try {
-        const globalsInfo = extractGlobalVariablesWithConflicts(code);
+        // Use originalCode for global extraction so variables that were moved inside setup (no-setup/no-draw) still appear
+        const globalsInfo = extractGlobalVariablesWithConflicts(originalCode);
         filteredGlobals = globalsInfo.globals.filter(g => ['number', 'string', 'boolean', 'array'].includes(g.type));
         const hiddenSet = getHiddenGlobalsByDirective(originalCode);
         if (hiddenSet.size > 0) {

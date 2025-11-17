@@ -328,6 +328,6 @@ export function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: 
         }
     });
     const rewritten = recast.print(ast).code;
-    //try { console.log('REWRITTEN CODE:', rewritten); } catch { }
+    try { console.log('REWRITTEN CODE:', rewritten); } catch { }
     return rewritten;
 }

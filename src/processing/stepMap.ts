@@ -112,18 +112,44 @@ export function buildStepMap(code: string): StepMap {
         const setupFns: any[] = [];
         const drawFns: any[] = [];
         const otherFns: any[] = [];
+        const customFnSet = new Set<any>();
+
+        const registerCustomFunction = (fn: any) => {
+            if (!fn || fn.type !== 'FunctionDeclaration') return;
+            if (!fn.id || typeof fn.id.name !== 'string') return;
+            const name = fn.id.name;
+            if (name === 'setup' || name === 'draw') return;
+            if (customFnSet.has(fn)) return;
+            customFnSet.add(fn);
+            otherFns.push(fn);
+        };
 
         for (const n of b) {
             if (!n || n.type !== 'FunctionDeclaration') continue;
             if (!n.id || typeof n.id.name !== 'string') continue;
             if (n.id.name === 'setup') setupFns.push(n);
             else if (n.id.name === 'draw') drawFns.push(n);
-            else otherFns.push(n);
+            else registerCustomFunction(n);
         }
 
         const hasSetup = setupFns.length > 0;
 
         // Recursively collect steps for simple statements inside blocks/control-flow.
+        const isWindowCopyAssignment = (node: any) => {
+            if (!node || node.type !== 'ExpressionStatement') return false;
+            const expr = node.expression;
+            if (!expr || expr.type !== 'AssignmentExpression' || expr.operator !== '=') return false;
+            const left = expr.left;
+            if (!left || left.type !== 'MemberExpression' || left.computed) return false;
+            const obj = left.object;
+            if (!obj || obj.type !== 'Identifier' || obj.name !== 'window') return false;
+            const prop = left.property;
+            if (!prop || prop.type !== 'Identifier') return false;
+            const right = expr.right;
+            if (!right || right.type !== 'Identifier') return false;
+            return prop.name === right.name;
+        };
+
         const collectStatements = (nodes: any[], phase: StepPhase, functionName?: string) => {
             for (const node of nodes) {
                 if (!node || node.type === 'EmptyStatement') continue;
@@ -165,7 +191,14 @@ export function buildStepMap(code: string): StepMap {
                         }
                         break;
                     }
+                    case 'FunctionDeclaration': {
+                        registerCustomFunction(node);
+                        break;
+                    }
                     default: {
+                        if (isWindowCopyAssignment(node)) {
+                            break;
+                        }
                         // Simple statement.
                         pushStep(phase, node, functionName);
                         break;

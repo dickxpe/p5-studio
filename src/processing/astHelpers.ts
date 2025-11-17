@@ -59,15 +59,28 @@ export function rewriteFrameCountRefs(code: string): string {
 }
 
 export function wrapInSetupIfNeeded(code: string): string {
-    const hasSetup = /\bfunction\s+setup\s*\(/.test(code);
-    if (hasSetup) return code;
+    const hasSetupRegex = /\bfunction\s+setup\s*\(/;
+    const hasDrawRegex = /\bfunction\s+draw\s*\(/;
+    const hasSetup = hasSetupRegex.test(code);
+    const hasDraw = hasDrawRegex.test(code);
+
+    // Only act when there's no setup and/or no draw
+    if (hasSetup && hasDraw) return code;
+
     try {
         const acornParser = require('recast/parsers/acorn');
         const ast = recast.parse(code, { parser: { parse: (src: string) => acornParser.parse(src, { ecmaVersion: 2020, sourceType: 'script', locations: true }) } });
         const b = recast.types.builders;
-        const body: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
-        const moved: any[] = [];
-        const retained: any[] = [];
+        const progBody: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
+
+        let setupNodePathIndex: number | null = null;
+        for (let i = 0; i < progBody.length; i++) {
+            const n: any = progBody[i];
+            if (n && n.type === 'FunctionDeclaration' && n.id && n.id.name === 'setup') {
+                setupNodePathIndex = i;
+                break;
+            }
+        }
 
         const P5_CALL_NAMES = new Set([
             'createCanvas', 'resizeCanvas', 'noCanvas', 'createGraphics', 'createCapture', 'createVideo', 'createAudio', 'background',
@@ -88,14 +101,46 @@ export function wrapInSetupIfNeeded(code: string): string {
             return found;
         }
 
-        for (const stmt of body) {
+        const moved: any[] = [];
+        const retained: any[] = [];
+        const movedVarNames: string[] = [];
+        const moveDeclsIntoSetup = !hasSetup && !hasDraw; // user request: for sketches without setup and without draw
+
+        for (const stmt of progBody) {
             if (!stmt) continue;
             const t = stmt.type;
-            if (t === 'FunctionDeclaration' || t === 'ClassDeclaration' || t === 'ImportDeclaration' || t === 'ExportNamedDeclaration' || t === 'ExportDefaultDeclaration') {
+            // Never move existing setup itself
+            if (t === 'FunctionDeclaration' && (stmt as any).id && (stmt as any).id.name === 'setup') {
                 retained.push(stmt);
                 continue;
             }
+
+            // If we are in the wrap-mode (no setup or no draw), we will:
+            // - move function declarations into setup
+            // - keep class/import/export at top-level
+            if (t === 'FunctionDeclaration') {
+                moved.push(stmt);
+                continue;
+            }
+            if (t === 'ClassDeclaration' || t === 'ImportDeclaration' || t === 'ExportNamedDeclaration' || t === 'ExportDefaultDeclaration') {
+                retained.push(stmt);
+                continue;
+            }
+
             if (t === 'VariableDeclaration') {
+                if (moveDeclsIntoSetup) {
+                    // Move the entire declaration into setup, keep original kind
+                    try {
+                        const decls = (stmt as any).declarations || [];
+                        for (const d of decls) {
+                            if (d && d.id && d.id.type === 'Identifier') {
+                                movedVarNames.push(d.id.name);
+                            }
+                        }
+                    } catch { }
+                    moved.push(stmt);
+                    continue;
+                }
                 const orig: any = stmt;
                 const newDecls: any[] = [];
                 let kind: 'var' | 'let' | 'const' = orig.kind || 'var';
@@ -114,19 +159,48 @@ export function wrapInSetupIfNeeded(code: string): string {
                 retained.push(retainedDecl);
                 continue;
             }
+            // All other top-level executable statements move into setup
             moved.push(stmt);
         }
 
-        const setupBody = moved.length > 0 ? moved : [];
-        const setupFn = b.functionDeclaration(b.identifier('setup'), [], b.blockStatement(setupBody));
-        ast.program.body = [setupFn, ...retained];
+        const setupBodyStmts = moved.length > 0 ? moved : [];
+        const appendWindowCopies = (arr: any[]) => {
+            if (!moveDeclsIntoSetup || !movedVarNames.length) return arr;
+            const extra = movedVarNames.map((nm) => b.expressionStatement(
+                b.assignmentExpression('=',
+                    b.memberExpression(b.identifier('window'), b.identifier(nm), false),
+                    b.identifier(nm)
+                ))
+            );
+            return [...arr, ...extra];
+        };
+
+        if (setupNodePathIndex !== null) {
+            // Insert into existing setup at the beginning
+            const setupNode: any = progBody[setupNodePathIndex];
+            const existingBody: any[] = (setupNode.body && Array.isArray(setupNode.body.body)) ? setupNode.body.body : [];
+            // Prepend moved statements, but append window copies at the very end to ensure values are finalized
+            const newBody = [...setupBodyStmts, ...existingBody];
+            setupNode.body.body = appendWindowCopies(newBody);
+            // Rebuild program body: retain includes setupNode, plus any other retained nodes not duplicates
+            ast.program.body = [setupNode, ...retained.filter(n => n !== setupNode)];
+        } else {
+            // Create new setup and place retained after it
+            const setupFn = b.functionDeclaration(b.identifier('setup'), [], b.blockStatement(appendWindowCopies(setupBodyStmts)));
+            ast.program.body = [setupFn, ...retained];
+        }
+
         return recast.print(ast).code;
     } catch {
+        // Fallback on parse error: if no draw, wrap entire code; else ensure setup exists
         const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
         if (!hasDraw) {
             return `function setup() {\n${code}\n}`;
         }
-        return `function setup() { }\n${code}`;
+        if (!/\bfunction\s+setup\s*\(/.test(code)) {
+            return `function setup() { }\n${code}`;
+        }
+        return code;
     }
 }
 

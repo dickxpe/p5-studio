@@ -5,8 +5,10 @@ export type GlobalVar = { name: string; value: any; type: string };
 export interface VariablesViewDeps {
   getActiveP5Panel: () => vscode.WebviewPanel | undefined;
   getDocUriForPanel: (panel: vscode.WebviewPanel | undefined) => vscode.Uri | undefined;
-  getVarsForDoc: (docUri: string) => GlobalVar[];
-  setVarsForDoc: (docUri: string, list: GlobalVar[]) => void;
+  getGlobalsForDoc: (docUri: string) => GlobalVar[];
+  getLocalsForDoc: (docUri: string) => GlobalVar[];
+  setGlobalValue: (docUri: string, name: string, value: any) => void;
+  setLocalValue: (docUri: string, name: string, value: any) => void;
 }
 
 let variablesPanelView: vscode.WebviewView | undefined;
@@ -16,14 +18,16 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
     if (!variablesPanelView) return;
     try {
       const panel = deps.getActiveP5Panel();
-      let vars: GlobalVar[] = [];
+      let globals: GlobalVar[] = [];
+      let locals: GlobalVar[] = [];
       if (panel) {
         const docUri = deps.getDocUriForPanel(panel)?.toString();
         if (docUri) {
-          vars = deps.getVarsForDoc(docUri) || [];
+          globals = deps.getGlobalsForDoc(docUri) || [];
+          locals = deps.getLocalsForDoc(docUri) || [];
         }
       }
-      variablesPanelView.webview.postMessage({ type: 'setGlobalVars', variables: vars });
+      variablesPanelView.webview.postMessage({ type: 'setVarsSplit', globals, locals });
     } catch { }
   }
 
@@ -42,7 +46,8 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
       body { margin: 0; font-family: monospace; color: var(--vscode-editor-foreground); background: transparent; }
       .wrap { padding: 8px; }
       .muted { opacity: 0.8; }
-      table { border-collapse: collapse; width: 100%; font-size: 15px; }
+      h3 { margin: 8px 0 6px 0; color: #307dc1; }
+      table { border-collapse: collapse; width: 100%; font-size: 15px; margin-bottom: 10px; }
   th, td { border: 1px solid #8884; padding: 4px 8px; text-align: left; }
   th { background: #2222; color: #307dc1; }
       /* Make inputs fill the table cell */
@@ -59,7 +64,10 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
   </head>
   <body>
     <div class="wrap">
-      <div id="vars-table"></div>
+      <h3>Global variables</h3>
+      <div id="globals-table"></div>
+      <h3>Local variables</h3>
+      <div id="locals-table"></div>
     </div>
     <script>
       // Acquire VS Code API once and reuse
@@ -72,8 +80,9 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
         }
       }
       // Live-patch support to avoid rebuilding the table on each update
-      var _varsRendered = false;
-      var _varsIndex = new Map(); // name -> { type }
+      var _rendered = false;
+      var _globalsIndex = new Map(); // name -> { type }
+      var _localsIndex = new Map();
       function normalizeForInput(type, v) {
         if (type === 'number') {
           var n = Number(v);
@@ -87,28 +96,28 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
         if (type === 'boolean') return !!v;
         return (v === undefined || v === null) ? '' : String(v);
       }
-      function buildTable(vars) {
-        var tableDiv = document.getElementById('vars-table');
+      function buildTable(targetId, vars, scope) {
+        var tableDiv = document.getElementById(targetId);
         if (!tableDiv) return;
         if (!vars.length) {
-          tableDiv.innerHTML = '<span class="muted">No global variables</span>';
-          _varsRendered = true; _varsIndex = new Map();
+          tableDiv.innerHTML = scope === 'globals' ? '<span class="muted">No global variables</span>' : '<span class="muted">No local variables</span>';
+          if (scope === 'globals') _globalsIndex = new Map(); else _localsIndex = new Map();
           return;
         }
         var html = '<table><thead><tr><th>Name</th><th>Value</th><th>Type</th></tr></thead><tbody>';
-        _varsIndex = new Map();
+        if (scope === 'globals') _globalsIndex = new Map(); else _localsIndex = new Map();
         for (var i = 0; i < vars.length; ++i) {
           var v = vars[i];
-          _varsIndex.set(v.name, { type: v.type });
+          if (scope === 'globals') _globalsIndex.set(v.name, { type: v.type }); else _localsIndex.set(v.name, { type: v.type });
           html += '<tr><td>' + v.name + '</td><td>';
           if (v.type === 'boolean') {
-            html += '<input type="checkbox" data-var="' + v.name + '"' + (v.value ? ' checked' : '') + ' />';
+            html += '<input type="checkbox" data-var="' + v.name + '" data-scope="' + scope + '"' + (v.value ? ' checked' : '') + ' />';
           } else if (v.type === 'number') {
-            html += '<input type="number" data-var="' + v.name + '" value="' + normalizeForInput('number', v.value) + '" step="any" />';
+            html += '<input type="number" data-var="' + v.name + '" data-scope="' + scope + '" value="' + normalizeForInput('number', v.value) + '" step="any" />';
           } else if (v.type === 'array') {
-            html += '<input type="text" data-var="' + v.name + '" data-type="array" value="' + normalizeForInput('array', v.value).replace(/"/g, '&quot;') + '" />';
+            html += '<input type="text" data-var="' + v.name + '" data-scope="' + scope + '" data-type="array" value="' + normalizeForInput('array', v.value).replace(/"/g, '&quot;') + '" />';
           } else {
-            html += '<input type="text" data-var="' + v.name + '" value="' + normalizeForInput('text', v.value) + '" />';
+            html += '<input type="text" data-var="' + v.name + '" data-scope="' + scope + '" value="' + normalizeForInput('text', v.value) + '" />';
           }
           html += '</td><td>' + v.type + '</td></tr>';
         }
@@ -117,6 +126,7 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
         var inputs = tableDiv.querySelectorAll('input[data-var]');
         inputs.forEach(function(input) {
           var name = input.getAttribute('data-var');
+          var scopeAttr = input.getAttribute('data-scope') || 'globals';
           if (input.type === 'checkbox') {
             // Checkbox: change is fine (no continuous intermediate states)
             input.addEventListener('change', function() { sendVarUpdate(name, input.checked); });
@@ -186,26 +196,25 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
             input.addEventListener('change', function() { sendVarUpdate(name, input.value); });
           }
         });
-        _varsRendered = true;
+        _rendered = true;
       }
-      function patchValues(vars) {
-        var tableDiv = document.getElementById('vars-table');
+      function patchValues(targetId, vars, scope) {
+        var tableDiv = document.getElementById(targetId);
         if (!tableDiv) return;
         var needRebuild = false;
-        // Fast check: if count differs, rebuild
-        if (_varsIndex.size !== vars.length) needRebuild = true;
+        var indexMap = scope === 'globals' ? _globalsIndex : _localsIndex;
+        if (indexMap.size !== vars.length) needRebuild = true;
         for (var i = 0; i < vars.length && !needRebuild; ++i) {
           var v = vars[i];
-          var meta = _varsIndex.get(v.name);
+          var meta = indexMap.get(v.name);
           if (!meta || meta.type !== v.type) { needRebuild = true; break; }
         }
-        if (needRebuild || !_varsRendered) { buildTable(vars); return; }
-        // Patch existing inputs
+        if (needRebuild || !_rendered) { buildTable(targetId, vars, scope); return; }
         for (var j = 0; j < vars.length; ++j) {
           var vv = vars[j];
           var input = tableDiv.querySelector('input[data-var="' + vv.name + '"]');
           if (!input) { needRebuild = true; break; }
-          if (input === document.activeElement) continue; // don't clobber while typing
+          if (input === document.activeElement) continue;
           if (vv.type === 'boolean') {
             var chk = !!vv.value;
             if (input.checked !== chk) input.checked = chk;
@@ -221,12 +230,19 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
             if (input.value !== tStr) input.value = tStr;
           }
         }
-        if (needRebuild) buildTable(vars);
+        if (needRebuild) buildTable(targetId, vars, scope);
       }
       window.addEventListener('message', function(event) {
-        if (event.data && event.data.type === 'setGlobalVars') {
-          var vars = event.data.variables || [];
-          if (!_varsRendered) buildTable(vars); else patchValues(vars);
+        if (event.data && event.data.type === 'setVarsSplit') {
+          var globals = event.data.globals || [];
+          var locals = event.data.locals || [];
+          if (!_rendered) {
+            buildTable('globals-table', globals, 'globals');
+            buildTable('locals-table', locals, 'locals');
+          } else {
+            patchValues('globals-table', globals, 'globals');
+            patchValues('locals-table', locals, 'locals');
+          }
         }
       });
     </script>
@@ -244,17 +260,9 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
             const panel = deps.getActiveP5Panel();
             const docUri = panel ? deps.getDocUriForPanel(panel)?.toString() : undefined;
             if (docUri) {
-              const list = [...(deps.getVarsForDoc(docUri) || [])];
-              const idx = list.findIndex(v => v.name === name);
-              if (idx >= 0) {
-                list[idx] = { ...list[idx], value };
-              } else {
-                const isArr = Array.isArray(value);
-                const t = typeof value;
-                const type = isArr ? 'array' : ((t === 'boolean' || t === 'number') ? t : 'string');
-                list.push({ name, value, type });
-              }
-              deps.setVarsForDoc(docUri, list);
+              // Try updating global first; otherwise treat as local
+              deps.setGlobalValue(docUri, name, value);
+              deps.setLocalValue(docUri, name, value);
             }
             updateVariablesPanel();
           } catch { }

@@ -7,7 +7,7 @@ export function handleSetGlobalVars(
     variables: Array<{ name: string; value: any; type: string }>;
   },
   deps: {
-    setVarsForDoc: (docUri: string, list: Array<{ name: string; value: any; type: string }>) => void;
+    setGlobalsForDoc: (docUri: string, list: Array<{ name: string; value: any; type: string }>) => void;
     updateVariablesPanel: () => void;
     isActivePanel: (panel: vscode.WebviewPanel) => boolean;
   }
@@ -15,7 +15,7 @@ export function handleSetGlobalVars(
   try {
     const thisDocUri = params.editor.document.uri.toString();
     const list = Array.isArray(params.variables) ? params.variables : [];
-    deps.setVarsForDoc(thisDocUri, list);
+    deps.setGlobalsForDoc(thisDocUri, list);
     if (deps.isActivePanel(params.panel)) {
       deps.updateVariablesPanel();
     }
@@ -32,21 +32,30 @@ export function handleUpdateGlobalVar(
     value: any;
   },
   deps: {
-    getVarsForDoc: (docUri: string) => Array<{ name: string; value: any; type: string }>;
-    setVarsForDoc: (docUri: string, list: Array<{ name: string; value: any; type: string }>) => void;
+    getGlobalsForDoc: (docUri: string) => Array<{ name: string; value: any; type: string }>;
+    getLocalsForDoc: (docUri: string) => Array<{ name: string; value: any; type: string }>;
+    setGlobalValue: (docUri: string, name: string, value: any) => void;
+    upsertLocal: (docUri: string, v: { name: string; value: any; type: string }) => void;
     updateVariablesPanel: () => void;
     isActivePanel: (panel: vscode.WebviewPanel) => boolean;
   }
 ) {
   try {
     const thisDocUri = params.editor.document.uri.toString();
-    const arr = deps.getVarsForDoc(thisDocUri) || [];
-    const idx = arr.findIndex(v => v.name === params.name);
-    if (idx !== -1) {
-      arr[idx] = { ...arr[idx], value: params.value };
-      deps.setVarsForDoc(thisDocUri, arr);
-      if (deps.isActivePanel(params.panel)) deps.updateVariablesPanel();
+    const globals = deps.getGlobalsForDoc(thisDocUri) || [];
+    const isGlobal = globals.some(v => v.name === params.name);
+    if (isGlobal) {
+      deps.setGlobalValue(thisDocUri, params.name, params.value);
+    } else {
+      let type = 'string';
+      try {
+        if (Array.isArray(params.value)) type = 'array';
+        else if (typeof params.value === 'number') type = 'number';
+        else if (typeof params.value === 'boolean') type = 'boolean';
+      } catch { }
+      deps.upsertLocal(thisDocUri, { name: String(params.name), value: params.value, type });
     }
+    if (deps.isActivePanel(params.panel)) deps.updateVariablesPanel();
   } catch {
     deps.updateVariablesPanel();
   }
