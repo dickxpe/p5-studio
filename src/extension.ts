@@ -448,7 +448,23 @@ export function activate(context: vscode.ExtensionContext) {
   (async () => { try { await layoutService.beginRestore(); } catch { } })();
 
   let _lastStepHighlightEditor: vscode.TextEditor | undefined;
-  vscode.window.onDidChangeActiveTextEditor(editor => {
+  vscode.window.onDidChangeActiveTextEditor(async (editor) => {
+    // --- Update context keys for active document only ---
+    let steppingActive = false;
+    let debugPrimed = false;
+    if (editor && editor.document) {
+      const docUri = editor.document.uri.toString();
+      steppingActive = contextService?.getSteppingActive?.(docUri) || false;
+      debugPrimed = contextService?.getDebugPrimed?.(docUri) || false;
+      await contextService.setContext('p5SteppingActive', steppingActive);
+      await contextService.setContext('p5DebugPrimed', debugPrimed);
+    } else {
+      // No editor or not a document: always revert to non-debug state
+      await contextService.setContext('p5SteppingActive', false);
+      await contextService.setContext('p5DebugPrimed', false);
+    }
+
+    // --- Existing logic ---
     // Clear highlight in the previously active editor (if any)
     if (_lastStepHighlightEditor && _lastStepHighlightEditor !== editor) {
       clearStepHighlight(_lastStepHighlightEditor);
@@ -457,12 +473,15 @@ export function activate(context: vscode.ExtensionContext) {
     updateJsOrTsContext(editor);
     if (!editor) return;
     const docUri = editor.document.uri.toString();
-    // Restore focus for LIVE P5 panel
+    // Restore focus for LIVE P5 panel and set hasP5Webview context per sketch
     const panel = webviewPanelMap.get(docUri);
     if (panel) {
       panel.reveal(panel.viewColumn, true);
       activeP5Panel = panel;
       vscode.commands.executeCommand('setContext', 'hasP5Webview', true);
+    } else {
+      // No webpanel for this sketch: show Open P5 button
+      vscode.commands.executeCommand('setContext', 'hasP5Webview', false);
     }
     // Restore focus for Blockly panel if it exists
     try {
@@ -479,14 +498,9 @@ export function activate(context: vscode.ExtensionContext) {
     // Track the last editor for highlight clearing
     _lastStepHighlightEditor = editor;
     // Focus the output channel for the active sketch
-    try {
-      const ch = getOutputChannelForDoc(docUri);
-      if (ch) showAndTrackOutputChannel(ch);
-    } catch { }
-    // Move editor to left column if needed (centralized in layout service)
-    layoutService.ensureEditorInLeftColumn(editor).catch(() => undefined);
-    lintActiveEditor();
   });
+
+  // --- (end handler) ---
 
   vscode.workspace.onDidChangeTextDocument(e => {
     if (e.document === vscode.window.activeTextEditor?.document) {
