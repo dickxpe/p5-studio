@@ -136,6 +136,84 @@
     theme: chosenTheme,
   });
 
+  // --- Show 'move' cursor while panning the workspace ---
+  (function installPanCursorHandlers() {
+    const blocklyDiv = document.getElementById('blocklyDiv');
+    // Inject CSS that force-overrides cursor with !important when panning
+    try {
+      const styleId = 'blk-move-cursor-css';
+      if (!document.getElementById(styleId)) {
+        const st = document.createElement('style');
+        st.id = styleId;
+        st.textContent = '.blk-cursor-move #blocklyDiv, .blk-cursor-move #blocklyDiv svg, .blk-cursor-move .blocklySvg, .blk-cursor-move .blocklyMainBackground { cursor: move !important; }';
+        document.head.appendChild(st);
+      }
+    } catch (e) { /* ignore */ }
+    function setCursorMoving(on) {
+      try { document.documentElement.classList.toggle('blk-cursor-move', !!on); } catch (e) { /* ignore */ }
+    }
+    // Fallback: detect drag and hover on background rect
+    if (blocklyDiv) {
+      let isPanning = false;
+      blocklyDiv.addEventListener('mousedown', function (e) {
+        try {
+          const t = e && e.target;
+          if (t && t.classList && t.classList.contains('blocklyMainBackground')) {
+            isPanning = true;
+            setCursorMoving(true);
+          }
+        } catch (err) { }
+      });
+      blocklyDiv.addEventListener('mouseover', function (e) {
+        try {
+          const t = e && e.target;
+          if (t && t.classList && t.classList.contains('blocklyMainBackground')) {
+            setCursorMoving(true);
+          }
+        } catch (err) { }
+      });
+      blocklyDiv.addEventListener('mouseout', function (e) {
+        try {
+          const t = e && e.target;
+          if (t && t.classList && t.classList.contains('blocklyMainBackground') && !isPanning) {
+            setCursorMoving(false);
+          }
+        } catch (err) { }
+      });
+      window.addEventListener('mousemove', function () { if (isPanning) setCursorMoving(true); });
+      window.addEventListener('mouseup', function () { if (isPanning) { isPanning = false; setCursorMoving(false); } });
+      blocklyDiv.addEventListener('mouseleave', function () { if (isPanning) { isPanning = false; setCursorMoving(false); } });
+    }
+    // Prefer workspace change events where available (viewport changes imply pan/scroll)
+    if (ws && typeof ws.addChangeListener === 'function') {
+      ws.addChangeListener(function (event) {
+        try {
+          if (!event) return;
+          // Blockly 8+: event.type is string 'viewport'; older builds may use constant
+          const isViewport = (event.type === 'viewport') || (Blockly.Events && event.type === Blockly.Events.VIEWPORT);
+          if (isViewport) {
+            // Briefly show move cursor on viewport change; background handlers will keep it during drag
+            setCursorMoving(true);
+            setTimeout(() => setCursorMoving(false), 80);
+            return;
+          }
+          // Some builds emit UI gesture start/end
+          const isUi = (event.type === 'ui') || (Blockly.Events && event.type === Blockly.Events.UI);
+          if (isUi && event.element === 'gesture') {
+            if (event.newValue === 'start') {
+              try {
+                const g = ws.currentGesture_;
+                if (g && (g.isDraggingWorkspace_ || g.isDraggingWorkspace)) setCursorMoving(true);
+              } catch (e) { /* ignore */ }
+            } else if (event.newValue === 'end') {
+              setCursorMoving(false);
+            }
+          }
+        } catch (e) { /* ignore */ }
+      });
+    }
+  })();
+
   // Provide custom dialogs to avoid window.prompt/alert/confirm (blocked in sandbox)
   (function installCustomDialogs() {
     function ensureHost() {
