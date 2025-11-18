@@ -8,7 +8,7 @@ export interface VariablesViewDeps {
   getGlobalsForDoc: (docUri: string) => GlobalVar[];
   getLocalsForDoc: (docUri: string) => GlobalVar[];
   getLocalsHeadingForDoc: (docUri: string) => 'locals' | 'variables';
-  setGlobalValue: (docUri: string, name: string, value: any) => void;
+  setGlobalValue: (docUri: string, name: string, value: any, opts?: { updatedAt?: number }) => void;
   setLocalValue: (docUri: string, name: string, value: any) => void;
 }
 
@@ -199,9 +199,11 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
         transform: rotate(45deg);
         margin-bottom: 1px;
       }
-      .error {
-        border-color: var(--vscode-inputValidation-errorBorder, #f14c4c);
-        background-color: var(--vscode-inputValidation-errorBackground, rgba(241,76,76,0.15));
+      input.error,
+      input[data-invalid="true"] {
+        border-color: var(--vscode-inputValidation-errorBorder, #f14c4c) !important;
+        background-color: var(--vscode-inputValidation-errorBackground, rgba(241,76,76,0.18)) !important;
+        box-shadow: 0 0 0 1px var(--vscode-inputValidation-errorBorder, #f14c4c);
       }
     </style>
   </head>
@@ -222,12 +224,108 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
         if (_localsHeading === 'variables') return 'Variable(s)';
         return scope === 'globals' ? 'Global variable(s)' : 'Local variable(s)';
       }
-      function sendVarUpdate(name, value) {
-        if (vscode) {
-          vscode.postMessage({ type: 'updateGlobalVar', name: name, value: value });
-        } else if (window.parent) {
-          parent.postMessage({ type: 'updateGlobalVar', name: name, value: value }, '*');
+      function cloneForMessage(value) {
+        if (Array.isArray(value)) {
+          try { return JSON.parse(JSON.stringify(value)); }
+          catch {
+            try { return value.map(function(item) { return cloneForMessage(item); }); }
+            catch {
+              try { return Array.from(value); }
+              catch { return value; }
+            }
+          }
         }
+        return value;
+      }
+      function markArrayInvalid(input) {
+        try {
+          input.classList.add('error');
+          input.setAttribute('data-invalid', 'true');
+          input.setAttribute('aria-invalid', 'true');
+          if (!input.getAttribute('title')) {
+            input.setAttribute('title', 'Enter a valid JSON array.');
+          }
+          if (typeof input.setCustomValidity === 'function') {
+            input.setCustomValidity('Enter a valid JSON array.');
+          }
+        } catch { }
+      }
+      function clearArrayError(input) {
+        try {
+          input.classList.remove('error');
+          input.removeAttribute('data-invalid');
+          input.removeAttribute('aria-invalid');
+          if (input.getAttribute('title') === 'Enter a valid JSON array.') {
+            input.removeAttribute('title');
+          }
+          if (typeof input.setCustomValidity === 'function') {
+            input.setCustomValidity('');
+          }
+        } catch { }
+      }
+      function sendVarUpdate(name, value, scope) {
+        var payload = cloneForMessage(value);
+        var generatedAt = Date.now();
+        var scopeTag = scope === 'locals' ? 'locals' : 'globals';
+        if (vscode) {
+          vscode.postMessage({ type: 'updateGlobalVar', name: name, value: payload, generatedAt: generatedAt, scope: scopeTag });
+        } else if (window.parent) {
+          parent.postMessage({ type: 'updateGlobalVar', name: name, value: payload, generatedAt: generatedAt, scope: scopeTag }, '*');
+        }
+      }
+      function makeInvalidKey(name, scope) {
+        return (scope || 'globals') + '::' + name;
+      }
+      var _invalidVars = new Set();
+      var _invalidDrafts = new Map();
+      function setInvalidFlag(name, scope, isInvalid) {
+        var key = makeInvalidKey(name, scope);
+        if (isInvalid) _invalidVars.add(key);
+        else {
+          _invalidVars.delete(key);
+          _invalidDrafts.delete(key);
+        }
+      }
+      function setInvalidDraft(name, scope, value) {
+        var key = makeInvalidKey(name, scope);
+        if (typeof value === 'string' && value.length > 0) {
+          _invalidDrafts.set(key, value);
+        } else {
+          _invalidDrafts.delete(key);
+        }
+      }
+      function applyInvalidStates(tableDiv, scope) {
+        if (!tableDiv) return;
+        var prefix = (scope || 'globals') + '::';
+        _invalidVars.forEach(function(key) {
+          if (typeof key !== 'string') return;
+          if (!key.startsWith(prefix)) return;
+          var name = key.slice(prefix.length);
+          if (!name) return;
+          var input = tableDiv.querySelector('input[data-var="' + name + '"][data-scope="' + scope + '"]');
+          if (input && input.getAttribute('data-type') === 'array') {
+            var stored = _invalidDrafts.get(key);
+            if (typeof stored === 'string') {
+              if (input.value !== stored) input.value = stored;
+            }
+            markArrayInvalid(input);
+          }
+        });
+      }
+      function pruneInvalidForScope(scope, vars) {
+        var keep = new Set();
+        var prefix = (scope || 'globals') + '::';
+        for (var i = 0; i < vars.length; ++i) {
+          keep.add(makeInvalidKey(vars[i].name, scope));
+        }
+        Array.from(_invalidVars).forEach(function(key) {
+          if (typeof key !== 'string') return;
+          if (!key.startsWith(prefix)) return;
+          if (!keep.has(key)) {
+            _invalidVars.delete(key);
+            _invalidDrafts.delete(key);
+          }
+        });
       }
       function toggleEmptyState(show) {
         if (!emptyStateEl) return false;
@@ -316,14 +414,17 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
           if (scope === 'globals') _globalsIndex = new Map(); else _localsIndex = new Map();
           return;
         }
+                    
         var colLabel = getColumnLabel(scope);
         var html = '<table><thead><tr><th class="name-col">' + colLabel + '</th><th class="value-col">Value</th><th class="type-col">Type</th></tr></thead><tbody>';
         if (scope === 'globals') _globalsIndex = new Map(); else _localsIndex = new Map();
         for (var i = 0; i < vars.length; ++i) {
+                    
           var v = vars[i];
           if (scope === 'globals') _globalsIndex.set(v.name, { type: v.type }); else _localsIndex.set(v.name, { type: v.type });
           html += '<tr><td class="name-col">' + v.name + '</td><td class="value-col">';
           if (v.type === 'boolean') {
+                  
             html += '<label class="checkbox-wrapper"><input type="checkbox" data-var="' + v.name + '" data-scope="' + scope + '"' + (v.value ? ' checked' : '') + ' /><span class="checkbox-custom" aria-hidden="true"></span></label>';
           } else if (v.type === 'number') {
             html += '<input type="number" data-var="' + v.name + '" data-scope="' + scope + '" value="' + normalizeForInput('number', v.value) + '" step="any" />';
@@ -335,6 +436,7 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
           html += '</td><td class="type-col">' + v.type + '</td></tr>';
         }
         html += '</tbody></table>';
+                  
         tableDiv.innerHTML = html;
         decorateNumberInputs(tableDiv);
         var inputs = tableDiv.querySelectorAll('input[data-var]');
@@ -343,42 +445,58 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
           var scopeAttr = input.getAttribute('data-scope') || 'globals';
           if (input.type === 'checkbox') {
             // Checkbox: change is fine (no continuous intermediate states)
-            input.addEventListener('change', function() { sendVarUpdate(name, input.checked); });
+            input.addEventListener('change', function() { sendVarUpdate(name, input.checked, scopeAttr); });
           } else if (input.type === 'number') {
             // Number: send on every increment/decrement or typed change
             let numDebounceTimer = null;
             input.addEventListener('input', function() {
               if (numDebounceTimer) clearTimeout(numDebounceTimer);
               numDebounceTimer = setTimeout(function() {
-                if (input.value === '') { sendVarUpdate(name, ''); return; }
+                if (input.value === '') { sendVarUpdate(name, '', scopeAttr); return; }
                 var num = Number(input.value);
-                if (!Number.isNaN(num)) sendVarUpdate(name, num); else sendVarUpdate(name, '');
+                if (!Number.isNaN(num)) sendVarUpdate(name, num, scopeAttr); else sendVarUpdate(name, '', scopeAttr);
               }, 25);
             });
             // Also fire a final confirmation on blur (optional redundancy)
             input.addEventListener('change', function() {
-              if (input.value === '') { sendVarUpdate(name, ''); return; }
+              if (input.value === '') { sendVarUpdate(name, '', scopeAttr); return; }
               var num = Number(input.value);
-              if (!Number.isNaN(num)) sendVarUpdate(name, num); else sendVarUpdate(name, '');
+              if (!Number.isNaN(num)) sendVarUpdate(name, num, scopeAttr); else sendVarUpdate(name, '', scopeAttr);
             });
           } else if (input.getAttribute('data-type') === 'array') {
             // Array: treat value as JSON; validate on change
             let arrDebounceTimer = null;
             input.addEventListener('input', function() {
               if (arrDebounceTimer) clearTimeout(arrDebounceTimer);
+              var rawImmediate = input.value;
+              if (rawImmediate.trim() === '') {
+                clearArrayError(input);
+                setInvalidFlag(name, scopeAttr, false);
+                setInvalidDraft(name, scopeAttr, '');
+              } else {
+                markArrayInvalid(input);
+                setInvalidFlag(name, scopeAttr, true);
+                setInvalidDraft(name, scopeAttr, rawImmediate);
+              }
               arrDebounceTimer = setTimeout(function() {
                 var raw = input.value;
                 if (raw.trim() === '') { return; }
                 try {
                   var parsed = JSON.parse(raw);
                   if (Array.isArray(parsed)) {
-                    input.classList.remove('error');
-                    sendVarUpdate(name, parsed);
+                    clearArrayError(input);
+                    setInvalidFlag(name, scopeAttr, false);
+                    setInvalidDraft(name, scopeAttr, '');
+                    sendVarUpdate(name, parsed, scopeAttr);
                   } else {
-                    input.classList.add('error');
+                    markArrayInvalid(input);
+                    setInvalidFlag(name, scopeAttr, true);
+                    setInvalidDraft(name, scopeAttr, raw);
                   }
                 } catch {
-                  input.classList.add('error');
+                  markArrayInvalid(input);
+                  setInvalidFlag(name, scopeAttr, true);
+                  setInvalidDraft(name, scopeAttr, raw);
                 }
               }, 150);
             });
@@ -388,13 +506,19 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
               try {
                 var parsed = JSON.parse(raw);
                 if (Array.isArray(parsed)) {
-                  input.classList.remove('error');
-                  sendVarUpdate(name, parsed);
+                  clearArrayError(input);
+                  setInvalidFlag(name, scopeAttr, false);
+                  setInvalidDraft(name, scopeAttr, '');
+                  sendVarUpdate(name, parsed, scopeAttr);
                 } else {
-                  input.classList.add('error');
+                  markArrayInvalid(input);
+                  setInvalidFlag(name, scopeAttr, true);
+                  setInvalidDraft(name, scopeAttr, raw);
                 }
               } catch {
-                input.classList.add('error');
+                markArrayInvalid(input);
+                setInvalidFlag(name, scopeAttr, true);
+                setInvalidDraft(name, scopeAttr, raw);
               }
             });
           } else {
@@ -403,13 +527,15 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
             input.addEventListener('input', function() {
               if (textDebounceTimer) clearTimeout(textDebounceTimer);
               textDebounceTimer = setTimeout(function() {
-                sendVarUpdate(name, input.value);
+                sendVarUpdate(name, input.value, scopeAttr);
               }, 25);
             });
             // Optional final send on change (kept for consistency; cheap)
-            input.addEventListener('change', function() { sendVarUpdate(name, input.value); });
+            input.addEventListener('change', function() { sendVarUpdate(name, input.value, scopeAttr); });
           }
         });
+        applyInvalidStates(tableDiv, scope);
+        pruneInvalidForScope(scope, vars);
         _rendered = true;
       }
       function patchValues(targetId, vars, scope) {
@@ -418,6 +544,7 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
         if (!vars.length) {
           tableDiv.innerHTML = '';
           if (scope === 'globals') _globalsIndex = new Map(); else _localsIndex = new Map();
+          pruneInvalidForScope(scope, []);
           return;
         }
         var needRebuild = false;
@@ -431,8 +558,12 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
         if (needRebuild || !_rendered) { buildTable(targetId, vars, scope); return; }
         for (var j = 0; j < vars.length; ++j) {
           var vv = vars[j];
-          var input = tableDiv.querySelector('input[data-var="' + vv.name + '"]');
+          var input = tableDiv.querySelector('input[data-var="' + vv.name + '"][data-scope="' + scope + '"]');
           if (!input) { needRebuild = true; break; }
+          var key = makeInvalidKey(vv.name, scope);
+          if (_invalidVars.has(key)) {
+            continue;
+          }
           if (input === document.activeElement) continue;
           if (vv.type === 'boolean') {
             var chk = !!vv.value;
@@ -443,13 +574,16 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
           } else if (vv.type === 'array') {
             var arrStr = normalizeForInput('array', vv.value);
             if (input.value !== arrStr) input.value = arrStr;
-            input.classList.remove('error');
+            clearArrayError(input);
+            setInvalidFlag(vv.name, scope, false);
+            setInvalidDraft(vv.name, scope, '');
           } else {
             var tStr = normalizeForInput('text', vv.value);
             if (input.value !== tStr) input.value = tStr;
           }
         }
         if (needRebuild) buildTable(targetId, vars, scope);
+        else pruneInvalidForScope(scope, vars);
       }
       window.addEventListener('message', function(event) {
         if (event.data && event.data.type === 'setVarsSplit') {
@@ -489,19 +623,22 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
           try {
             const name = String(msg.name);
             const value = msg.value;
+            const scope = msg.scope === 'locals' ? 'locals' : 'globals';
             const panel = deps.getActiveP5Panel();
             const docUri = panel ? deps.getDocUriForPanel(panel)?.toString() : undefined;
             if (docUri) {
-              // Try updating global first; otherwise treat as local
-              deps.setGlobalValue(docUri, name, value);
-              deps.setLocalValue(docUri, name, value);
+              if (scope === 'globals') {
+                deps.setGlobalValue(docUri, name, value, { updatedAt: msg.generatedAt });
+              } else {
+                deps.setLocalValue(docUri, name, value);
+              }
             }
             updateVariablesPanel();
           } catch { }
 
           const activePanel = deps.getActiveP5Panel();
-          if (activePanel && activePanel.webview) {
-            activePanel.webview.postMessage({ type: 'updateGlobalVar', name: msg.name, value: msg.value });
+          if (activePanel && activePanel.webview && msg.scope !== 'locals') {
+            activePanel.webview.postMessage({ type: 'updateGlobalVar', name: msg.name, value: msg.value, generatedAt: msg.generatedAt });
           }
         }
       });

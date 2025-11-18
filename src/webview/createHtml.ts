@@ -722,7 +722,12 @@ function runUserSketch(code){
                     // Skip complex types for the VARIABLES panel
                     return;
                   }
-                  try { vscode.postMessage({ type: 'updateGlobalVar', name, value: val }); } catch {}
+                  const generatedAt = Date.now();
+                  try {
+                    if (!window._p5VarUpdateTimes) window._p5VarUpdateTimes = {};
+                    window._p5VarUpdateTimes[name] = generatedAt;
+                  } catch {}
+                  try { vscode.postMessage({ type: 'updateGlobalVar', name, value: cloneValueForPost(val), generatedAt }); } catch {}
                 } catch {}
               });
             }
@@ -895,12 +900,18 @@ window.addEventListener("message", e => {
       }
       const readOnly = !!data.readOnly;
       const suppressPanel = !!data.suppressPanel;
-      renderGlobalVarControls(data.variables, readOnly, { suppressPanel });
-      // Store types for later use (use v.type provided by extension)
+      // Store types and update timestamps for later use before rendering
       window._p5GlobalVarTypes = {};
-  data.variables.forEach((v) => {
-        window._p5GlobalVarTypes[v.name] = v.type || typeof v.value;
+      if (!window._p5VarUpdateTimes) window._p5VarUpdateTimes = {};
+      (data.variables || []).forEach((v) => {
+        if (!v || !v.name) return;
+        const incomingType = v.type || (Array.isArray(v.value) ? 'array' : typeof v.value);
+        window._p5GlobalVarTypes[v.name] = incomingType;
+        if (typeof v.updatedAt === 'number') {
+          window._p5VarUpdateTimes[v.name] = v.updatedAt;
+        }
       });
+      renderGlobalVarControls(data.variables, readOnly, { suppressPanel });
       // Install watchers so changes from the sketch propagate live to the VARIABLES panel
   try { if (typeof window._installGlobalVarWatchers === 'function') window._installGlobalVarWatchers(data.variables); } catch {}
       // Start rAF-based polling to ensure live updates even when accessors cannot be defined
@@ -925,10 +936,17 @@ window.addEventListener("message", e => {
                 if (!Number.isNaN(n)) val = n;
               } else if (t === 'boolean') {
                 val = (val === true || val === 'true' || val === 1 || val === '1');
+              } else if (t === 'array' || Array.isArray(val)) {
+                val = cloneValueForPost(val);
               } else if (t !== 'string') {
                 return;
               }
-              try { vscode.postMessage({ type: 'updateGlobalVar', name, value: val }); } catch {}
+              const generatedAt = Date.now();
+              try {
+                if (!window._p5VarUpdateTimes) window._p5VarUpdateTimes = {};
+                window._p5VarUpdateTimes[name] = generatedAt;
+              } catch {}
+              try { vscode.postMessage({ type: 'updateGlobalVar', name, value: cloneValueForPost(val), generatedAt }); } catch {}
             } catch {}
           });
         }
@@ -1054,14 +1072,40 @@ function updateGlobalVarInSketch(name, value) {
     if (!isNaN(num)) {
   window[name] = num;
   try { if (window._p5VarPollLast) window._p5VarPollLast[name] = num; } catch {}
+  try {
+    if (!window._p5VarUpdateTimes) window._p5VarUpdateTimes = {};
+    window._p5VarUpdateTimes[name] = Date.now();
+  } catch {}
     }
   } else if (type === 'boolean') {
     const b = (value === 'true' || value === true);
   window[name] = b;
   try { if (window._p5VarPollLast) window._p5VarPollLast[name] = b; } catch {}
+  try {
+    if (!window._p5VarUpdateTimes) window._p5VarUpdateTimes = {};
+    window._p5VarUpdateTimes[name] = Date.now();
+  } catch {}
+  } else if (type === 'array' || Array.isArray(value)) {
+  window[name] = value;
+    try {
+      if (window._p5VarPollLast) {
+        let serialized = null;
+        try { serialized = JSON.stringify(value); }
+        catch { serialized = null; }
+        window._p5VarPollLast[name] = serialized;
+      }
+    } catch {}
+    try {
+      if (!window._p5VarUpdateTimes) window._p5VarUpdateTimes = {};
+      window._p5VarUpdateTimes[name] = Date.now();
+    } catch {}
   } else {
   window[name] = value;
   try { if (window._p5VarPollLast) window._p5VarPollLast[name] = value; } catch {}
+  try {
+    if (!window._p5VarUpdateTimes) window._p5VarUpdateTimes = {};
+    window._p5VarUpdateTimes[name] = Date.now();
+  } catch {}
   }
 }
 
@@ -1073,23 +1117,33 @@ function updateGlobalVarInSketch(name, value) {
   if (!window._p5LastPostedValues) window._p5LastPostedValues = {};
   if (!window._p5VarPollNames) window._p5VarPollNames = new Set();
   if (!window._p5VarPollLast) window._p5VarPollLast = {};
+  if (!window._p5VarUpdateTimes) window._p5VarUpdateTimes = {};
   window._p5VarPollRaf = window._p5VarPollRaf || null;
 
   // Debounced emitter for updateGlobalVar
   if (typeof window._p5VarControlDebounceDelay !== 'number') window._p5VarControlDebounceDelay = 50;
   let _debounceTimer = null;
   let _pendingUpdates = new Map(); // name -> latest value
+  let _pendingUpdateTimes = new Map(); // name -> timestamp
   function queueUpdate(name, value) {
-    try { _pendingUpdates.set(name, value); } catch {}
+    try { _pendingUpdates.set(name, cloneValueForPost(value)); } catch {}
+    const now = Date.now();
+    try {
+      _pendingUpdateTimes.set(name, now);
+      if (!window._p5VarUpdateTimes) window._p5VarUpdateTimes = {};
+      window._p5VarUpdateTimes[name] = now;
+    } catch {}
     if (_debounceTimer) return;
   const delay = (typeof window._p5VarControlDebounceDelay === 'number' ? window._p5VarControlDebounceDelay : 50);
     _debounceTimer = setTimeout(() => {
       try {
   _pendingUpdates.forEach((val, key) => {
-          try { vscode.postMessage({ type: 'updateGlobalVar', name: key, value: val }); } catch {}
+          const generatedAt = _pendingUpdateTimes.get(key) || Date.now();
+          try { vscode.postMessage({ type: 'updateGlobalVar', name: key, value: cloneValueForPost(val), generatedAt }); } catch {}
         });
       } catch {}
       _pendingUpdates.clear();
+      _pendingUpdateTimes.clear();
       _debounceTimer = null;
     }, delay);
   }
@@ -1117,6 +1171,10 @@ function updateGlobalVarInSketch(name, value) {
         // Capture current value as initial backing value
   let curr = (typeof window[name] !== 'undefined') ? window[name] : v.value;
   window._p5GlobalVarValues[name] = coerceByType(name, curr);
+  if (!window._p5VarUpdateTimes) window._p5VarUpdateTimes = {};
+  if (typeof window._p5VarUpdateTimes[name] !== 'number') {
+    window._p5VarUpdateTimes[name] = Date.now();
+  }
   const desc = Object.getOwnPropertyDescriptor(window, name);
         // Define accessor only if configurable or not defined on window, to avoid errors
         if (!desc || desc.configurable !== false) {
@@ -1133,7 +1191,7 @@ function updateGlobalVarInSketch(name, value) {
               // Only notify if actually changed (strict equality for primitives)
               if (prev !== newVal) {
                 queueUpdate(name, newVal);
-                window._p5LastPostedValues[name] = newVal;
+                window._p5LastPostedValues[name] = cloneValueForPost(newVal);
               }
             }
           });
@@ -1156,6 +1214,16 @@ function updateGlobalVarInSketch(name, value) {
             if (!Number.isNaN(n)) curr = n;
           } else if (t === 'boolean') {
             curr = (curr === true || curr === 'true' || curr === 1 || curr === '1');
+          } else if (t === 'array' || Array.isArray(curr)) {
+            let serialized = null;
+            try { serialized = JSON.stringify(curr); }
+            catch { serialized = null; }
+            const prevSerialized = window._p5VarPollLast[name];
+            if (serialized !== prevSerialized) {
+              window._p5VarPollLast[name] = serialized;
+              queueUpdate(name, curr);
+            }
+            return;
           } else if (t !== 'string') {
             // Skip complex types
             return;
@@ -1178,7 +1246,17 @@ function updateGlobalVarInSketch(name, value) {
       }
       // Seed last values to avoid immediate spam
       if (Array.isArray(vars)) {
-  vars.forEach((v) => { if (v && v.name) window._p5VarPollLast[v.name] = window[v.name]; });
+  vars.forEach((v) => {
+          if (v && v.name) {
+            const val = window[v.name];
+            if (Array.isArray(val)) {
+              try { window._p5VarPollLast[v.name] = JSON.stringify(val); }
+              catch { window._p5VarPollLast[v.name] = null; }
+            } else {
+              window._p5VarPollLast[v.name] = val;
+            }
+          }
+        });
       }
     } catch {}
     if (!window._p5VarPollRaf) {
@@ -1211,6 +1289,20 @@ function showDrawer() {
   setTimeout(() => { tab.style.display = 'none'; }, 200);
 }
 
+function cloneValueForPost(value) {
+  if (Array.isArray(value)) {
+    try { return JSON.parse(JSON.stringify(value)); }
+    catch {
+      try { return value.map((item) => cloneValueForPost(item)); }
+      catch {
+        try { return Array.from(value); }
+        catch { return value; }
+      }
+    }
+  }
+  return value;
+}
+
 // Dynamically creates/removes the variable drawer and tab, and sets up event listeners for variable changes
 function renderGlobalVarControls(vars, readOnly, opts) {
   const suppressPanel = !!(opts && opts.suppressPanel);
@@ -1218,6 +1310,7 @@ function renderGlobalVarControls(vars, readOnly, opts) {
   // but enrich values with current runtime values if available so we don't revert to initial code values.
   if (!suppressPanel && typeof vscode !== 'undefined' && Array.isArray(vars)) {
     try {
+      const snapshotTime = Date.now();
       const list = vars.map((v) => {
         const name = v && v.name;
         if (!name) return v;
@@ -1234,9 +1327,16 @@ function renderGlobalVarControls(vars, readOnly, opts) {
         } else if (t !== 'string') {
           // keep original for complex types
         }
-        return { ...v, value: val, type: t };
+        const safeVal = cloneValueForPost(val);
+        const type = Array.isArray(val) ? 'array' : t;
+        if (!window._p5VarUpdateTimes) window._p5VarUpdateTimes = {};
+        const lastUpdate = (window._p5VarUpdateTimes && typeof window._p5VarUpdateTimes[name] === 'number')
+          ? window._p5VarUpdateTimes[name]
+          : snapshotTime;
+        window._p5VarUpdateTimes[name] = lastUpdate;
+        return { ...v, value: safeVal, type, updatedAt: lastUpdate };
       });
-  vscode.postMessage({ type: 'setGlobalVars', variables: list });
+  vscode.postMessage({ type: 'setGlobalVars', variables: list, generatedAt: snapshotTime });
     } catch {}
   }
   // Remove/hide any existing drawer UI if present

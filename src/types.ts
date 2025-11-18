@@ -18,6 +18,7 @@ export interface GlobalVar {
     name: string;
     type: string;
     value: any;
+    updatedAt?: number;
 }
 
 export interface TopInputItem {

@@ -898,8 +898,8 @@ export function activate(context: vscode.ExtensionContext) {
 
         ; (require('./webview/router') as any).registerWebviewRouter(panel, async (msg: WebviewToExtensionMessage) => {
           if (msg.type === 'setGlobalVars') {
-            handleSetGlobalVars({ panel, editor, variables: msg.variables }, {
-              setGlobalsForDoc: (docUri, list) => variablesService.setGlobalsForDoc(docUri, list),
+            handleSetGlobalVars({ panel, editor, variables: msg.variables, generatedAt: msg.generatedAt }, {
+              setGlobalsForDoc: (docUri, list, opts) => variablesService.setGlobalsForDoc(docUri, list, opts),
               updateVariablesPanel,
               isActivePanel: (p) => activeP5Panel === p,
             });
@@ -912,10 +912,10 @@ export function activate(context: vscode.ExtensionContext) {
             updateVariablesPanel();
             return;
           } else if (msg.type === 'updateGlobalVar') {
-            handleUpdateGlobalVar({ panel, editor, name: msg.name, value: msg.value }, {
+            handleUpdateGlobalVar({ panel, editor, name: msg.name, value: msg.value, generatedAt: msg.generatedAt }, {
               getGlobalsForDoc: (docUri) => variablesService.getGlobalsForDoc(docUri),
               getLocalsForDoc: (docUri) => variablesService.getLocalsForDoc(docUri),
-              setGlobalValue: (docUri, name, value) => variablesService.setGlobalValue(docUri, name, value),
+              setGlobalValue: (docUri, name, value, opts) => variablesService.setGlobalValue(docUri, name, value, opts),
               hasGlobalDefinition: (docUri, name) => variablesService.hasGlobalDefinition(docUri, name),
               upsertLocal: (docUri, v) => variablesService.upsertLocalForDoc(docUri, v),
               updateVariablesPanel,

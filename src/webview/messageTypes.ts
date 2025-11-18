@@ -2,8 +2,8 @@ import type { GlobalVar, TopInputItem } from '../types';
 
 // Messages sent FROM the webview TO the extension host
 export type WebviewToExtensionMessage =
-    | { type: 'setGlobalVars'; variables: GlobalVar[] }
-    | { type: 'updateGlobalVar'; name: string; value: any }
+    | { type: 'setGlobalVars'; variables: GlobalVar[]; generatedAt?: number }
+    | { type: 'updateGlobalVar'; name: string; value: any; generatedAt?: number }
     | { type: 'focus-script-tab' }
     | { type: 'captureVisibilityChanged'; visible: boolean }
     | { type: 'log'; message: string }
