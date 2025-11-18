@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { registerVariablesView } from '../views/variablesView';
 
 export type VarEntry = { name: string; value: any; type: string };
-type GlobalDefs = Map<string, { type: string }>;
+type GlobalDefs = Map<string, { type: string; initialValue?: any }>;
 export type VarState = {
   globals: VarEntry[];
   locals: VarEntry[];
@@ -76,8 +76,8 @@ export function registerVariablesService(
     } else {
       upsertEntry(st.globals, nextEntry);
     }
-
-    st.globalDefs.set(name, { type: hinted });
+    const def = st.globalDefs.get(name) || { type: hinted };
+    st.globalDefs.set(name, { type: hinted || def.type, initialValue: typeof def.initialValue !== 'undefined' ? def.initialValue : value });
   };
 
   const setLocalValueInternal = (docUri: string, name: string, value: any) => {
@@ -105,7 +105,7 @@ export function registerVariablesService(
       st.globalDefs = new Map();
       for (const entry of next) {
         if (entry && entry.name) {
-          st.globalDefs.set(entry.name, { type: entry.type || inferType(entry.value) });
+          st.globalDefs.set(entry.name, { type: entry.type || inferType(entry.value), initialValue: entry.value });
         }
       }
       if (st.globalsSuppressed) {
@@ -118,14 +118,15 @@ export function registerVariablesService(
     },
     primeGlobalsForDoc: (docUri: string, list: VarEntry[]) => {
       const st = ensure(docUri);
+      const snapshot = Array.isArray(list) ? list.slice() : [];
       st.globals = [];
       st.locals = [];
       st.globalDefs = new Map();
       st.globalsSuppressed = true;
-      st.pendingGlobals = [];
-      for (const entry of list || []) {
+      st.pendingGlobals = snapshot;
+      for (const entry of snapshot) {
         if (entry && entry.name) {
-          st.globalDefs.set(entry.name, { type: entry.type || inferType(entry.value) });
+          st.globalDefs.set(entry.name, { type: entry.type || inferType(entry.value), initialValue: entry.value });
         }
       }
     },
@@ -142,6 +143,10 @@ export function registerVariablesService(
         : totalPending;
       const released = st.pendingGlobals.splice(0, toReveal);
       for (const entry of released) {
+        if (typeof entry.value === 'undefined') {
+          const initial = st.globalDefs.get(entry.name)?.initialValue;
+          entry.value = initial;
+        }
         upsertEntry(st.globals, entry);
       }
       st.globalsSuppressed = st.pendingGlobals.length > 0;
