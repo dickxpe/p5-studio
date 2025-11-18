@@ -178,7 +178,7 @@ export async function handleStepRunClicked(
   let rewrittenCode = deps.rewriteUserCodeWithWindowGlobals(instrumented, globals);
   const globalsPayload = (() => {
     const { globals } = deps.extractGlobalVariablesWithConflicts(wrapped);
-    let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+    let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean', 'array'].includes(g.type));
     const hiddenSet = deps.getHiddenGlobalsByDirective(rawCode);
     if (hiddenSet.size > 0) { filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name)); }
     const readOnly = deps.hasOnlySetup(rawCode);
@@ -331,7 +331,7 @@ export async function handleSingleStepClicked(
   let rewrittenCode = deps.rewriteUserCodeWithWindowGlobals(instrumented, globals);
   const globalsPayload = (() => {
     const { globals } = deps.extractGlobalVariablesWithConflicts(wrapped);
-    let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+    let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean', 'array'].includes(g.type));
     const hiddenSet = deps.getHiddenGlobalsByDirective(rawCode);
     if (hiddenSet.size > 0) { filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name)); }
     const readOnly = deps.hasOnlySetup(rawCode);

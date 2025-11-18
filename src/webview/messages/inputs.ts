@@ -71,7 +71,7 @@ export async function handleSubmitTopInputs(
       panel.webview.html = await deps.createHtml(code, panel, extPath, { allowInteractiveTopInputs: deps.getAllowInteractiveTopInputs(), initialCaptureVisible: deps.getInitialCaptureVisible(panel) });
       setTimeout(() => {
         const { globals } = deps.extractGlobalVariablesWithConflicts(code);
-        let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+        let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean', 'array'].includes(g.type));
         const hiddenSet = deps.getHiddenGlobalsByDirective(editor.document.getText());
         if (hiddenSet.size > 0) {
           filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name));
@@ -83,7 +83,7 @@ export async function handleSubmitTopInputs(
       panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: false });
       setTimeout(() => {
         const { globals } = deps.extractGlobalVariablesWithConflicts(code);
-        let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+        let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean', 'array'].includes(g.type));
         const hiddenSet = deps.getHiddenGlobalsByDirective(editor.document.getText());
         if (hiddenSet.size > 0) {
           filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name));

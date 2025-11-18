@@ -67,7 +67,7 @@ export async function handleReloadClicked(
 
   function postGlobalsSnapshot(codeForGlobals: string) {
     const globalsInfo = deps.extractGlobalVariablesWithConflicts(codeForGlobals);
-    let filteredGlobals = globalsInfo.globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+      let filteredGlobals = globalsInfo.globals.filter(g => ['number', 'string', 'boolean', 'array'].includes(g.type));
     const hiddenSet = deps.getHiddenGlobalsByDirective(editor.document.getText());
     if (hiddenSet.size > 0) {
       filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name));

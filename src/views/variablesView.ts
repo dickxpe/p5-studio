@@ -7,6 +7,7 @@ export interface VariablesViewDeps {
   getDocUriForPanel: (panel: vscode.WebviewPanel | undefined) => vscode.Uri | undefined;
   getGlobalsForDoc: (docUri: string) => GlobalVar[];
   getLocalsForDoc: (docUri: string) => GlobalVar[];
+  getLocalsHeadingForDoc: (docUri: string) => 'locals' | 'variables';
   setGlobalValue: (docUri: string, name: string, value: any) => void;
   setLocalValue: (docUri: string, name: string, value: any) => void;
 }
@@ -20,14 +21,18 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
       const panel = deps.getActiveP5Panel();
       let globals: GlobalVar[] = [];
       let locals: GlobalVar[] = [];
+      let localsHeading: 'locals' | 'variables' = 'locals';
       if (panel) {
         const docUri = deps.getDocUriForPanel(panel)?.toString();
         if (docUri) {
           globals = deps.getGlobalsForDoc(docUri) || [];
           locals = deps.getLocalsForDoc(docUri) || [];
+          try {
+            localsHeading = deps.getLocalsHeadingForDoc(docUri) || 'locals';
+          } catch { }
         }
       }
-      variablesPanelView.webview.postMessage({ type: 'setVarsSplit', globals, locals });
+      variablesPanelView.webview.postMessage({ type: 'setVarsSplit', globals, locals, localsHeading });
     } catch { }
   }
 
@@ -212,6 +217,11 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
       const emptyStateEl = document.getElementById('variables-empty-state');
       const globalsTableEl = document.getElementById('globals-table');
       const localsTableEl = document.getElementById('locals-table');
+      var _localsHeading = 'locals';
+      function getColumnLabel(scope) {
+        if (_localsHeading === 'variables') return 'Variable(s)';
+        return scope === 'globals' ? 'Global variable(s)' : 'Local variable(s)';
+      }
       function sendVarUpdate(name, value) {
         if (vscode) {
           vscode.postMessage({ type: 'updateGlobalVar', name: name, value: value });
@@ -306,7 +316,7 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
           if (scope === 'globals') _globalsIndex = new Map(); else _localsIndex = new Map();
           return;
         }
-        var colLabel = scope === 'globals' ? 'Global variable(s)' : 'Local variable(s)';
+        var colLabel = getColumnLabel(scope);
         var html = '<table><thead><tr><th class="name-col">' + colLabel + '</th><th class="value-col">Value</th><th class="type-col">Type</th></tr></thead><tbody>';
         if (scope === 'globals') _globalsIndex = new Map(); else _localsIndex = new Map();
         for (var i = 0; i < vars.length; ++i) {
@@ -445,6 +455,14 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
         if (event.data && event.data.type === 'setVarsSplit') {
           var globals = event.data.globals || [];
           var locals = event.data.locals || [];
+          var headingChanged = false;
+          if (event.data.localsHeading === 'locals' || event.data.localsHeading === 'variables') {
+            if (event.data.localsHeading !== _localsHeading) {
+              _localsHeading = event.data.localsHeading;
+              headingChanged = true;
+            }
+          }
+          if (headingChanged) _rendered = false;
           if (toggleEmptyState(globals.length === 0 && locals.length === 0)) {
             _rendered = false;
             return;

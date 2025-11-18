@@ -38,7 +38,7 @@ export function extractGlobalVariablesWithConflicts(code: string): { globals: { 
                             value = evaluated; type = 'array';
                         } else {
                             value = evaluated; type = typeof evaluated;
-                            if (!['number', 'string', 'boolean'].includes(type)) { value = undefined; type = 'other'; }
+                            if (!['number', 'string', 'boolean', 'array'].includes(type)) { value = undefined; type = 'other'; }
                         }
                     } catch { value = undefined; type = 'other'; }
                 }
@@ -99,7 +99,7 @@ export function extractGlobalVariables(code: string): { name: string, value: any
                             value = evaluated; type = 'array';
                         } else {
                             value = evaluated; type = typeof evaluated;
-                            if (!['number', 'string', 'boolean'].includes(type)) { value = undefined; type = 'other'; }
+                            if (!['number', 'string', 'boolean', 'array'].includes(type)) { value = undefined; type = 'other'; }
                         }
                     } catch { value = undefined; type = 'other'; }
                 }

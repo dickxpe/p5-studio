@@ -260,6 +260,18 @@ export function activate(context: vscode.ExtensionContext) {
     getDocUriForPanel: (p) => getDocUriForPanel(p),
   });
   const updateVariablesPanel = () => { try { variablesService.updateVariablesPanel(); } catch { } };
+  const syncLocalsHeadingForEditor = (editor?: vscode.TextEditor) => {
+    if (!editor) return;
+    try {
+      const docUri = editor.document.uri.toString();
+      const text = editor.document.getText();
+      const hasSetup = /\bfunction\s+setup\s*\(/.test(text);
+      const hasDraw = /\bfunction\s+draw\s*\(/.test(text);
+      const heading: 'locals' | 'variables' = (!hasSetup && !hasDraw) ? 'variables' : 'locals';
+      variablesService.setLocalsHeadingForDoc(docUri, heading);
+      updateVariablesPanel();
+    } catch { }
+  };
 
   // Initialize context service now that we can update the VARIABLES panel
   contextService = registerContextService(context, {
@@ -309,6 +321,8 @@ export function activate(context: vscode.ExtensionContext) {
         try { contextService.setDebugPrimed(docUri, false); } catch { }
         try { contextService.setContext('p5SteppingActive', false); } catch { }
         try { contextService.setContext('p5DebugPrimed', false); } catch { }
+        try { variablesService.resetValuesForDoc(docUri); } catch { }
+        updateVariablesPanel();
       }
     } catch { }
     await performPanelReload(panel);
@@ -837,6 +851,7 @@ export function activate(context: vscode.ExtensionContext) {
           column: targetColumn,
           localResourceRoots,
         });
+        syncLocalsHeadingForEditor(editor);
         try { (panel as any)._p5Version = selectedVersion; } catch { }
 
         // Focus the output channel for the new sketch immediately
@@ -937,6 +952,7 @@ export function activate(context: vscode.ExtensionContext) {
               outputChannel,
             });
           } else if (msg.type === 'submitTopInputs') {
+            syncLocalsHeadingForEditor(editor);
             await handleSubmitTopInputs({ panel, editor, values: msg.values }, {
               detectTopLevelInputs,
               preprocessTopLevelInputs,
@@ -954,6 +970,7 @@ export function activate(context: vscode.ExtensionContext) {
               setAllowInteractiveTopInputs: (v: boolean) => { _allowInteractiveTopInputs = v; },
             });
           } else if (msg.type === 'reload-button-clicked') {
+            syncLocalsHeadingForEditor(editor);
             await handleReloadClicked({ panel, editor, preserveGlobals: !!msg.preserveGlobals }, {
               getTime,
               getOrCreateOutputChannel,
@@ -984,6 +1001,7 @@ export function activate(context: vscode.ExtensionContext) {
           // --- STEP RUN HANDLER (merged with single-step instrumentation + auto-advance) ---
           else if (msg.type === 'step-run-clicked') {
             try { contextService.setSteppingActive(docUri, true); } catch { }
+            syncLocalsHeadingForEditor(editor);
             await handleStepRunClicked({ panel, editor }, {
               getTime,
               getOrCreateOutputChannel,
@@ -1020,6 +1038,7 @@ export function activate(context: vscode.ExtensionContext) {
           // --- SINGLE STEP HANDLER ---
           else if (msg.type === 'single-step-clicked') {
             try { contextService.setSteppingActive(docUri, true); } catch { }
+            syncLocalsHeadingForEditor(editor);
             await handleSingleStepClicked({ panel, editor }, {
               getTime,
               getOrCreateOutputChannel,
