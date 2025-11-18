@@ -45,7 +45,7 @@ import { handleFocusScriptTab } from './webview/messages/focus';
 import { handleCopyCanvasImage } from './webview/messages/image';
 import { handleSubmitTopInputs } from './webview/messages/inputs';
 import { handleReloadClicked } from './webview/messages/reload';
-import { handleStepRunClicked, handleSingleStepClicked } from './webview/messages/step';
+import { handleStepRunClicked, handleSingleStepClicked, handleContinueClicked } from './webview/messages/step';
 import { handleHighlightLine, handleClearHighlight } from './webview/messages/highlight';
 import { handleSaveCanvasImage } from './webview/messages/saveImage';
 import { hasBreakpointOnLine } from './debug/breakpoints';
@@ -215,6 +215,9 @@ export function activate(context: vscode.ExtensionContext) {
   async function invokeStepRun(panel: vscode.WebviewPanel, editor: vscode.TextEditor) {
     try { sendToWebview(panel, { type: 'invokeStepRun' }); } catch { }
   }
+  async function invokeContinue(panel: vscode.WebviewPanel, editor: vscode.TextEditor) {
+    try { sendToWebview(panel, { type: 'invokeContinue' }); } catch { }
+  }
   async function invokeSingleStep(panel: vscode.WebviewPanel, editor: vscode.TextEditor) {
     try { sendToWebview(panel, { type: 'invokeSingleStep' }); } catch { }
   }
@@ -285,6 +288,7 @@ export function activate(context: vscode.ExtensionContext) {
     getActiveP5Panel: () => getActiveP5Panel(),
     getDocUriForPanel: (p) => getDocUriForPanel(p),
     invokeStepRun: (panel, editor) => invokeStepRun(panel, editor),
+    invokeContinue: (panel, editor) => invokeContinue(panel, editor),
     invokeSingleStep: (panel, editor) => invokeSingleStep(panel, editor),
     contextService,
   });
@@ -1034,6 +1038,15 @@ export function activate(context: vscode.ExtensionContext) {
                 }
               } catch { }
             }, 400);
+          }
+          else if (msg.type === 'continue-clicked') {
+            try { contextService.setSteppingActive(docUri, true); } catch { }
+            await handleContinueClicked({ panel, editor }, {
+              getTime,
+              getOrCreateOutputChannel,
+              setSteppingActive: (doc, value) => { try { contextService.setSteppingActive(doc, value); } catch { } },
+            });
+            return;
           }
           // --- SINGLE STEP HANDLER ---
           else if (msg.type === 'single-step-clicked') {

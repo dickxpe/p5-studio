@@ -13,33 +13,40 @@ export function handleHighlightLine(
   const { panel, editor } = params;
   const docUri = editor.document.uri.toString();
   const line = typeof params.line === 'number' ? params.line : 1;
+  const suppressUntilBreakpoint = !!(panel as any)._suppressHighlightUntilBreakpoint;
+  let hasBreakpoint = false;
+  try { hasBreakpoint = deps.hasBreakpointOnLine(docUri, line); } catch { }
+  const shouldRenderHighlight = !suppressUntilBreakpoint || hasBreakpoint;
   let ed = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === docUri) || null;
   if (!ed && vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.uri.toString() === docUri) {
     ed = vscode.window.activeTextEditor;
   }
-  if (ed && ed.document) {
-    //console.log(`[handleHighlightLine] Highlighting line: ${line}`);
-    deps.applyStepHighlight(ed, line);
-    try {
-      if ((panel as any)._autoStepMode && deps.hasBreakpointOnLine(docUri, line)) {
-        if ((panel as any)._autoStepTimer) {
-          try { clearInterval((panel as any)._autoStepTimer); } catch { }
-          (panel as any)._autoStepTimer = null;
-        }
-        (panel as any)._autoStepMode = false;
+  if (shouldRenderHighlight) {
+    if (ed && ed.document) {
+      deps.applyStepHighlight(ed, line);
+    } else {
+      try {
         const fileName = require('path').basename(editor.document.fileName);
         const ch = deps.getOrCreateOutputChannel(docUri, fileName);
-        ch.appendLine(`${deps.getTime()} [⏸️INFO] Paused at breakpoint on line ${line}. Click SINGLE-STEP to advance or STEP-RUN to resume.`);
-      }
-    } catch { }
-  } else {
+        ch.appendLine(`${deps.getTime()} [ℹ️INFO] Highlight requested but sketch editor is not visible. Open the sketch to see line highlights.`);
+      } catch { }
+    }
+    try { deps.blocklyHighlightForLine(docUri, line); } catch { }
+  }
+
+  if ((panel as any)._autoStepMode && hasBreakpoint) {
     try {
+      if ((panel as any)._autoStepTimer) {
+        try { clearInterval((panel as any)._autoStepTimer); } catch { }
+        (panel as any)._autoStepTimer = null;
+      }
+      (panel as any)._autoStepMode = false;
+      (panel as any)._suppressHighlightUntilBreakpoint = false;
       const fileName = require('path').basename(editor.document.fileName);
       const ch = deps.getOrCreateOutputChannel(docUri, fileName);
-      ch.appendLine(`${deps.getTime()} [ℹ️INFO] Highlight requested but sketch editor is not visible. Open the sketch to see line highlights.`);
+      ch.appendLine(`${deps.getTime()} [⏸️INFO] Paused at breakpoint on line ${line}. Click SINGLE-STEP to advance, CONTINUE to run to the next breakpoint, or STEP-RUN to auto-step.`);
     } catch { }
   }
-  try { deps.blocklyHighlightForLine(docUri, line); } catch { }
 }
 
 export async function handleClearHighlight(
@@ -56,6 +63,7 @@ export async function handleClearHighlight(
 ) {
   const { panel, editor, final: finalFromMsg } = params;
   const docUri = editor.document.uri.toString();
+  try { (panel as any)._suppressHighlightUntilBreakpoint = false; } catch { }
   let ed = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === docUri) || null;
   if (!ed && vscode.window.activeTextEditor && vscode.window.activeTextEditor.document.uri.toString() === docUri) {
     ed = vscode.window.activeTextEditor;

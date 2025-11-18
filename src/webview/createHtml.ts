@@ -787,6 +787,9 @@ window.addEventListener("message", e => {
     case "invokeStepRun":
       vscode.postMessage({type:"step-run-clicked"});
       break;
+    case "invokeContinue":
+      vscode.postMessage({type:"continue-clicked"});
+      break;
     case "invokeSingleStep":
       vscode.postMessage({type:"single-step-clicked"});
       break;

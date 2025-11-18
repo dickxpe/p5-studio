@@ -83,6 +83,24 @@ export function registerVariablesService(
 
   const setGlobalValueInternal = (docUri: string, name: string, value: any, opts?: { updatedAt?: number }) => {
     const st = ensure(docUri);
+    if (st.globalsSuppressed && st.forceRevealNextGlobals) {
+      st.globalsSuppressed = false;
+      st.forceRevealNextGlobals = false;
+      if (st.pendingGlobals.length) {
+        for (const pending of st.pendingGlobals) {
+          const safeVal = cloneVarValue(pending.value);
+          const entry: VarEntry = {
+            name: pending.name,
+            type: pending.type || inferType(safeVal),
+            value: safeVal,
+            updatedAt: typeof pending.updatedAt === 'number' ? pending.updatedAt : Date.now(),
+          };
+          upsertEntry(st.globals, entry);
+          try { st.globalTimestamps.set(entry.name, entry.updatedAt || Date.now()); } catch { }
+        }
+        st.pendingGlobals = [];
+      }
+    }
     const timestamp = (opts && typeof opts.updatedAt === 'number') ? opts.updatedAt : Date.now();
     const hinted = st.globalDefs.get(name)?.type
       || st.globals.find(v => v.name === name)?.type
@@ -286,12 +304,41 @@ export function registerVariablesService(
     getLocalsHeadingForDoc: (docUri: string) => ensure(docUri).localsHeading,
     resetValuesForDoc: (docUri: string) => {
       const st = ensure(docUri);
-      st.globals = [];
+      const now = Date.now();
+      const defs = Array.from(st.globalDefs.entries());
+      if (defs.length > 0) {
+        st.globals = defs.map(([name, def]) => {
+          const type = def?.type || inferType(def?.initialValue);
+          const value = (typeof def?.initialValue !== 'undefined')
+            ? cloneVarValue(def.initialValue)
+            : (type === 'number' ? 0 : type === 'boolean' ? false : type === 'array' ? [] : '');
+          return { name, type: type || inferType(value), value, updatedAt: now };
+        });
+      } else if (st.globals.length > 0) {
+        st.globals = st.globals.map(entry => {
+          const type = entry.type || inferType(entry.value);
+          let value: any;
+          if (type === 'number') value = 0;
+          else if (type === 'boolean') value = false;
+          else if (type === 'array') value = [];
+          else value = '';
+          return { name: entry.name, type, value, updatedAt: now };
+        });
+      } else if (st.pendingGlobals.length > 0) {
+        st.globals = st.pendingGlobals.map(entry => ({
+          name: entry.name,
+          type: entry.type || inferType(entry.value),
+          value: cloneVarValue(entry.value),
+          updatedAt: typeof entry.updatedAt === 'number' ? entry.updatedAt : now,
+        }));
+      } else {
+        st.globals = [];
+      }
       st.locals = [];
       st.pendingGlobals = [];
-      st.globalsSuppressed = true;
+      st.globalsSuppressed = st.globals.length === 0;
       st.forceRevealNextGlobals = true;
-      st.globalTimestamps = new Map();
+      st.globalTimestamps = new Map(st.globals.map(entry => [entry.name, entry.updatedAt || now] as const));
     },
   };
 }

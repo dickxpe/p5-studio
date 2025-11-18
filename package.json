@@ -131,6 +131,15 @@
           "category": "P5 Studio"
         },
         {
+          "command": "P5Studio.continueToBreakpoint",
+          "title": "Continue",
+          "icon": {
+            "light": "images/break.svg",
+            "dark": "images/break.svg"
+          },
+          "category": "P5 Studio"
+        },
+        {
           "command": "P5Studio.singleStep",
           "title": "Single Step",
             "icon": {
@@ -241,19 +250,25 @@
           "group": "navigation@3",
           "when": "p5WebviewTabFocused && p5DebugPrimed && config.P5Studio.debug.ShowDebugButton"
         },
-        {
+          {
           "command": "P5Studio.singleStep",
           "group": "navigation@4",
           "when": "p5WebviewTabFocused && p5DebugPrimed && config.P5Studio.debug.ShowDebugButton"
         },
         {
-          "command": "P5Studio.captureToggle",
+          "command": "P5Studio.continueToBreakpoint",
           "group": "navigation@5",
+          "when": "p5WebviewTabFocused && p5SteppingActive && config.P5Studio.debug.ShowDebugButton"
+        },
+      
+        {
+          "command": "P5Studio.captureToggle",
+          "group": "navigation@6",
           "when": "p5WebviewTabFocused && config.P5Studio.showRecordButton == true && !p5CaptureVisible"
         },
         {
           "command": "P5Studio.captureToggleOn",
-          "group": "navigation@5",
+          "group": "navigation@6",
           "when": "p5WebviewTabFocused && config.P5Studio.showRecordButton == true && p5CaptureVisible"
         },
         {

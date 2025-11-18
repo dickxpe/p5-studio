@@ -65,8 +65,8 @@ export async function handleReloadClicked(
   const rawCode = editor.document.getText();
   const drawRegex = /\bfunction\s+draw\s*\(/;
 
-  function postGlobalsSnapshot(codeForGlobals: string) {
-    const globalsInfo = deps.extractGlobalVariablesWithConflicts(codeForGlobals);
+  function postGlobalsSnapshot() {
+    const globalsInfo = deps.extractGlobalVariablesWithConflicts(rawCode);
     let filteredGlobals = globalsInfo.globals.filter(g => ['number', 'string', 'boolean', 'array'].includes(g.type));
     const hiddenSet = deps.getHiddenGlobalsByDirective(editor.document.getText());
     if (hiddenSet.size > 0) {
@@ -138,7 +138,7 @@ export async function handleReloadClicked(
       if (!hasDraw) {
         panel.webview.html = await deps.createHtml(code, panel, deps.getExtensionPath(), { allowInteractiveTopInputs: deps.getAllowInteractiveTopInputs(), initialCaptureVisible: deps.getInitialCaptureVisible(panel) });
         setTimeout(() => {
-          try { postGlobalsSnapshot(code); } catch { }
+          try { postGlobalsSnapshot(); } catch { }
         }, 200);
         setTimeout(() => {
           const onlySetup = deps.hasOnlySetup(editor.document.getText());
@@ -149,7 +149,7 @@ export async function handleReloadClicked(
       } else {
         panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: false });
         setTimeout(() => {
-          try { postGlobalsSnapshot(code); } catch { }
+          try { postGlobalsSnapshot(); } catch { }
         }, 200);
       }
       return;
@@ -178,7 +178,7 @@ export async function handleReloadClicked(
   if (!hasDraw) {
     panel.webview.html = await deps.createHtml(code, panel, deps.getExtensionPath(), { allowInteractiveTopInputs: deps.getAllowInteractiveTopInputs(), initialCaptureVisible: deps.getInitialCaptureVisible(panel) });
     setTimeout(() => {
-      try { postGlobalsSnapshot(code); } catch { }
+      try { postGlobalsSnapshot(); } catch { }
     }, 200);
     setTimeout(() => {
       const onlySetup = deps.hasOnlySetup(editor.document.getText());
@@ -190,7 +190,7 @@ export async function handleReloadClicked(
     // For sketches with draw(), always reset globals to initial values on reload
     panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: false });
     setTimeout(() => {
-      try { postGlobalsSnapshot(code); } catch { }
+      try { postGlobalsSnapshot(); } catch { }
     }, 200);
   }
 }

@@ -104,6 +104,7 @@ export async function handleStepRunClicked(
     if ((panel as any)._autoStepTimer) { try { clearInterval((panel as any)._autoStepTimer); } catch { } (panel as any)._autoStepTimer = null; }
     (panel as any)._autoStepMode = true;
     (panel as any)._autoStepTimer = setInterval(() => { try { panel.webview.postMessage({ type: 'step-advance' }); } catch { } }, delayMs);
+    (panel as any)._suppressHighlightUntilBreakpoint = false;
     try { deps.setSteppingActive?.(docUri, true); } catch { }
     return;
   }
@@ -196,6 +197,7 @@ export async function handleStepRunClicked(
       suppressPanel: suppressGlobalsInPanel,
     });
     (panel as any)._steppingActive = true;
+    (panel as any)._suppressHighlightUntilBreakpoint = false;
     try { deps.setSteppingActive?.(docUri, true); } catch { }
     if ((panel as any)._autoStepTimer) { try { clearInterval((panel as any)._autoStepTimer); } catch { } (panel as any)._autoStepTimer = null; }
     (panel as any)._autoStepMode = true;
@@ -208,6 +210,47 @@ export async function handleStepRunClicked(
     panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: false });
     setTimeout(afterLoad, 200);
   }
+}
+
+export async function handleContinueClicked(
+  params: { panel: vscode.WebviewPanel; editor: vscode.TextEditor },
+  deps: {
+    getTime: () => string;
+    getOrCreateOutputChannel: (docUri: string, fileName: string) => vscode.OutputChannel;
+    setSteppingActive?: (docUri: string, value: boolean) => void;
+  }
+) {
+  const { panel, editor } = params;
+  const docUri = editor.document.uri.toString();
+  const fileName = require('path').basename(editor.document.fileName);
+  try {
+    if (!(panel as any)._steppingActive) {
+      const ch = deps.getOrCreateOutputChannel(docUri, fileName);
+      ch.appendLine(`${deps.getTime()} [⚠️INFO] Continue requested but stepping is not active. Use SINGLE-STEP or STEP-RUN first.`);
+      return;
+    }
+    deps.setSteppingActive?.(docUri, true);
+    const ch = deps.getOrCreateOutputChannel(docUri, fileName);
+    ch.appendLine(`${deps.getTime()} [⏩INFO] Continuing to the next breakpoint.`);
+  } catch { }
+
+  if ((panel as any)._autoStepTimer) {
+    try { clearInterval((panel as any)._autoStepTimer); } catch { }
+    (panel as any)._autoStepTimer = null;
+  }
+
+  (panel as any)._autoStepMode = true;
+  (panel as any)._steppingActive = true;
+  (panel as any)._suppressHighlightUntilBreakpoint = true;
+  const fastAdvance = () => {
+    try {
+      if (!(panel as any)._autoStepMode) return;
+      panel.webview.postMessage({ type: 'step-advance' });
+    } catch { }
+  };
+  // Kick once immediately so we leave the current paused state.
+  fastAdvance();
+  (panel as any)._autoStepTimer = setInterval(fastAdvance, 1);
 }
 
 export async function handleSingleStepClicked(
@@ -258,6 +301,7 @@ export async function handleSingleStepClicked(
     (panel as any)._autoStepTimer = null;
     (panel as any)._autoStepMode = false;
   }
+  (panel as any)._suppressHighlightUntilBreakpoint = false;
   const isStepping = !!(panel as any)._steppingActive;
   if (isStepping) {
     if (wasAutoStepMode) {

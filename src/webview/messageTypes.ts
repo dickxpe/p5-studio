@@ -11,6 +11,7 @@ export type WebviewToExtensionMessage =
     | { type: 'submitTopInputs'; values: any[] }
     | { type: 'reload-button-clicked'; preserveGlobals?: boolean }
     | { type: 'step-run-clicked' }
+    | { type: 'continue-clicked' }
     | { type: 'single-step-clicked' }
     | { type: 'highlightLine'; line: number }
     | { type: 'clearHighlight'; final?: boolean }
@@ -44,6 +45,7 @@ export type ExtensionToWebviewMessage =
     | { type: 'oscReceive'; address: string; args?: any[] }
     | { type: 'showError'; message: string }
     | { type: 'invokeStepRun' }
+    | { type: 'invokeContinue' }
     | { type: 'invokeSingleStep' }
     | { type: 'invokeReload' }
     | { type: 'toggleCaptureVisibility' };
