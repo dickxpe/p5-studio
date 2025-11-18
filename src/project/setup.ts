@@ -18,7 +18,7 @@ export function hideFileIfSupported(filePath: string) {
     }
 }
 
-async function refreshJsconfigIfMarkerPresent(context: vscode.ExtensionContext) {
+export async function refreshJsconfigIfMarkerPresent(context: vscode.ExtensionContext) {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) return;
     try {

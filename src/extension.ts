@@ -4,7 +4,6 @@ import type { WebviewToExtensionMessage, ExtensionToWebviewMessage } from './web
 import { postMessage as sendToWebview } from './webview/router';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
-import { writeFileSync } from 'fs';
 // Modularized helpers and constants
 import { getTime, toLocalISOString } from './utils/helpers';
 import { RESERVED_GLOBALS } from './constants';
@@ -20,7 +19,7 @@ import { registerBlockly, BlocklyApi } from './blockly/blocklyPanel';
 import { registerLinting, LintApi } from './lint';
 import { registerRestoreManager, RESTORE_BLOCKLY_KEY, RESTORE_LIVE_KEY, RESTORE_LIVE_ORDER_KEY } from './restore/restoreManager';
 import { registerAutoReload, AutoReloadApi } from './reload/autoReload';
-import { runOnActivate, hideFileIfSupported } from './project/setup';
+import { runOnActivate, hideFileIfSupported, refreshJsconfigIfMarkerPresent } from './project/setup';
 import { getOrCreateOutputChannel, showAndTrackOutputChannel, getOutputChannelForDoc, disposeOutputForDoc, getLastActiveOutputChannel } from './logging/output';
 import { registerLivePanelManager, LivePanelManagerApi } from './panels/livePanel';
 import { livePanelTitleForFile, LIVE_PANEL_TITLE_PREFIX } from './panels/registry';
@@ -51,6 +50,8 @@ import { handleSaveCanvasImage } from './webview/messages/saveImage';
 import { hasBreakpointOnLine } from './debug/breakpoints';
 import { registerContextService, ContextServiceApi } from './context';
 import { registerLayoutRestore, LayoutRestoreApi } from './layout';
+
+const fsp = fs.promises;
 
 const webviewPanelMap = new Map<string, vscode.WebviewPanel>();
 let activeP5Panel: vscode.WebviewPanel | null = null;
@@ -102,8 +103,7 @@ export function activate(context: vscode.ExtensionContext) {
   // --- OSC Status Bar Button ---
   const oscStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
   oscStatusBar.command = 'P5Studio.toggleOscServer';
-  const cfg = require('./config/index');
-  const oscCfg = cfg.getOscConfig ? cfg.getOscConfig() : { localAddress: '127.0.0.1', localPort: 57121, remoteAddress: '127.0.0.1', remotePort: 57122 };
+  const oscCfg = cfg.getOscConfig() ?? { localAddress: '127.0.0.1', localPort: 57121, remoteAddress: '127.0.0.1', remotePort: 57122 };
   oscStatusBar.text = '▶️ Start OSC';
   oscStatusBar.tooltip = `Start OSC server \nListen on: ${oscCfg.localAddress}:${oscCfg.localPort} \nSend to: ${oscCfg.remoteAddress}:${oscCfg.remotePort}`;
   oscStatusBar.color = '#307dc1';
@@ -121,8 +121,7 @@ export function activate(context: vscode.ExtensionContext) {
       oscStatusBar.color = '#00bfae';
     } else {
       // Show what will be used from settings
-      const cfg = require('./config/index');
-      const oscCfg = cfg.getOscConfig ? cfg.getOscConfig() : { localAddress: '127.0.0.1', localPort: 57121, remoteAddress: '127.0.0.1', remotePort: 57122 };
+      const oscCfg = cfg.getOscConfig() ?? { localAddress: '127.0.0.1', localPort: 57121, remoteAddress: '127.0.0.1', remotePort: 57122 };
       oscStatusBar.text = '▶️ Start OSC';
       oscStatusBar.tooltip = `Start OSC server\nListen on: ${oscCfg.localAddress}:${oscCfg.localPort}\nSend to: ${oscCfg.remoteAddress}:${oscCfg.remotePort}`;
       oscStatusBar.color = '#307dc1';
@@ -701,7 +700,7 @@ export function activate(context: vscode.ExtensionContext) {
       }, [
         { delayMs: 150, message: { type: 'showError', message: friendly } as ExtensionToWebviewMessage },
       ], sendToWebview);
-      if (require('./config/index').getLogWarningsToOutput()) {
+      if (cfg.getLogWarningsToOutput()) {
         outputChannel.appendLine(friendly);
       }
       (panel as any)._lastRuntimeError = friendly;
@@ -770,7 +769,7 @@ export function activate(context: vscode.ExtensionContext) {
       setTimeout(() => {
         sendToWebview(panel, { type: 'syntaxError', message: overlayMsg });
       }, 150);
-      if (require('./config/index').getLogWarningsToOutput()) {
+      if (cfg.getLogWarningsToOutput()) {
         outputChannel.appendLine(syntaxErrorMsg);
       }
       // outputChannel.show(true); // Do not focus on every error
@@ -1237,7 +1236,7 @@ export function activate(context: vscode.ExtensionContext) {
             sendToWebview(panel, { type: 'syntaxError', message: stripLeadingTimestamp(syntaxErrorMsg) });
           }, 150);
           const outputChannel = getOrCreateOutputChannel(docUri, path.basename(editor.document.fileName));
-          if (require('./config/index').getLogWarningsToOutput()) {
+          if (cfg.getLogWarningsToOutput()) {
             outputChannel.appendLine(syntaxErrorMsg);
           }
         }
@@ -1274,7 +1273,7 @@ export function activate(context: vscode.ExtensionContext) {
             const syntaxErrorMsg = `${getTime()} [‼️SYNTAX ERROR in ${path.basename(editor.document.fileName)}] ${err.message}`;
             sendToWebview(panel, { type: 'syntaxError', message: stripLeadingTimestamp(formatSyntaxErrorMsg(syntaxErrorMsg)) });
             const outputChannel = getOrCreateOutputChannel(docUri, path.basename(editor.document.fileName));
-            if (require('./config/index').getLogWarningsToOutput()) {
+            if (cfg.getLogWarningsToOutput()) {
               outputChannel.appendLine(formatSyntaxErrorMsg(syntaxErrorMsg));
             }
           }
@@ -1352,133 +1351,174 @@ export function activate(context: vscode.ExtensionContext) {
   // Command to create jsconfig.json and setup a new P5 project
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.create-jsconfig', async () => {
-      try {
-        let workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-        let selectedFolderUri: vscode.Uri | undefined;
-        if (!workspaceFolder) {
-          // Prompt user to select a folder if none is open
-          const folderUris = await vscode.window.showOpenDialog({
-            canSelectFiles: true,
-            canSelectFolders: false,
-            canSelectMany: false,
-            openLabel: 'Select folder for new P5 project',
-          });
-          if (!folderUris || folderUris.length === 0) return;
-          selectedFolderUri = folderUris[0];
-          workspaceFolder = { uri: selectedFolderUri, name: '', index: 0 };
+      let workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+      let selectedFolderUri: vscode.Uri | undefined;
+      if (!workspaceFolder) {
+        const folderUris = await vscode.window.showOpenDialog({
+          canSelectFiles: false,
+          canSelectFolders: true,
+          canSelectMany: false,
+          openLabel: 'Select folder for new P5 project',
+        });
+        if (!folderUris || folderUris.length === 0) {
+          return;
         }
-        vscode.window.showInformationMessage('Setting up new P5 project...');
-        // creates a jsconfig that tells vscode where to find the types file
-        const now = new Date();
-        // Resolve p5types global.d.ts & p5helper.d.ts in versioned assets if present
-        const selectedP5VersionCJ = cfg.getP5jsVersion();
-        let p5typesCandidatesCJ: string[];
-        if (selectedP5VersionCJ === '1.11') {
-          p5typesCandidatesCJ = [path.join(context.extensionPath, 'assets', '1.11', 'p5types', 'global.d.ts')];
-        } else {
-          p5typesCandidatesCJ = [path.join(context.extensionPath, 'assets', selectedP5VersionCJ, 'p5types', 'global.d.ts')];
-        }
-        let p5helperCandidatesCJ: string[];
-        if (selectedP5VersionCJ === '1.11') {
-          p5helperCandidatesCJ = [path.join(context.extensionPath, 'assets', '1.11', 'p5types', 'p5helper.d.ts')];
-        } else {
-          p5helperCandidatesCJ = [path.join(context.extensionPath, 'assets', selectedP5VersionCJ, 'p5types', 'p5helper.d.ts')];
-        }
-        const resolvedGlobalCJ = p5typesCandidatesCJ.find(p => { try { return fs.existsSync(p); } catch { return false; } });
-        const resolvedHelperCJ = p5helperCandidatesCJ.find(p => { try { return fs.existsSync(p); } catch { return false; } });
-        const jsconfig = {
-          createdAt: toLocalISOString(now),
-          include: ((): (string)[] => {
-            const base = [
-              "*.js",
-              "**/*.js",
-              "*.ts",
-              "**/.ts",
-              "common/*.js",
-              "import/*.js",
-            ];
-            if (resolvedGlobalCJ) base.push(resolvedGlobalCJ);
-            if (resolvedHelperCJ) base.push(resolvedHelperCJ);
-            return base;
-          })()
-        };
-        // If 2.1 selected and types missing, log a warning (no popup)
-        if (selectedP5VersionCJ !== '1.11' && (!resolvedGlobalCJ || !resolvedHelperCJ)) {
-          console.warn('[P5Studio] No p5types found for version', selectedP5VersionCJ, '- jsconfig will omit type definitions.');
-        }
-        fs.mkdirSync(workspaceFolder.uri.fsPath + "/common", { recursive: true });
-        fs.mkdirSync(workspaceFolder.uri.fsPath + "/import", { recursive: true });
-        fs.mkdirSync(workspaceFolder.uri.fsPath + "/media", { recursive: true });
-        fs.mkdirSync(workspaceFolder.uri.fsPath + "/sketches", { recursive: true });
+        selectedFolderUri = folderUris[0];
+        workspaceFolder = { uri: selectedFolderUri, name: path.basename(selectedFolderUri.fsPath), index: 0 };
+      }
 
-        // Create empty utils.js if not exists
-        const utilsPath = path.join(workspaceFolder.uri.fsPath, "common", "utils.js");
-        if (!fs.existsSync(utilsPath)) {
-          fs.writeFileSync(utilsPath, "");
-        }
+      if (!workspaceFolder) {
+        return;
+      }
 
-        // Create sketch1.js only if it doesn't exist and remember whether we created it
-        const sketch1Path = path.join(workspaceFolder.uri.fsPath + "/sketches", "sketch1.js");
-        const sketch1Existed = fs.existsSync(sketch1Path);
-
-        const sketchString = `//Start coding with P5 here!
-          //Have a look at the P5 Reference: https://p5js.org/reference/ 
-          //Click the P5 button at the top to run your sketch! ⤴
-
-          noStroke();
-          fill("red");
-          circle(50, 50, 80);
-          fill("white");
-          textFont("Arial", 36);
-          textAlign(CENTER, CENTER);
-          text("P5", 50, 52);`;
-        if (!sketch1Existed) {
-          fs.writeFileSync(sketch1Path, sketchString);
-        }
-
-        const jsconfigPath = path.join(workspaceFolder.uri.fsPath, "jsconfig.json");
-        writeFileSync(jsconfigPath, JSON.stringify(jsconfig, null, 2));
-
-        // Also create/overwrite a .p5 marker file at the project root
-        const p5MarkerPath = path.join(workspaceFolder.uri.fsPath, ".p5");
+      const rootPath = workspaceFolder.uri.fsPath;
+      const pathExists = async (target: string) => {
         try {
-          // Read extension version from the extension's package.json
-          const pkgPath = path.join(context.extensionPath, "package.json");
-          let version = "unknown";
-          try {
-            const pkgRaw = fs.readFileSync(pkgPath, "utf8");
-            const pkgJson = JSON.parse(pkgRaw);
-            if (pkgJson && typeof pkgJson.version === "string") {
-              version = pkgJson.version;
-            }
-          } catch {
-            // ignore read/parse errors and keep version as 'unknown'
-          }
-          const now = new Date();
-          const marker = {
-            version,
-            createdAt: toLocalISOString(now),
-          };
-          fs.writeFileSync(p5MarkerPath, JSON.stringify(marker, null, 2) + "\n");
-          // Try to hide the .p5 file on Windows
-          hideFileIfSupported(p5MarkerPath);
-        } catch (err) {
-          console.warn("Failed to write .p5 marker file:", err);
+          await fsp.access(target, fs.constants.F_OK);
+          return true;
+        } catch {
+          return false;
         }
+      };
+
+      const ensureWritableMarker = async (target: string) => {
+        try {
+          const stat = await fsp.lstat(target);
+          if (stat.isDirectory()) {
+            const contents = await fsp.readdir(target);
+            if (contents.length > 0) {
+              throw new Error(`A folder named '.p5' already exists at ${target}. Remove or rename it and try again.`);
+            }
+            await fsp.rmdir(target);
+            return;
+          }
+          await fsp.chmod(target, 0o666).catch(() => { /* ignore */ });
+          await fsp.unlink(target);
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException)?.code;
+          if (code === 'ENOENT') {
+            return;
+          }
+          if (code === 'EPERM') {
+            try {
+              await fsp.chmod(target, 0o666);
+            } catch { /* ignore chmod errors */ }
+            try {
+              await fsp.unlink(target);
+              return;
+            } catch (unlinkErr) {
+              throw unlinkErr;
+            }
+          }
+          if (err instanceof Error) {
+            throw err;
+          }
+          throw new Error(String(err));
+        }
+      };
+
+      let sketch1Path: string | undefined;
+      let sketchCreated = false;
+
+      try {
+        await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Setting up new P5 project...',
+            cancellable: false,
+          },
+          async (progress) => {
+            progress.report({ message: 'Preparing folders' });
+            const commonDir = path.join(rootPath, 'common');
+            const importDir = path.join(rootPath, 'import');
+            const mediaDir = path.join(rootPath, 'media');
+            const sketchesDir = path.join(rootPath, 'sketches');
+            await Promise.all([
+              fsp.mkdir(commonDir, { recursive: true }),
+              fsp.mkdir(importDir, { recursive: true }),
+              fsp.mkdir(mediaDir, { recursive: true }),
+              fsp.mkdir(sketchesDir, { recursive: true }),
+            ]);
+
+            progress.report({ message: 'Seeding helper files' });
+            const utilsPath = path.join(commonDir, 'utils.js');
+            if (!(await pathExists(utilsPath))) {
+              await fsp.writeFile(utilsPath, '', 'utf8');
+            }
+
+            sketch1Path = path.join(sketchesDir, 'sketch1.js');
+            const sketchExists = await pathExists(sketch1Path);
+            if (!sketchExists) {
+              sketchCreated = true;
+              const sketchLines = [
+                '// Start coding with P5 here!',
+                '// Have a look at the P5 Reference: https://p5js.org/reference/',
+                '// Click the P5 button at the top to run your sketch! ⤴',
+                '',
+                'noStroke();',
+                'fill("red");',
+                'circle(50, 50, 80);',
+                'fill("white");',
+                'textFont("Arial", 36);',
+                'textAlign(CENTER, CENTER);',
+                'text("P5", 50, 52);',
+                '',
+              ];
+              await fsp.writeFile(sketch1Path, sketchLines.join('\n'), 'utf8');
+            }
+
+            progress.report({ message: 'Writing configuration' });
+            const now = new Date();
+            const selectedVersion = cfg.getP5jsVersion();
+            const versionDir = selectedVersion === '1.11' ? '1.11' : selectedVersion;
+            const p5typesRoot = path.join(context.extensionPath, 'assets', versionDir, 'p5types');
+            const globalDts = path.join(p5typesRoot, 'global.d.ts');
+            const helperDts = path.join(p5typesRoot, 'p5helper.d.ts');
+            const include: string[] = ['*.js', '**/*.js', '*.ts', '**/*.ts', 'common/*.js', 'import/*.js'];
+            const hasGlobal = await pathExists(globalDts);
+            const hasHelper = await pathExists(helperDts);
+            if (hasGlobal) include.push(globalDts);
+            if (hasHelper) include.push(helperDts);
+            const jsconfig = {
+              createdAt: toLocalISOString(now),
+              include,
+            };
+            await fsp.writeFile(path.join(rootPath, 'jsconfig.json'), JSON.stringify(jsconfig, null, 2), 'utf8');
+
+            if (selectedVersion !== '1.11' && (!hasGlobal || !hasHelper)) {
+              console.warn('[P5Studio] No p5types found for version', selectedVersion, '- jsconfig will omit type definitions.');
+            }
+
+            progress.report({ message: 'Creating project marker' });
+            const markerPath = path.join(rootPath, '.p5');
+            await ensureWritableMarker(markerPath);
+            let version = 'unknown';
+            try {
+              const pkgRaw = await fsp.readFile(path.join(context.extensionPath, 'package.json'), 'utf8');
+              const pkgJson = JSON.parse(pkgRaw);
+              if (pkgJson && typeof pkgJson.version === 'string') {
+                version = pkgJson.version;
+              }
+            } catch {
+              // ignore
+            }
+            const marker = { version, createdAt: toLocalISOString(now) };
+            await fsp.writeFile(markerPath, JSON.stringify(marker, null, 2) + '\n', 'utf8');
+            try { hideFileIfSupported(markerPath); } catch { }
+          }
+        );
+
         vscode.window.showInformationMessage('P5 project setup complete!');
 
-        // If a folder was selected via dialog, open it as the workspace
         if (selectedFolderUri) {
           await vscode.commands.executeCommand('vscode.openFolder', selectedFolderUri, false);
-        } else {
-          // Open sketch1.js only if it was created just now and we remain in the same workspace
-          if (!sketch1Existed) {
-            const doc = await vscode.workspace.openTextDocument(sketch1Path);
-            await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: false, viewColumn: vscode.ViewColumn.One });
-          }
+        } else if (sketchCreated && sketch1Path) {
+          const doc = await vscode.workspace.openTextDocument(sketch1Path);
+          await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: false, viewColumn: vscode.ViewColumn.One });
         }
       } catch (e) {
         console.error(e);
+        vscode.window.showErrorMessage(`Failed to setup P5 project: ${e instanceof Error ? e.message : String(e)}`);
       }
     })
   );
@@ -1487,6 +1527,10 @@ export function activate(context: vscode.ExtensionContext) {
   let _varPanelDebounceTimer: NodeJS.Timeout | undefined;
   let _showFpsDebounceTimer: NodeJS.Timeout | undefined;
   let _overlayFontDebounceTimer: NodeJS.Timeout | undefined;
+
+  const restartTsServer = () => {
+    void vscode.commands.executeCommand('typescript.restartTsServer').then(undefined, () => { });
+  };
 
   // Centralized configuration change handler
   vscode.workspace.onDidChangeConfiguration(e => {
@@ -1508,6 +1552,22 @@ export function activate(context: vscode.ExtensionContext) {
             try { sendToWebview(panel, { type: 'updateVarDebounceDelay', value: newDelay }); } catch { }
           }
         }, 150);
+      }
+
+      if (e.affectsConfiguration('P5Studio.P5jsVersion')) {
+        (async () => {
+          try {
+            const livePanels = Array.from(webviewPanelMap.values());
+            for (const panel of livePanels) {
+              try { panel.dispose(); } catch { }
+            }
+            try { blocklyApi.disposeAllPanels?.(); } catch { }
+            await refreshJsconfigIfMarkerPresent(context);
+          } catch { /* ignore refresh errors */ }
+          restartTsServer();
+          const version = cfg.getP5jsVersion();
+          vscode.window.showInformationMessage(`Switched to version ${version}: Closed any open panels`);
+        })();
       }
 
       // Sync reloadWhileTyping/reloadOnSave when changed via settings UI
@@ -1544,6 +1604,9 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Project setup utilities (refresh jsconfig, setup prompt)
   runOnActivate(context);
+
+  // Gently restart the TS server so new jsconfig/p5 types register without user action
+  restartTsServer();
 
   // Helper: compute Blockly sidecar path for a given file path
   function getBlocklySidecarPath(filePath: string): string | null {

@@ -13,6 +13,7 @@ export type BlocklyApi = {
     highlightForLine: (docUri: string, line: number) => void;
     disposePanelsForFilePath: (fsPath: string) => void;
     revealPanelForDocUri: (docUri: string) => void;
+    disposeAllPanels: () => void;
 };
 
 export function registerBlockly(
@@ -749,6 +750,14 @@ export function registerBlockly(
         } catch { }
     }
 
+    function disposeAllPanels() {
+        try {
+            for (const panel of Array.from(allBlocklyPanels)) {
+                try { panel.dispose(); } catch { }
+            }
+        } catch { }
+    }
+
     function revealPanelForDocUri(docUri: string) {
         try {
             const panel = blocklyPanelForDocument.get(docUri);
@@ -757,5 +766,5 @@ export function registerBlockly(
             }
         } catch { /* ignore */ }
     }
-    return { clearHighlight, highlightForLine, disposePanelsForFilePath, revealPanelForDocUri };
+    return { clearHighlight, highlightForLine, disposePanelsForFilePath, revealPanelForDocUri, disposeAllPanels };
 }
