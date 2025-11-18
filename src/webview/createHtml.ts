@@ -894,7 +894,8 @@ window.addEventListener("message", e => {
         window._p5DebounceDelay = data.debounceDelay;
       }
       const readOnly = !!data.readOnly;
-      renderGlobalVarControls(data.variables, readOnly);
+      const suppressPanel = !!data.suppressPanel;
+      renderGlobalVarControls(data.variables, readOnly, { suppressPanel });
       // Store types for later use (use v.type provided by extension)
       window._p5GlobalVarTypes = {};
   data.variables.forEach((v) => {
@@ -1211,10 +1212,11 @@ function showDrawer() {
 }
 
 // Dynamically creates/removes the variable drawer and tab, and sets up event listeners for variable changes
-function renderGlobalVarControls(vars, readOnly) {
+function renderGlobalVarControls(vars, readOnly, opts) {
+  const suppressPanel = !!(opts && opts.suppressPanel);
   // Send globals to the extension for the VARIABLES panel,
   // but enrich values with current runtime values if available so we don't revert to initial code values.
-  if (typeof vscode !== 'undefined' && Array.isArray(vars)) {
+  if (!suppressPanel && typeof vscode !== 'undefined' && Array.isArray(vars)) {
     try {
       const list = vars.map((v) => {
         const name = v && v.name;

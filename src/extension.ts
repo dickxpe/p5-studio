@@ -889,11 +889,19 @@ export function activate(context: vscode.ExtensionContext) {
               isActivePanel: (p) => activeP5Panel === p,
             });
             return;
+          } else if (msg.type === 'revealGlobals') {
+            try {
+              const docUriStr = editor.document.uri.toString();
+              variablesService.revealGlobalsForDoc(docUriStr, typeof msg.count === 'number' ? msg.count : undefined);
+            } catch { }
+            updateVariablesPanel();
+            return;
           } else if (msg.type === 'updateGlobalVar') {
             handleUpdateGlobalVar({ panel, editor, name: msg.name, value: msg.value }, {
               getGlobalsForDoc: (docUri) => variablesService.getGlobalsForDoc(docUri),
               getLocalsForDoc: (docUri) => variablesService.getLocalsForDoc(docUri),
-              setGlobalValue: (docUri, name, value) => variablesService.setGlobalsForDoc(docUri, (variablesService.getGlobalsForDoc(docUri) || []).map(v => v.name === name ? { ...v, value } : v)),
+              setGlobalValue: (docUri, name, value) => variablesService.setGlobalValue(docUri, name, value),
+              hasGlobalDefinition: (docUri, name) => variablesService.hasGlobalDefinition(docUri, name),
               upsertLocal: (docUri, v) => variablesService.upsertLocalForDoc(docUri, v),
               updateVariablesPanel,
               isActivePanel: (p) => activeP5Panel === p,
@@ -998,6 +1006,8 @@ export function activate(context: vscode.ExtensionContext) {
               getAllowInteractiveTopInputs: () => _allowInteractiveTopInputs,
               setAllowInteractiveTopInputs: (v: boolean) => { _allowInteractiveTopInputs = v; },
               setSteppingActive: (docUri: string, active: boolean) => { try { contextService.setSteppingActive(docUri, active); } catch { } },
+              primeGlobalsForDoc: (docUri, list) => variablesService.primeGlobalsForDoc(docUri, list),
+              updateVariablesPanel,
             });
             setTimeout(() => {
               try {
@@ -1030,6 +1040,8 @@ export function activate(context: vscode.ExtensionContext) {
               getInitialCaptureVisible: (p) => getInitialCaptureVisible(p),
               getExtensionPath: () => context.extensionPath,
               setSteppingActive: (docUri: string, active: boolean) => { try { contextService.setSteppingActive(docUri, active); } catch { } },
+              primeGlobalsForDoc: (docUri, list) => variablesService.primeGlobalsForDoc(docUri, list),
+              updateVariablesPanel,
             });
             setTimeout(() => {
               try {

@@ -28,7 +28,7 @@ export function instrumentSetupForSingleStep(
         const normalizedOffset = typeof lineOffset === 'number' ? lineOffset : 0;
         const topLevelBody: any[] = (ast.program && Array.isArray((ast.program as any).body)) ? (ast.program as any).body : [];
         const hasSetupFunctionDecl = topLevelBody.some((n: any) => n && n.type === 'FunctionDeclaration' && n.id && n.id.name === 'setup');
-        const allowTopLevelPreSteps = !opts?.disableTopLevelPreSteps && !hasSetupFunctionDecl;
+        const allowTopLevelPreSteps = !opts?.disableTopLevelPreSteps;
 
         const getExecutableLoc = (node: any) => {
             if (!node) return null;
@@ -51,6 +51,20 @@ export function instrumentSetupForSingleStep(
             }
             return node.loc || null;
         };
+
+        const topLevelVarCounts = new Map<string, number>();
+        for (const node of topLevelBody) {
+            if (!node || node.type !== 'VariableDeclaration') continue;
+            const loc = getExecutableLoc(node);
+            if (!loc || !loc.start) continue;
+            const key = `${loc.start.line}:${loc.start.column + 1}`;
+            const decls = Array.isArray(node.declarations) ? node.declarations : [];
+            let count = 0;
+            for (const d of decls) {
+                if (d && d.id && d.id.type === 'Identifier') count++;
+            }
+            if (count > 0) topLevelVarCounts.set(key, count);
+        }
 
         // Build lookup of steps per phase for quick access.
         const topSteps = stepMap.steps.filter(s => s.phase === 'top-level');
@@ -235,6 +249,49 @@ export function instrumentSetupForSingleStep(
                 )
             )
         );
+        const revealGlobalsDecl = b.expressionStatement(
+            b.assignmentExpression('=',
+                b.memberExpression(b.identifier('window'), b.identifier('__revealGlobals')),
+                b.arrowFunctionExpression(
+                    [b.identifier('count')],
+                    b.blockStatement([
+                        b.tryStatement(
+                            b.blockStatement([
+                                b.variableDeclaration('const', [
+                                    b.variableDeclarator(
+                                        b.identifier('msg'),
+                                        b.objectExpression([
+                                            b.property('init', b.identifier('type'), b.literal('revealGlobals'))
+                                        ])
+                                    )
+                                ]),
+                                b.ifStatement(
+                                    b.binaryExpression('===',
+                                        b.unaryExpression('typeof', b.identifier('count'), true),
+                                        b.literal('number')
+                                    ),
+                                    b.blockStatement([
+                                        b.expressionStatement(
+                                            b.assignmentExpression('=',
+                                                b.memberExpression(b.identifier('msg'), b.identifier('count')),
+                                                b.identifier('count')
+                                            )
+                                        )
+                                    ])
+                                ),
+                                b.expressionStatement(
+                                    b.callExpression(
+                                        b.memberExpression(b.identifier('vscode'), b.identifier('postMessage')),
+                                        [b.identifier('msg')]
+                                    )
+                                )
+                            ]),
+                            b.catchClause(b.identifier('_'), null, b.blockStatement([]))
+                        )
+                    ])
+                )
+            )
+        );
         const exposeHelpers = [
             b.expressionStatement(
                 b.assignmentExpression('=',
@@ -269,7 +326,7 @@ export function instrumentSetupForSingleStep(
                 b.literal(false)
             )
         );
-        helpers.push(highlightDecl, clearDecl, waitDecl, advanceDecl, setupDoneInit, frameWaitInit, frameInProgressInit, steppingDoneInit, ...exposeHelpers);
+        helpers.push(highlightDecl, clearDecl, waitDecl, advanceDecl, revealGlobalsDecl, setupDoneInit, frameWaitInit, frameInProgressInit, steppingDoneInit, ...exposeHelpers);
 
         // Helper to create a highlight call from a StepTarget.
         const docLookup = (() => {
@@ -329,6 +386,13 @@ export function instrumentSetupForSingleStep(
                     )
                 ])
             );
+        const makeRevealGlobalsCall = (count?: number) =>
+            b.expressionStatement(
+                b.callExpression(
+                    b.memberExpression(b.identifier('window'), b.identifier('__revealGlobals')),
+                    typeof count === 'number' ? [b.literal(count)] : []
+                )
+            );
 
         // Insert helpers at the very top of the program.
         (ast.program as any).body = [...helpers, ...topLevelBody];
@@ -372,13 +436,24 @@ export function instrumentSetupForSingleStep(
                 }
 
                 // For setup: emit top-level steps first, then setup body.
-                if (node.id.name === 'setup' && topSteps.length > 0 && allowTopLevelPreSteps) {
-                    const injected: any[] = [];
-                    for (const step of topSteps) {
-                        injected.push(makeHighlightFromStep(step));
-                        injected.push(makeAwaitStep());
+                if (node.id.name === 'setup' && allowTopLevelPreSteps) {
+                    const revealCall = makeRevealGlobalsCall();
+                    if (topSteps.length > 0) {
+                        const injected: any[] = [];
+                        for (const step of topSteps) {
+                            injected.push(makeHighlightFromStep(step));
+                            injected.push(makeAwaitStep());
+                            const revealKey = `${step.loc.line}:${step.loc.column}`;
+                            const releaseCount = topLevelVarCounts.get(revealKey);
+                            if (typeof releaseCount === 'number' && releaseCount > 0) {
+                                injected.push(makeRevealGlobalsCall(releaseCount));
+                            }
+                        }
+                        injected.push(revealCall);
+                        node.body.body = [...injected, ...node.body.body];
+                    } else {
+                        node.body.body = [revealCall, ...node.body.body];
                     }
-                    node.body.body = [...injected, ...node.body.body];
                 }
 
                 // Recursively walk the function body and inject highlight/await before each mapped step.

@@ -2,7 +2,14 @@ import * as vscode from 'vscode';
 import { registerVariablesView } from '../views/variablesView';
 
 export type VarEntry = { name: string; value: any; type: string };
-export type VarState = { globals: VarEntry[]; locals: VarEntry[] };
+type GlobalDefs = Map<string, { type: string }>;
+export type VarState = {
+  globals: VarEntry[];
+  locals: VarEntry[];
+  globalDefs: GlobalDefs;
+  globalsSuppressed: boolean;
+  pendingGlobals: VarEntry[];
+};
 
 export type VariablesServiceDeps = {
   getActiveP5Panel: () => vscode.WebviewPanel | undefined;
@@ -12,10 +19,21 @@ export type VariablesServiceDeps = {
 export type VariablesServiceApi = {
   getGlobalsForDoc: (docUri: string) => VarEntry[];
   setGlobalsForDoc: (docUri: string, list: VarEntry[]) => void;
+  primeGlobalsForDoc: (docUri: string, list: VarEntry[]) => void;
+  hasGlobalDefinition: (docUri: string, name: string) => boolean;
+  revealGlobalsForDoc: (docUri: string, count?: number) => void;
+  setGlobalValue: (docUri: string, name: string, value: any) => void;
   getLocalsForDoc: (docUri: string) => VarEntry[];
   upsertLocalForDoc: (docUri: string, v: VarEntry) => void;
   clearForDoc: (docUri: string) => void;
   updateVariablesPanel: () => void;
+};
+
+const inferType = (value: any): string => {
+  if (Array.isArray(value)) return 'array';
+  const t = typeof value;
+  if (t === 'number' || t === 'boolean' || t === 'string') return t;
+  return 'string';
 };
 
 export function registerVariablesService(
@@ -24,8 +42,50 @@ export function registerVariablesService(
 ): VariablesServiceApi {
   const latestVarsByDoc = new Map<string, VarState>();
   const ensure = (docUri: string): VarState => {
-    if (!latestVarsByDoc.has(docUri)) latestVarsByDoc.set(docUri, { globals: [], locals: [] });
+    if (!latestVarsByDoc.has(docUri)) {
+      latestVarsByDoc.set(docUri, {
+        globals: [],
+        locals: [],
+        globalDefs: new Map(),
+        globalsSuppressed: false,
+        pendingGlobals: [],
+      });
+    }
     return latestVarsByDoc.get(docUri)!;
+  };
+
+  const upsertEntry = (list: VarEntry[], entry: VarEntry) => {
+    const idx = list.findIndex(v => v.name === entry.name);
+    if (idx >= 0) list[idx] = entry;
+    else list.push(entry);
+  };
+
+  const setGlobalValueInternal = (docUri: string, name: string, value: any) => {
+    const st = ensure(docUri);
+    const hinted = st.globalDefs.get(name)?.type
+      || st.globals.find(v => v.name === name)?.type
+      || st.pendingGlobals.find(v => v.name === name)?.type
+      || inferType(value);
+    const nextEntry: VarEntry = { name, value, type: hinted };
+
+    const visibleIdx = st.globals.findIndex(v => v.name === name);
+    if (visibleIdx >= 0) {
+      st.globals[visibleIdx] = nextEntry;
+    } else if (st.globalsSuppressed) {
+      upsertEntry(st.pendingGlobals, nextEntry);
+    } else {
+      upsertEntry(st.globals, nextEntry);
+    }
+
+    st.globalDefs.set(name, { type: hinted });
+  };
+
+  const setLocalValueInternal = (docUri: string, name: string, value: any) => {
+    const st = ensure(docUri);
+    const idx = st.locals.findIndex(v => v.name === name);
+    const type = inferType(value);
+    if (idx >= 0) st.locals[idx] = { ...st.locals[idx], value, type: st.locals[idx].type || type };
+    else st.locals.push({ name, value, type });
   };
 
   const { updateVariablesPanel } = registerVariablesView(context, {
@@ -33,22 +93,60 @@ export function registerVariablesService(
     getDocUriForPanel: (p) => deps.getDocUriForPanel(p),
     getGlobalsForDoc: (docUri: string) => ensure(docUri).globals,
     getLocalsForDoc: (docUri: string) => ensure(docUri).locals,
-    setGlobalValue: (docUri: string, name: string, value: any) => {
-      const st = ensure(docUri);
-      const i = st.globals.findIndex(v => v.name === name);
-      if (i >= 0) st.globals[i] = { ...st.globals[i], value };
-    },
-    setLocalValue: (docUri: string, name: string, value: any) => {
-      const st = ensure(docUri);
-      const i = st.locals.findIndex(v => v.name === name);
-      if (i >= 0) st.locals[i] = { ...st.locals[i], value };
-      else st.locals.push({ name, value, type: Array.isArray(value) ? 'array' : (typeof value === 'boolean' || typeof value === 'number') ? typeof value : 'string' });
-    },
+    setGlobalValue: setGlobalValueInternal,
+    setLocalValue: setLocalValueInternal,
   });
 
   return {
     getGlobalsForDoc: (docUri: string) => ensure(docUri).globals,
-    setGlobalsForDoc: (docUri: string, list: VarEntry[]) => { ensure(docUri).globals = Array.isArray(list) ? list.slice() : []; },
+    setGlobalsForDoc: (docUri: string, list: VarEntry[]) => {
+      const st = ensure(docUri);
+      const next = Array.isArray(list) ? list.slice() : [];
+      st.globalDefs = new Map();
+      for (const entry of next) {
+        if (entry && entry.name) {
+          st.globalDefs.set(entry.name, { type: entry.type || inferType(entry.value) });
+        }
+      }
+      if (st.globalsSuppressed) {
+        st.pendingGlobals = next;
+        return;
+      }
+      st.pendingGlobals = [];
+      st.globals = next;
+      st.globalsSuppressed = false;
+    },
+    primeGlobalsForDoc: (docUri: string, list: VarEntry[]) => {
+      const st = ensure(docUri);
+      st.globals = [];
+      st.locals = [];
+      st.globalDefs = new Map();
+      st.globalsSuppressed = true;
+      st.pendingGlobals = [];
+      for (const entry of list || []) {
+        if (entry && entry.name) {
+          st.globalDefs.set(entry.name, { type: entry.type || inferType(entry.value) });
+        }
+      }
+    },
+    hasGlobalDefinition: (docUri: string, name: string) => ensure(docUri).globalDefs.has(name),
+    revealGlobalsForDoc: (docUri: string, count?: number) => {
+      const st = ensure(docUri);
+      const totalPending = st.pendingGlobals.length;
+      if (totalPending === 0) {
+        st.globalsSuppressed = false;
+        return;
+      }
+      const toReveal = typeof count === 'number' && count > 0
+        ? Math.min(count, totalPending)
+        : totalPending;
+      const released = st.pendingGlobals.splice(0, toReveal);
+      for (const entry of released) {
+        upsertEntry(st.globals, entry);
+      }
+      st.globalsSuppressed = st.pendingGlobals.length > 0;
+    },
+    setGlobalValue: setGlobalValueInternal,
     getLocalsForDoc: (docUri: string) => ensure(docUri).locals,
     upsertLocalForDoc: (docUri: string, v: VarEntry) => {
       const st = ensure(docUri);

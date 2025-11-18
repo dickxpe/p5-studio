@@ -35,6 +35,7 @@ export function handleUpdateGlobalVar(
     getGlobalsForDoc: (docUri: string) => Array<{ name: string; value: any; type: string }>;
     getLocalsForDoc: (docUri: string) => Array<{ name: string; value: any; type: string }>;
     setGlobalValue: (docUri: string, name: string, value: any) => void;
+    hasGlobalDefinition: (docUri: string, name: string) => boolean;
     upsertLocal: (docUri: string, v: { name: string; value: any; type: string }) => void;
     updateVariablesPanel: () => void;
     isActivePanel: (panel: vscode.WebviewPanel) => boolean;
@@ -43,7 +44,7 @@ export function handleUpdateGlobalVar(
   try {
     const thisDocUri = params.editor.document.uri.toString();
     const globals = deps.getGlobalsForDoc(thisDocUri) || [];
-    const isGlobal = globals.some(v => v.name === params.name);
+    const isGlobal = globals.some(v => v.name === params.name) || deps.hasGlobalDefinition(thisDocUri, params.name);
     if (isGlobal) {
       deps.setGlobalValue(thisDocUri, params.name, params.value);
     } else {

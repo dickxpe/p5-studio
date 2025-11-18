@@ -14,6 +14,7 @@ export type WebviewToExtensionMessage =
     | { type: 'single-step-clicked' }
     | { type: 'highlightLine'; line: number }
     | { type: 'clearHighlight'; final?: boolean }
+    | { type: 'revealGlobals'; count?: number }
     | { type: 'oscSend'; address: string; args?: any[] }
     | {
         type: 'startOSC';
@@ -35,7 +36,7 @@ export type ExtensionToWebviewMessage =
     | { type: 'showTopInputs'; items: TopInputItem[] }
     | { type: 'toggleFPS'; show: boolean }
     | { type: 'updateVarDebounceDelay'; value: number }
-    | { type: 'setGlobalVars'; variables: GlobalVar[]; readOnly?: boolean }
+    | { type: 'setGlobalVars'; variables: GlobalVar[]; readOnly?: boolean; suppressPanel?: boolean }
     | { type: 'requestGlobalsSnapshot' }
     | { type: 'step-advance' }
     | { type: 'updateOverlayFontSize'; value: number }

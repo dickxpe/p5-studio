@@ -84,6 +84,8 @@ export async function handleStepRunClicked(
     getAllowInteractiveTopInputs: () => boolean;
     setAllowInteractiveTopInputs: (v: boolean) => void;
     setSteppingActive?: (docUri: string, value: boolean) => void;
+    primeGlobalsForDoc?: (docUri: string, list: Array<{ name: string; value: any; type: string }>) => void;
+    updateVariablesPanel?: () => void;
   }
 ) {
   const { panel, editor } = params;
@@ -92,6 +94,7 @@ export async function handleStepRunClicked(
   const rawCode = editor.document.getText();
   const docStepMap = buildStepMap(rawCode);
   const delayMs = cfg.getStepRunDelayMs();
+  const suppressGlobalsInPanel = /\bfunction\s+(setup|draw)\s*\(/.test(rawCode);
 
   // If already stepping, enable auto-advance from current position
   if ((panel as any)._steppingActive) {
@@ -173,15 +176,25 @@ export async function handleStepRunClicked(
   } catch { }
   const globals = preGlobals;
   let rewrittenCode = deps.rewriteUserCodeWithWindowGlobals(instrumented, globals);
+  const globalsPayload = (() => {
+    const { globals } = deps.extractGlobalVariablesWithConflicts(wrapped);
+    let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+    const hiddenSet = deps.getHiddenGlobalsByDirective(rawCode);
+    if (hiddenSet.size > 0) { filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name)); }
+    const readOnly = deps.hasOnlySetup(rawCode);
+    return { filteredGlobals, readOnly };
+  })();
+  deps.primeGlobalsForDoc?.(docUri, globalsPayload.filteredGlobals);
+  deps.updateVariablesPanel?.();
   const hasDraw = /\bfunction\s+draw\s*\(/.test(wrapped);
   try { const ch = deps.getOrCreateOutputChannel(docUri, fileName); ch.appendLine(`${deps.getTime()} [▶️INFO] STEP-RUN started: auto-advancing with ${delayMs}ms delay.`); } catch { }
   const afterLoad = () => {
-    const { globals } = deps.extractGlobalVariablesWithConflicts(wrapped);
-    let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
-    const hiddenSet = deps.getHiddenGlobalsByDirective(editor.document.getText());
-    if (hiddenSet.size > 0) { filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name)); }
-    const readOnly = deps.hasOnlySetup(editor.document.getText());
-    panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
+    panel.webview.postMessage({
+      type: 'setGlobalVars',
+      variables: globalsPayload.filteredGlobals,
+      readOnly: globalsPayload.readOnly,
+      suppressPanel: suppressGlobalsInPanel,
+    });
     (panel as any)._steppingActive = true;
     try { deps.setSteppingActive?.(docUri, true); } catch { }
     if ((panel as any)._autoStepTimer) { try { clearInterval((panel as any)._autoStepTimer); } catch { } (panel as any)._autoStepTimer = null; }
@@ -228,6 +241,8 @@ export async function handleSingleStepClicked(
     getInitialCaptureVisible: (panel: vscode.WebviewPanel) => boolean;
     getExtensionPath: () => string;
     setSteppingActive?: (docUri: string, value: boolean) => void;
+    primeGlobalsForDoc?: (docUri: string, list: Array<{ name: string; value: any; type: string }>) => void;
+    updateVariablesPanel?: () => void;
   }
 ) {
   const { panel, editor } = params;
@@ -235,6 +250,7 @@ export async function handleSingleStepClicked(
   const fileName = require('path').basename(editor.document.fileName);
   const rawCode = editor.document.getText();
   const docStepMap = buildStepMap(rawCode);
+  const suppressGlobalsInPanel = /\bfunction\s+(setup|draw)\s*\(/.test(rawCode);
 
   let wasAutoStepMode = (panel as any)._autoStepMode;
   if ((panel as any)._autoStepTimer) {
@@ -313,30 +329,32 @@ export async function handleSingleStepClicked(
   let instrumented = deps.instrumentSetupForSingleStep(wrapped, lineOffsetTotal, { disableTopLevelPreSteps: didWrap, docStepMap });
   const globals = preGlobals;
   let rewrittenCode = deps.rewriteUserCodeWithWindowGlobals(instrumented, globals);
+  const globalsPayload = (() => {
+    const { globals } = deps.extractGlobalVariablesWithConflicts(wrapped);
+    let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
+    const hiddenSet = deps.getHiddenGlobalsByDirective(rawCode);
+    if (hiddenSet.size > 0) { filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name)); }
+    const readOnly = deps.hasOnlySetup(rawCode);
+    return { filteredGlobals, readOnly };
+  })();
+  deps.primeGlobalsForDoc?.(docUri, globalsPayload.filteredGlobals);
+  deps.updateVariablesPanel?.();
   const hasDraw = /\bfunction\s+draw\s*\(/.test(wrapped);
+  const sendGlobals = () => {
+    panel.webview.postMessage({
+      type: 'setGlobalVars',
+      variables: globalsPayload.filteredGlobals,
+      readOnly: globalsPayload.readOnly,
+      suppressPanel: suppressGlobalsInPanel,
+    });
+    (panel as any)._steppingActive = true;
+    try { deps.setSteppingActive?.(docUri, true); } catch { }
+  };
   if (!hasDraw) {
     panel.webview.html = await deps.createHtml(instrumented, panel, deps.getExtensionPath());
-    setTimeout(() => {
-      const { globals } = deps.extractGlobalVariablesWithConflicts(wrapped);
-      let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
-      const hiddenSet = deps.getHiddenGlobalsByDirective(editor.document.getText());
-      if (hiddenSet.size > 0) { filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name)); }
-      const readOnly = deps.hasOnlySetup(editor.document.getText());
-      panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
-      (panel as any)._steppingActive = true;
-      try { deps.setSteppingActive?.(docUri, true); } catch { }
-    }, 200);
+    setTimeout(sendGlobals, 200);
   } else {
     panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: false });
-    setTimeout(() => {
-      const { globals } = deps.extractGlobalVariablesWithConflicts(wrapped);
-      let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean'].includes(g.type));
-      const hiddenSet = deps.getHiddenGlobalsByDirective(editor.document.getText());
-      if (hiddenSet.size > 0) { filteredGlobals = filteredGlobals.filter(g => !hiddenSet.has(g.name)); }
-      const readOnly = deps.hasOnlySetup(editor.document.getText());
-      panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
-      (panel as any)._steppingActive = true;
-      try { deps.setSteppingActive?.(docUri, true); } catch { }
-    }, 200);
+    setTimeout(sendGlobals, 200);
   }
 }
