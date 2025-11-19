@@ -524,6 +524,16 @@ export function instrumentSetupForSingleStep(
                                 } else if (node.id.name === 'draw') {
                                     postActions.push(setFrameWaitExpr(false));
                                     postActions.push(setFrameInProgressExpr(false));
+                                } else if (node.id.name === 'setup') {
+                                    result.push(
+                                        b.expressionStatement(
+                                            b.callExpression(
+                                                b.identifier('__clearHighlight'),
+                                                [drawSteps.length === 0 ? b.literal(true) : b.literal(false)]
+                                            )
+                                        )
+                                    );
+                                    _insertedFinalClear = true;
                                 } else {
                                     result.push(
                                         b.expressionStatement(

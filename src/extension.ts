@@ -117,7 +117,7 @@ export function activate(context: vscode.ExtensionContext) {
       // Prefer to show the actual address/port the server is bound to, including any custom overrides
       // These fields always reflect the actual running values, including custom overrides
       oscStatusBar.text = '🛑 Stop OSC';
-      oscStatusBar.tooltip = `Server is running\nListening on: ${runningCfg.localAddress}:${runningCfg.localPort}\nSending to: ${runningCfg.remoteAddress}:${runningCfg.remotePort}`;
+      oscStatusBar.tooltip = `OSC Server is running\nListening on: ${runningCfg.localAddress}:${runningCfg.localPort}\nSending to: ${runningCfg.remoteAddress}:${runningCfg.remotePort}`;
       oscStatusBar.color = '#00bfae';
     } else {
       // Show what will be used from settings
