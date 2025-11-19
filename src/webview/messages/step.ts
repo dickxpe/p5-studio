@@ -169,7 +169,7 @@ export async function handleStepRunClicked(
   wrapped = deps.rewriteFrameCountRefs(wrapped);
   const preGlobals = deps.extractGlobalVariables(wrapped);
   const lineOffsetTotal = computeLineOffset(codeForRun, wrapped, didWrap);
-  let instrumented = deps.instrumentSetupForSingleStep(wrapped, lineOffsetTotal, { disableTopLevelPreSteps: didWrap, docStepMap });
+  let instrumented = deps.instrumentSetupForSingleStep(wrapped, lineOffsetTotal, { docStepMap });
   try {
     const ch = deps.getOrCreateOutputChannel(docUri, fileName);
     ch.appendLine(`${deps.getTime()} [DEBUG] Instrumented code for STEP-RUN (didWrap=${didWrap}, lineOffset=${lineOffsetTotal}):`);
@@ -370,7 +370,7 @@ export async function handleSingleStepClicked(
   wrapped = deps.rewriteFrameCountRefs(wrapped);
   const preGlobals = deps.extractGlobalVariables(wrapped);
   const lineOffsetTotal = computeLineOffset(codeForRun, wrapped, didWrap);
-  let instrumented = deps.instrumentSetupForSingleStep(wrapped, lineOffsetTotal, { disableTopLevelPreSteps: didWrap, docStepMap });
+  let instrumented = deps.instrumentSetupForSingleStep(wrapped, lineOffsetTotal, { docStepMap });
   const globals = preGlobals;
   let rewrittenCode = deps.rewriteUserCodeWithWindowGlobals(instrumented, globals);
   const globalsPayload = (() => {
