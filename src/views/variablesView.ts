@@ -429,10 +429,12 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
           upBtn.type = 'button';
           upBtn.className = 'spin-btn spin-up';
           upBtn.setAttribute('aria-label', 'Increase value');
+          upBtn.setAttribute('tabindex', '-1');
           var downBtn = document.createElement('button');
           downBtn.type = 'button';
           downBtn.className = 'spin-btn spin-down';
           downBtn.setAttribute('aria-label', 'Decrease value');
+          downBtn.setAttribute('tabindex', '-1');
           buttons.appendChild(upBtn);
           buttons.appendChild(downBtn);
           wrapper.appendChild(buttons);
