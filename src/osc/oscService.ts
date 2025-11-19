@@ -147,7 +147,7 @@ export function initOsc(bcast: BroadcastFn, override?: { localAddress?: string; 
         runningConfig = null;
         try {
             const cfg = getConfig();
-            ch.appendLine(`[${new Date().toLocaleTimeString()}] [OSC] Server stopped on ${cfg.localAddress});
+            ch.appendLine(`[${new Date().toLocaleTimeString()}] [OSC] Server stopped on ${cfg.localAddress}`);
         } catch { }
     }
 
