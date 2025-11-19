@@ -886,23 +886,14 @@ window.addEventListener("message", e => {
     case 'step-advance':
       try {
         if (typeof window.__liveP5StepAdvance === 'function') {
-          // If there is an active step resolver, advance; otherwise finalize stepping.
+          // If there is an active step resolver, advance; otherwise clear highlight once.
           if (window.__liveP5StepResolve) {
             window.__liveP5StepAdvance();
           } else if (typeof window.__liveP5ClearHighlight === 'function') {
-            // No more step promise to resolve: tell the extension we're done.
-            try {
-              window.__liveP5ClearHighlight(true);
-            } catch {
-              window.__liveP5ClearHighlight();
-            }
-          }
-        } else if (typeof window.__liveP5ClearHighlight === 'function') {
-          try {
-            window.__liveP5ClearHighlight(true);
-          } catch {
             window.__liveP5ClearHighlight();
           }
+        } else if (typeof window.__liveP5ClearHighlight === 'function') {
+          window.__liveP5ClearHighlight();
         }
       } catch (e) { }
       break;
