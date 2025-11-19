@@ -63,8 +63,8 @@ function openPort(override?: { localAddress?: string; localPort?: number; remote
     };
     sendPort = new osc.UDPPort(sendOptions);
     const ch = ensureOutput();
-    ch.appendLine(`[DEBUG] Opening OSC receive port on ${localAddress}:${localPort}`);
-    ch.appendLine(`[DEBUG] Opening OSC send port to ${remoteAddress}:${remotePort}`);
+    // ch.appendLine(`[DEBUG] Opening OSC receive port on ${localAddress}:${localPort}`);
+    // ch.appendLine(`[DEBUG] Opening OSC send port to ${remoteAddress}:${remotePort}`);
     port.open();
     sendPort.open();
 
@@ -139,11 +139,16 @@ export function initOsc(bcast: BroadcastFn, override?: { localAddress?: string; 
     function reload() { openPort(); }
 
     function dispose() {
+        const ch = ensureOutput();
         try { if (port) port.close(); } catch { }
         try { if (sendPort) sendPort.close(); } catch { }
         port = null;
         sendPort = null;
         runningConfig = null;
+        try {
+            const cfg = getConfig();
+            ch.appendLine(`[${new Date().toLocaleTimeString()}] [OSC] Server stopped on ${cfg.localAddress});
+        } catch { }
     }
 
     function handleConfigChange(e: vscode.ConfigurationChangeEvent) {
