@@ -252,12 +252,12 @@
         },
           {
           "command": "P5Studio.singleStep",
-          "group": "navigation@4",
+          "group": "navigation@5",
           "when": "p5WebviewTabFocused && p5DebugPrimed && config.P5Studio.debug.ShowDebugButton"
         },
         {
           "command": "P5Studio.continueToBreakpoint",
-          "group": "navigation@5",
+          "group": "navigation@4",
           "when": "p5WebviewTabFocused && p5SteppingActive && config.P5Studio.debug.ShowDebugButton"
         },
       
