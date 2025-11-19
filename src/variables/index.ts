@@ -13,6 +13,7 @@ export type VarState = {
   localsHeading: LocalsHeading;
   forceRevealNextGlobals: boolean;
   globalTimestamps: Map<string, number>;
+  hasDraw: boolean;
 };
 
 export type VariablesServiceDeps = {
@@ -33,6 +34,7 @@ export type VariablesServiceApi = {
   updateVariablesPanel: () => void;
   setLocalsHeadingForDoc: (docUri: string, heading: LocalsHeading) => void;
   getLocalsHeadingForDoc: (docUri: string) => LocalsHeading;
+  setHasDrawForDoc: (docUri: string, hasDraw: boolean) => void;
   resetValuesForDoc: (docUri: string) => void;
 };
 
@@ -70,6 +72,7 @@ export function registerVariablesService(
         localsHeading: 'locals',
         forceRevealNextGlobals: false,
         globalTimestamps: new Map(),
+        hasDraw: false,
       });
     }
     return latestVarsByDoc.get(docUri)!;
@@ -140,6 +143,7 @@ export function registerVariablesService(
     getGlobalsForDoc: (docUri: string) => ensure(docUri).globals,
     getLocalsForDoc: (docUri: string) => ensure(docUri).locals,
     getLocalsHeadingForDoc: (docUri: string) => ensure(docUri).localsHeading,
+    getHasDrawForDoc: (docUri: string) => ensure(docUri).hasDraw,
     setGlobalValue: setGlobalValueInternal,
     setLocalValue: setLocalValueInternal,
   });
@@ -300,6 +304,10 @@ export function registerVariablesService(
     setLocalsHeadingForDoc: (docUri: string, heading: LocalsHeading) => {
       const st = ensure(docUri);
       st.localsHeading = heading === 'variables' ? 'variables' : 'locals';
+    },
+    setHasDrawForDoc: (docUri: string, hasDraw: boolean) => {
+      const st = ensure(docUri);
+      st.hasDraw = !!hasDraw;
     },
     getLocalsHeadingForDoc: (docUri: string) => ensure(docUri).localsHeading,
     resetValuesForDoc: (docUri: string) => {

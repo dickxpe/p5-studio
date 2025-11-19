@@ -8,6 +8,7 @@ export interface VariablesViewDeps {
   getGlobalsForDoc: (docUri: string) => GlobalVar[];
   getLocalsForDoc: (docUri: string) => GlobalVar[];
   getLocalsHeadingForDoc: (docUri: string) => 'locals' | 'variables';
+  getHasDrawForDoc: (docUri: string) => boolean;
   setGlobalValue: (docUri: string, name: string, value: any, opts?: { updatedAt?: number }) => void;
   setLocalValue: (docUri: string, name: string, value: any) => void;
 }
@@ -22,6 +23,7 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
       let globals: GlobalVar[] = [];
       let locals: GlobalVar[] = [];
       let localsHeading: 'locals' | 'variables' = 'locals';
+      let hasDraw = false;
       if (panel) {
         const docUri = deps.getDocUriForPanel(panel)?.toString();
         if (docUri) {
@@ -30,9 +32,12 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
           try {
             localsHeading = deps.getLocalsHeadingForDoc(docUri) || 'locals';
           } catch { }
+          try {
+            hasDraw = !!deps.getHasDrawForDoc(docUri);
+          } catch { hasDraw = false; }
         }
       }
-      variablesPanelView.webview.postMessage({ type: 'setVarsSplit', globals, locals, localsHeading });
+      variablesPanelView.webview.postMessage({ type: 'setVarsSplit', globals, locals, localsHeading, hasDraw });
     } catch { }
   }
 
@@ -58,7 +63,7 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
       th.value-col, td.value-col { width: 35%; }
       th.type-col, td.type-col { width: 20%; }
   th { background: #2222; color: #307dc1; }
-      /* Make inputs fill the table cell */
+      /* Make inputs fill the table cell (render-only) */
       input[type="number"],
       input[type="text"],
       input[data-type="array"],
@@ -344,14 +349,26 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
       var _rendered = false;
       var _globalsIndex = new Map(); // name -> { type }
       var _localsIndex = new Map();
+      // Track whether current sketch has a draw() function so we can allow editing
+      var _hasDraw = false;
       function normalizeForInput(type, v) {
         if (type === 'number') {
           var n = Number(v);
           return Number.isNaN(n) ? '' : String(n);
         }
         if (type === 'array') {
+          // Render arrays without surrounding brackets for compactness
           try {
-            return JSON.stringify(v);
+            if (!Array.isArray(v)) {
+              var raw = JSON.stringify(v);
+              return raw && raw.length >= 2 && raw[0] === '[' && raw[raw.length - 1] === ']'
+                ? raw.slice(1, raw.length - 1)
+                : raw;
+            }
+            var json = JSON.stringify(v);
+            return json && json.length >= 2 && json[0] === '[' && json[json.length - 1] === ']'
+              ? json.slice(1, json.length - 1)
+              : json;
           } catch { return ''; }
         }
         if (type === 'boolean') return !!v;
@@ -372,10 +389,33 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
           try { input.focus({ preventScroll: true }); } catch { }
         }
       }
+      function startSpinHold(input, direction) {
+        // Single immediate step
+        adjustNumberValue(input, direction);
+        // Then continuous steps while holding
+        var holdInterval = null;
+        var cancel = function() {
+          if (holdInterval) {
+            clearInterval(holdInterval);
+            holdInterval = null;
+          }
+          window.removeEventListener('pointerup', cancel, true);
+          window.removeEventListener('pointercancel', cancel, true);
+          window.removeEventListener('pointerleave', cancel, true);
+        };
+        holdInterval = setInterval(function() {
+          adjustNumberValue(input, direction);
+        }, 120);
+        window.addEventListener('pointerup', cancel, true);
+        window.addEventListener('pointercancel', cancel, true);
+        window.addEventListener('pointerleave', cancel, true);
+      }
       function decorateNumberInputs(rootEl) {
         if (!rootEl) return;
         var numberInputs = rootEl.querySelectorAll('input[type="number"][data-var]:not([data-spin-wrapped="true"])');
         numberInputs.forEach(function(input) {
+          // Skip read-only/disabled inputs so spinners only appear for editable ones
+          if (input.hasAttribute('readonly') || input.hasAttribute('disabled')) return;
           input.setAttribute('data-spin-wrapped', 'true');
           var wrapper = document.createElement('div');
           wrapper.className = 'number-wrapper';
@@ -398,11 +438,11 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
           wrapper.appendChild(buttons);
           upBtn.addEventListener('pointerdown', function(evt) {
             evt.preventDefault();
-            adjustNumberValue(input, 1);
+            startSpinHold(input, 1);
           });
           downBtn.addEventListener('pointerdown', function(evt) {
             evt.preventDefault();
-            adjustNumberValue(input, -1);
+            startSpinHold(input, -1);
           });
         });
       }
@@ -423,15 +463,18 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
           var v = vars[i];
           if (scope === 'globals') _globalsIndex.set(v.name, { type: v.type }); else _localsIndex.set(v.name, { type: v.type });
           html += '<tr><td class="name-col">' + v.name + '</td><td class="value-col">';
+          var isGlobal = scope === 'globals';
+          var editable = isGlobal && _hasDraw;
+          var readonlyAttr = editable ? '' : ' readonly';
+          var disabledAttr = editable ? '' : ' disabled';
           if (v.type === 'boolean') {
-                  
-            html += '<label class="checkbox-wrapper"><input type="checkbox" data-var="' + v.name + '" data-scope="' + scope + '"' + (v.value ? ' checked' : '') + ' /><span class="checkbox-custom" aria-hidden="true"></span></label>';
+            html += '<label class="checkbox-wrapper"><input type="checkbox" data-var="' + v.name + '" data-scope="' + scope + '"' + (v.value ? ' checked' : '') + disabledAttr + ' /><span class="checkbox-custom" aria-hidden="true"></span></label>';
           } else if (v.type === 'number') {
-            html += '<input type="number" data-var="' + v.name + '" data-scope="' + scope + '" value="' + normalizeForInput('number', v.value) + '" step="any" />';
+            html += '<input type="number" data-var="' + v.name + '" data-scope="' + scope + '" value="' + normalizeForInput('number', v.value) + '" step="any"' + readonlyAttr + ' />';
           } else if (v.type === 'array') {
-            html += '<input type="text" data-var="' + v.name + '" data-scope="' + scope + '" data-type="array" value="' + normalizeForInput('array', v.value).replace(/"/g, '&quot;') + '" />';
+            html += '<input type="text" data-var="' + v.name + '" data-scope="' + scope + '" data-type="array" value="' + normalizeForInput('array', v.value).replace(/"/g, '&quot;') + '"' + readonlyAttr + ' />';
           } else {
-            html += '<input type="text" data-var="' + v.name + '" data-scope="' + scope + '" value="' + normalizeForInput('text', v.value) + '" />';
+            html += '<input type="text" data-var="' + v.name + '" data-scope="' + scope + '" value="' + normalizeForInput('text', v.value) + '"' + readonlyAttr + ' />';
           }
           html += '</td><td class="type-col">' + v.type + '</td></tr>';
         }
@@ -443,11 +486,14 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
         inputs.forEach(function(input) {
           var name = input.getAttribute('data-var');
           var scopeAttr = input.getAttribute('data-scope') || 'globals';
+          var isGlobal = scopeAttr === 'globals';
+          var editable = isGlobal && _hasDraw;
+          if (!editable) {
+            return; // keep locals and no-draw sketches read-only
+          }
           if (input.type === 'checkbox') {
-            // Checkbox: change is fine (no continuous intermediate states)
             input.addEventListener('change', function() { sendVarUpdate(name, input.checked, scopeAttr); });
           } else if (input.type === 'number') {
-            // Number: send on every increment/decrement or typed change
             let numDebounceTimer = null;
             input.addEventListener('input', function() {
               if (numDebounceTimer) clearTimeout(numDebounceTimer);
@@ -457,14 +503,12 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
                 if (!Number.isNaN(num)) sendVarUpdate(name, num, scopeAttr); else sendVarUpdate(name, '', scopeAttr);
               }, 25);
             });
-            // Also fire a final confirmation on blur (optional redundancy)
             input.addEventListener('change', function() {
               if (input.value === '') { sendVarUpdate(name, '', scopeAttr); return; }
               var num = Number(input.value);
               if (!Number.isNaN(num)) sendVarUpdate(name, num, scopeAttr); else sendVarUpdate(name, '', scopeAttr);
             });
           } else if (input.getAttribute('data-type') === 'array') {
-            // Array: treat value as JSON; validate on change
             let arrDebounceTimer = null;
             input.addEventListener('input', function() {
               if (arrDebounceTimer) clearTimeout(arrDebounceTimer);
@@ -482,7 +526,11 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
                 var raw = input.value;
                 if (raw.trim() === '') { return; }
                 try {
-                  var parsed = JSON.parse(raw);
+                  // User sees array contents without brackets; wrap before parsing
+                  var toParse = raw.trim();
+                  if (toParse[0] !== '[') toParse = '[' + toParse;
+                  if (toParse[toParse.length - 1] !== ']') toParse = toParse + ']';
+                  var parsed = JSON.parse(toParse);
                   if (Array.isArray(parsed)) {
                     clearArrayError(input);
                     setInvalidFlag(name, scopeAttr, false);
@@ -504,7 +552,10 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
               var raw = input.value;
               if (raw.trim() === '') { return; }
               try {
-                var parsed = JSON.parse(raw);
+                var toParse = raw.trim();
+                if (toParse[0] !== '[') toParse = '[' + toParse;
+                if (toParse[toParse.length - 1] !== ']') toParse = toParse + ']';
+                var parsed = JSON.parse(toParse);
                 if (Array.isArray(parsed)) {
                   clearArrayError(input);
                   setInvalidFlag(name, scopeAttr, false);
@@ -522,7 +573,6 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
               }
             });
           } else {
-            // Text: live updates while typing
             let textDebounceTimer = null;
             input.addEventListener('input', function() {
               if (textDebounceTimer) clearTimeout(textDebounceTimer);
@@ -530,7 +580,6 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
                 sendVarUpdate(name, input.value, scopeAttr);
               }, 25);
             });
-            // Optional final send on change (kept for consistency; cheap)
             input.addEventListener('change', function() { sendVarUpdate(name, input.value, scopeAttr); });
           }
         });
@@ -589,6 +638,7 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
         if (event.data && event.data.type === 'setVarsSplit') {
           var globals = event.data.globals || [];
           var locals = event.data.locals || [];
+          _hasDraw = !!event.data.hasDraw;
           var headingChanged = false;
           if (event.data.localsHeading === 'locals' || event.data.localsHeading === 'variables') {
             if (event.data.localsHeading !== _localsHeading) {

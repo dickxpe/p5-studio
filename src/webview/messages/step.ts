@@ -242,6 +242,8 @@ export async function handleContinueClicked(
   (panel as any)._autoStepMode = true;
   (panel as any)._steppingActive = true;
   (panel as any)._suppressHighlightUntilBreakpoint = true;
+  // Track that we're in a "continue" run; used by instrumentation/clearHighlight
+  try { (panel as any)._continueRequested = true; } catch { }
   const fastAdvance = () => {
     try {
       if (!(panel as any)._autoStepMode) return;

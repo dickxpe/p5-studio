@@ -99,6 +99,15 @@ export function instrumentSetupForSingleStep(
                 b.literal(value)
             )
         );
+        const shouldFinalizeAfterContinueExpr = () =>
+            b.logicalExpression('||',
+                b.unaryExpression('!', b.memberExpression(b.identifier('window'), b.identifier('__liveP5HasMoreBreakpoints')),
+                    true
+                ),
+                b.unaryExpression('!', b.memberExpression(b.identifier('window'), b.identifier('__liveP5StepResolve')),
+                    true
+                )
+            );
 
         // Controller helpers placed at top of program so both setup and draw can use them.
         const helpers: any[] = [];
@@ -249,6 +258,12 @@ export function instrumentSetupForSingleStep(
                 )
             )
         );
+        const hasMoreBreakpointsDecl = b.expressionStatement(
+            b.assignmentExpression('=',
+                b.memberExpression(b.identifier('window'), b.identifier('__liveP5HasMoreBreakpoints')),
+                b.literal(true)
+            )
+        );
         const revealGlobalsDecl = b.expressionStatement(
             b.assignmentExpression('=',
                 b.memberExpression(b.identifier('window'), b.identifier('__revealGlobals')),
@@ -326,7 +341,7 @@ export function instrumentSetupForSingleStep(
                 b.literal(false)
             )
         );
-        helpers.push(highlightDecl, clearDecl, waitDecl, advanceDecl, revealGlobalsDecl, setupDoneInit, frameWaitInit, frameInProgressInit, steppingDoneInit, ...exposeHelpers);
+        helpers.push(highlightDecl, clearDecl, waitDecl, advanceDecl, hasMoreBreakpointsDecl, revealGlobalsDecl, setupDoneInit, frameWaitInit, frameInProgressInit, steppingDoneInit, ...exposeHelpers);
 
         // Helper to create a highlight call from a StepTarget.
         const docLookup = (() => {
@@ -459,6 +474,7 @@ export function instrumentSetupForSingleStep(
                 // Recursively walk the function body and inject highlight/await before each mapped step.
                 const allPhaseSteps = phaseSteps.slice().sort((a, b) => a.loc.line - b.loc.line || a.loc.column - b.loc.column);
                 const lastStep = allPhaseSteps[allPhaseSteps.length - 1];
+                const isDrawPhase = node.id.name === 'draw';
 
                 // For custom functions, ensure we clear highlight and mark stepping done only after the last function step, not after the call site.
                 let _insertedFinalClear = false;
@@ -524,6 +540,24 @@ export function instrumentSetupForSingleStep(
                                 } else if (node.id.name === 'draw') {
                                     postActions.push(setFrameWaitExpr(false));
                                     postActions.push(setFrameInProgressExpr(false));
+                                    // When CONTINUE was requested and no more breakpoints are pending,
+                                    // send a final clear to stop debugging.
+                                    postActions.push(
+                                        b.ifStatement(
+                                            b.logicalExpression('&&',
+                                                b.memberExpression(b.identifier('window'), b.identifier('_continueRequested')),
+                                                shouldFinalizeAfterContinueExpr()
+                                            ),
+                                            b.blockStatement([
+                                                b.expressionStatement(
+                                                    b.callExpression(
+                                                        b.identifier('__clearHighlight'),
+                                                        [b.literal(true)]
+                                                    )
+                                                )
+                                            ])
+                                        )
+                                    );
                                 } else if (node.id.name === 'setup') {
                                     result.push(
                                         b.expressionStatement(
