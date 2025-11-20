@@ -14,8 +14,7 @@
 npm-debug.log
 
 # TypeScript sources (extension runs from compiled JS)
-**/*.ts
-!p5types/**/*.ts
+
 
 # Local tooling / examples / non-runtime
 examples/**
