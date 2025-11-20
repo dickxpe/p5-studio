@@ -319,7 +319,7 @@
             "type": "string",
             "enum": ["1.11", "2.1"],
             "default": "1.11",
-            "description": "Select the bundled p5.js version to load for LIVE panels (maps to assets/<version>/).",
+            "description": "Select the bundled p5.js version to load for LIVE panels (1.11 or 2.1 => Has no autocompletion yet).",
             "order": 1
           },
           "P5Studio.reloadOnSave": {
@@ -500,7 +500,7 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run build",
-    "build": "node scripts/copy-p5types-to-assets && webpack --mode production",
+    "build": "webpack --mode production",
     "compile": "tsc -p ./",
     "postinstall": "node ./node_modules/vscode/bin/install",
     "test": "mocha --require ts-node/register test/**/*.test.ts",
