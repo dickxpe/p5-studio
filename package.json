@@ -351,7 +351,7 @@
           "P5Studio.showRecordButton": {
             "type": "boolean",
             "default": true,
-            "description": "Show the Record (Toggle Capture Panel) button in the editor title bar for LIVE P5 panels.",
+            "description": "Show the Record (Toggle Capture Panel) button in the editor title bar for p5 panels.",
             "order": 6
           },
           "P5Studio.SingleP5Panel": {

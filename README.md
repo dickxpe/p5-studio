@@ -33,12 +33,12 @@ However it can be also be used as a prototyping tool for any creative coder!
 
 2. **Project Setup:**
    - Automatic project setup notification.
-   - OR Run `Live P5: Setup new P5 Project` to scaffold a p5.js project structure with `common/`, `import/`, `media/`, and `sketches/` folders and a jsconfig to enable autocompletion for p5.
+   - OR Run `P5 Studio: Setup new P5 Project` to scaffold a p5.js project structure with `common/`, `import/`, `media/`, and `sketches/` folders and a jsconfig to enable autocompletion for p5.
    - If no folder/workspace is open, select a folder or create a new one using the dialog window.
 
 2. **Open or Create a Sketch:**
    - Open a `.js` or `.ts` file with your p5.js code.
-   - Use P5 Live BUTTON (or the command palette (`Ctrl+Shift+P` or `Cmd+Shift+P`) and run `Live P5: Open P5 Panel`).
+   - Use P5 Live BUTTON (or the command palette (`Ctrl+Shift+P` or `Cmd+Shift+P`) and run `P5 Studio: Open P5 Panel`).
 
 3. **Live Coding:**
    - Edit your code and see changes instantly in the webview panel.
@@ -68,7 +68,7 @@ All settings are under the `P5 Studio` namespace. You can configure these in you
 | `P5Studio.reloadOnSave` | boolean | `true` | Automatically reload the P5 webpanel when saving the file. |
 | `P5Studio.reloadWhileTyping` | boolean | `true` | Automatically reload the P5 webpanel as you type. |
 | `P5Studio.debounceDelay` | number | `300` | Debounce delay in milliseconds for live reload while typing. |
-| `P5Studio.showRecordButton` | boolean | `true` | Show the Record (Toggle Capture Panel) button in the editor title bar for LIVE P5 panels. |
+| `P5Studio.showRecordButton` | boolean | `true` | Show the Record (Toggle Capture Panel) button in the editor title bar for p5 panels. |
 | `P5Studio.variablePanelDebounceDelay` | number | `500` | Debounce delay (ms) for VARIABLE panel input changes before applying them to the sketch. |
 | `P5Studio.SingleP5Panel` | boolean | `true` | If enabled, only one P5 webpanel can be open at a time. Opening a new panel closes all others. |
 | `P5Studio.showSetupNotification` | boolean | `true` | Show a setup prompt when the workspace has no P5 marker (`.p5`). |
@@ -78,7 +78,7 @@ All settings are under the `P5 Studio` namespace. You can configure these in you
 | `P5Studio.oscLocalPort` | number | `57121` | OSC local port (port to listen for incoming OSC messages). |
 
 ## OSC (Open Sound Control)
-LIVE P5 Launcher supports sending and receiving OSC (Open Sound Control) messages between your p5.js sketch and other OSC-compatible software or devices.
+P5 Studio supports sending and receiving OSC (Open Sound Control) messages between your p5.js sketch and other OSC-compatible software or devices.
 
 ### Features
 - **Send OSC messages** from your sketch to any remote OSC address/port.

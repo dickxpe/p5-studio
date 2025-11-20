@@ -371,7 +371,7 @@ export function activate(context: vscode.ExtensionContext) {
     getTime,
   });
 
-  // Cleanup: clear any pre-existing lint diagnostics for documents without a LIVE P5 panel
+  // Cleanup: clear any pre-existing lint diagnostics for documents without a P5 panel
   try {
     for (const doc of vscode.workspace.textDocuments || []) {
       const uriStr = doc.uri.toString();
@@ -384,7 +384,7 @@ export function activate(context: vscode.ExtensionContext) {
   function lintActiveEditor() {
     const ed = vscode.window.activeTextEditor;
     if (ed) {
-      // Only lint documents that have an associated LIVE P5 panel
+      // Only lint documents that have an associated P5 panel
       const docUri = ed.document.uri.toString();
       if (webviewPanelMap.has(docUri)) {
         lintApi.lintAll(ed.document);
@@ -431,14 +431,23 @@ export function activate(context: vscode.ExtensionContext) {
   // Run initial semicolon lint on the active editor
   lintActiveEditor();
 
-  // Detect whether the workspace has a .p5 marker and set context
+
+  // Detect whether the workspace has a jsconfig.json with projectType: 'p5js' and set context
   function updateP5ProjectContext() {
     try {
       let found = false;
       const folders = vscode.workspace.workspaceFolders || [];
-      for (const f of folders) {
-        const markerPath = path.join(f.uri.fsPath, '.p5');
-        if (fs.existsSync(markerPath)) { found = true; break; }
+      if (folders.length > 0) {
+        const jsconfigPath = path.join(folders[0].uri.fsPath, 'jsconfig.json');
+        if (fs.existsSync(jsconfigPath)) {
+          try {
+            const jsconfigRaw = fs.readFileSync(jsconfigPath, 'utf8');
+            const jsconfig = JSON.parse(jsconfigRaw);
+            if (jsconfig && jsconfig.projectType === 'p5js') {
+              found = true;
+            }
+          } catch { /* ignore parse errors */ }
+        }
       }
       hasP5Project = found;
       vscode.commands.executeCommand('setContext', 'hasP5Project', hasP5Project);
@@ -447,9 +456,9 @@ export function activate(context: vscode.ExtensionContext) {
     } catch { /* ignore */ }
   }
   updateP5ProjectContext();
-  // Watch for .p5 creation/deletion and workspace folder changes
+  // Watch for jsconfig.json creation/deletion/changes and workspace folder changes
   try {
-    const watcher = vscode.workspace.createFileSystemWatcher('**/.p5');
+    const watcher = vscode.workspace.createFileSystemWatcher('**/jsconfig.json');
     context.subscriptions.push(watcher.onDidCreate(() => updateP5ProjectContext()));
     context.subscriptions.push(watcher.onDidDelete(() => updateP5ProjectContext()));
     context.subscriptions.push(watcher.onDidChange(() => updateP5ProjectContext()));
@@ -533,7 +542,7 @@ export function activate(context: vscode.ExtensionContext) {
     updateJsOrTsContext(editor);
     if (!editor) return;
     const docUri = editor.document.uri.toString();
-    // Restore focus for LIVE P5 panel and set hasP5Webview context per sketch
+    // Restore focus for P5 panel and set hasP5Webview context per sketch
     const panel = webviewPanelMap.get(docUri);
     if (panel) {
       panel.reveal(panel.viewColumn, true);
@@ -605,7 +614,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.workspace.onDidCloseTextDocument(async doc => {
       lintApi.clearDiagnosticsForDocument(doc.uri);
       // Blockly panels are managed by the blockly module
-      // Also close the corresponding LIVE P5 panel for this document, if present
+      // Also close the corresponding P5 panel for this document, if present
       try {
         const p5Panel = webviewPanelMap.get(doc.uri.toString());
         if (p5Panel) {
@@ -810,7 +819,7 @@ export function activate(context: vscode.ExtensionContext) {
   (async () => { try { await autoReload.updateConfig(); } catch { } })();
 
   // ----------------------------
-  // LIVE P5 panel command
+  // P5 panel command
   // ----------------------------
   registerLiveCommands(context, {
     openLive: async () => {
@@ -1166,7 +1175,7 @@ export function activate(context: vscode.ExtensionContext) {
             const edToClear = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === docUri);
             if (edToClear) clearStepHighlight(edToClear);
           } catch { }
-          // Also clear any Blockly block highlight for this document when the LIVE P5 panel closes
+          // Also clear any Blockly block highlight for this document when the P5 panel closes
           try { blocklyApi.clearHighlight(docUri); } catch { }
           (panel as any)._steppingActive = false;
           try { contextService.setSteppingActive(docUri, false); } catch { }
@@ -1520,6 +1529,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (hasHelper) include.push(helperDts);
             const jsconfig = {
               createdAt: toLocalISOString(now),
+              projectType: 'p5js',
               include,
             };
             await fsp.writeFile(path.join(rootPath, 'jsconfig.json'), JSON.stringify(jsconfig, null, 2), 'utf8');
@@ -1528,22 +1538,7 @@ export function activate(context: vscode.ExtensionContext) {
               console.warn('[P5Studio] No p5types found for version', selectedVersion, '- jsconfig will omit type definitions.');
             }
 
-            progress.report({ message: 'Creating project marker' });
-            const markerPath = path.join(rootPath, '.p5');
-            await ensureWritableMarker(markerPath);
-            let version = 'unknown';
-            try {
-              const pkgRaw = await fsp.readFile(path.join(context.extensionPath, 'package.json'), 'utf8');
-              const pkgJson = JSON.parse(pkgRaw);
-              if (pkgJson && typeof pkgJson.version === 'string') {
-                version = pkgJson.version;
-              }
-            } catch {
-              // ignore
-            }
-            const marker = { version, createdAt: toLocalISOString(now) };
-            await fsp.writeFile(markerPath, JSON.stringify(marker, null, 2) + '\n', 'utf8');
-            try { hideFileIfSupported(markerPath); } catch { }
+            // (No longer create .p5 marker file)
           }
         );
 
@@ -1661,12 +1656,12 @@ export function activate(context: vscode.ExtensionContext) {
     }
   }
 
-  // --- NEW: Scroll LIVE P5 output to end command ---
+  // --- NEW: Scroll P5 output to end command ---
   context.subscriptions.push(
     vscode.commands.registerCommand('P5Studio.scrollOutputToEnd', async () => {
       const lastActiveOutputChannel = getLastActiveOutputChannel();
       if (!lastActiveOutputChannel) {
-        vscode.window.showInformationMessage('No LIVE P5 output channel active.');
+        vscode.window.showInformationMessage('No P5 STUDIO output channel active.');
         return;
       }
       showAndTrackOutputChannel(lastActiveOutputChannel);

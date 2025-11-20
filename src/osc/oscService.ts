@@ -31,7 +31,7 @@ function getConfig(): OscConfig {
 
 import { showAndTrackOutputChannel } from '../logging/output';
 function ensureOutput() {
-    if (!output) output = vscode.window.createOutputChannel('LIVE P5: OSC');
+    if (!output) output = vscode.window.createOutputChannel('P5 STUDIO: OSC');
     showAndTrackOutputChannel(output!);
     return output!;
 }

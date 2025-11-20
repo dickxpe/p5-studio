@@ -11,7 +11,7 @@ export function showAndTrackOutputChannel(ch: vscode.OutputChannel) {
 export function getOrCreateOutputChannel(docUri: string, fileName: string) {
     let channel = outputChannelMap.get(docUri);
     if (!channel) {
-        channel = vscode.window.createOutputChannel('LIVE P5: ' + fileName);
+        channel = vscode.window.createOutputChannel('P5 STUDIO: ' + fileName);
         outputChannelMap.set(docUri, channel);
     }
     lastActiveOutputChannel = channel;

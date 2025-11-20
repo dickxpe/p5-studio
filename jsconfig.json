@@ -1,11 +1,14 @@
 {
-  "createdAt": "2025-11-20T21:12:47.218",
+  "projectType": "p5",
+  "createdAt": "2025-11-20T21:44:32.707",
   "include": [
     "*.js",
     "**/*.js",
     "*.ts",
     "**/.ts",
     "common/*.js",
-    "import/*.js"
+    "import/*.js",
+    "c:\\Users\\Peter\\.vscode\\extensions\\peterdickx.p5-studio-1.0.0\\assets\\1.11\\p5types\\global.d.ts",
+    "c:\\Users\\Peter\\.vscode\\extensions\\peterdickx.p5-studio-1.0.0\\assets\\1.11\\p5types\\p5helper.d.ts"
   ]
 }
