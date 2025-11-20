@@ -59,7 +59,7 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
       .muted { opacity: 0.8; }
       h3 { margin: 8px 0 6px 0; color: #307dc1; }
       table { border-collapse: collapse; width: 100%; font-size: 12px; margin-bottom: 10px; table-layout: fixed; }
-      th, td { border: 1px solid #8884; padding: 4px 8px; text-align: left; }
+      th, td { border: 1px solid #8884; padding: 2px 4px; text-align: left; }
       th.name-col, td.name-col { width: 45%; }
       th.value-col, td.value-col { width: 35%; }
       th.type-col, td.type-col { width: 20%; }
