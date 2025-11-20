@@ -81,8 +81,19 @@ async function showSetupNotificationIfNeeded() {
     const showSetupNotification = cfg.getShowSetupNotification();
     if (!showSetupNotification) return;
 
-    const p5MarkerPath = path.join(workspaceFolder.uri.fsPath, '.p5');
-    if (!fs.existsSync(p5MarkerPath)) {
+    // Check for jsconfig.json with projectType: 'p5js' at the root
+    const jsconfigPath = path.join(workspaceFolder.uri.fsPath, 'jsconfig.json');
+    let isP5Project = false;
+    if (fs.existsSync(jsconfigPath)) {
+        try {
+            const jsconfigRaw = fs.readFileSync(jsconfigPath, 'utf8');
+            const jsconfig = JSON.parse(jsconfigRaw);
+            if (jsconfig && jsconfig.projectType === 'p5js') {
+                isP5Project = true;
+            }
+        } catch { /* ignore parse errors */ }
+    }
+    if (!isP5Project) {
         const action = await vscode.window.showInformationMessage(
             "This project isn't configured for P5 yet. Would you like to set it up now?",
             'Setup P5 Project',

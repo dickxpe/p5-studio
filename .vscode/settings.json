@@ -1,3 +1,4 @@
 {
-    "workbench.editor.openPositioning": "left"
+    "workbench.editor.openPositioning": "left",
+    "editor.fontSize": 12
 }

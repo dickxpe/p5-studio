@@ -482,12 +482,12 @@
         "when": "editorTextFocus && isJsOrTs && hasP5Webview"
       },
       {
-        "key": "ctrl+alt+0",
+        "key": "shift+alt+oem_plus",
         "command": "P5Studio.fontZoomIn",
         "when": "editorTextFocus"
       },
       {
-        "key": "ctrl+alt+9",
+        "key": "shift+alt+oem_minus",
         "command": "P5Studio.fontZoomOut",
         "when": "editorTextFocus"
       },
