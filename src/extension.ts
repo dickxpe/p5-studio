@@ -457,6 +457,18 @@ export function activate(context: vscode.ExtensionContext) {
   } catch { /* ignore */ }
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => updateP5ProjectContext()));
 
+  // Apply P5Studio editor font size (if configured) on activation
+  try {
+    const configuredSize = cfg.getEditorFontSize();
+    if (typeof configuredSize === 'number' && configuredSize > 0) {
+      const editorCfg = vscode.workspace.getConfiguration('editor');
+      const currentSize = editorCfg.get<number>('fontSize');
+      if (currentSize !== configuredSize) {
+        editorCfg.update('fontSize', configuredSize, vscode.ConfigurationTarget.Global);
+      }
+    }
+  } catch { }
+
   // Layout/Restore service wiring and startup restore
   layoutService = registerLayoutRestore(context, {
     restore: { migrate: restore.migrate, getRestoreList: restore.getRestoreList },
@@ -1350,6 +1362,31 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Commands to zoom editor font and persist via P5Studio.editorFontSize
+  context.subscriptions.push(
+    vscode.commands.registerCommand('P5Studio.fontZoomIn', async () => {
+      const editorCfg = vscode.workspace.getConfiguration('editor');
+      const current = editorCfg.get<number>('fontSize', 14);
+      const next = current + 1;
+      try {
+        await editorCfg.update('fontSize', next, vscode.ConfigurationTarget.Global);
+        await cfg.setEditorFontSize(next);
+      } catch { }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('P5Studio.fontZoomOut', async () => {
+      const editorCfg = vscode.workspace.getConfiguration('editor');
+      const current = editorCfg.get<number>('fontSize', 14);
+      const next = Math.max(6, current - 1);
+      try {
+        await editorCfg.update('fontSize', next, vscode.ConfigurationTarget.Global);
+        await cfg.setEditorFontSize(next);
+      } catch { }
+    })
+  );
+
   // Command to create jsconfig.json and setup a new P5 project
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.create-jsconfig', async () => {
@@ -1592,6 +1629,7 @@ export function activate(context: vscode.ExtensionContext) {
       // Update overlay font size if the editor font size changes (debounced)
       if (e.affectsConfiguration('editor.fontSize')) {
         const newSize = vscode.workspace.getConfiguration('editor').get<number>('fontSize', 14);
+        try { cfg.setEditorFontSize(newSize); } catch { }
         if (_overlayFontDebounceTimer) clearTimeout(_overlayFontDebounceTimer);
         _overlayFontDebounceTimer = setTimeout(() => {
           for (const [, panel] of webviewPanelMap.entries()) {

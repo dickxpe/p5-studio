@@ -372,6 +372,13 @@
             "description": "Show the current FPS (rounded from 1000/deltaTime) in the top-left of the P5 web panel.",
             "order": 9
           },
+          "P5Studio.editorFontSize": {
+            "type": "number",
+            "default": 14,
+            "minimum": 6,
+            "description": "P5Studio-specific editor font size. When set, this value is applied to VS Code's editor.fontSize on startup and kept in sync when the editor font size changes.",
+            "order": 9.5
+          },
         
           "P5Studio.osc.oscRemoteAddress": {
             "type": "string",
@@ -473,6 +480,16 @@
         "key": "ctrl+alt+p",
         "mac": "cmd+alt+p",
         "when": "editorTextFocus && isJsOrTs && hasP5Webview"
+      },
+      {
+        "key": "ctrl+alt+0",
+        "command": "P5Studio.fontZoomIn",
+        "when": "editorTextFocus"
+      },
+      {
+        "key": "ctrl+alt+9",
+        "command": "P5Studio.fontZoomOut",
+        "when": "editorTextFocus"
       },
       {
         "command": "p5studio.clearHighlightEsc",

@@ -43,6 +43,12 @@ function getVariablePanelDebounceDelay(): number {
     } catch { return 500; }
 }
 
+function getEditorFontSize(): number {
+    try {
+        return vscode.workspace.getConfiguration('P5Studio').get<number>('editorFontSize', 14);
+    } catch { return 14; }
+}
+
 function getReloadWhileTyping(): boolean {
     try {
         return vscode.workspace.getConfiguration('P5Studio').get<boolean>('reloadWhileTyping', true) === true;
@@ -131,6 +137,11 @@ async function setShowSetupNotification(value: boolean): Promise<void> {
     await config.update('showSetupNotification', !!value, vscode.ConfigurationTarget.Global);
 }
 
+async function setEditorFontSize(value: number): Promise<void> {
+    const config = vscode.workspace.getConfiguration('P5Studio');
+    await config.update('editorFontSize', value, vscode.ConfigurationTarget.Global);
+}
+
 export const config = {
     getP5jsVersion,
     getStepRunDelayMs,
@@ -138,6 +149,7 @@ export const config = {
     getShowFPS,
     getDebounceDelay,
     getVariablePanelDebounceDelay,
+    getEditorFontSize,
     getReloadWhileTyping,
     getReloadOnSave,
     getBlockSketchOnWarning(): boolean {
@@ -157,4 +169,5 @@ export const config = {
     setReloadOnSave,
     setShowFPS,
     setShowSetupNotification,
+    setEditorFontSize,
 };
