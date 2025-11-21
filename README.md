@@ -176,7 +176,7 @@ This allows you to connect your p5.js sketches to other creative coding tools, D
 - Prototype extensions (e.g., `p5.prototype.myFunc`) may require a `.d.ts` or JSDoc shim for IntelliSense.
 
 ## License
-[MIT](https://github.com/dickxpe/vscode-live-p5?tab=MIT-1-ov-file)
+[MIT](https://github.com/dickxpe/p5-studio/edit/main/LICENSE)
 
 ✅ Free use (commercial and non-commercial)
 
