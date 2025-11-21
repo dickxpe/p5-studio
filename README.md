@@ -87,7 +87,7 @@ All settings live under the `P5 Studio` namespace. Configure them from VS Code s
 | `P5Studio.osc.oscLocalAddress` | string | `"127.0.0.1"` | OSC bind address for inbound messages (`0.0.0.0` allows LAN clients). |
 | `P5Studio.osc.oscLocalPort` | number | `57121` | OSC listening port for inbound messages. |
 | `P5Studio.blockly.enableBlockly` | boolean | `true` | Enable Blockly integration, exposing the Blockly button and context menu entry. |
-| `P5Studio.blockly.blocklyTheme` | string (`"dark" \| "light" \| "auto"`) | `"auto"` | Theme applied to the Blockly panel (`auto` follows the VS Code theme). |
+| `P5Studio.blockly.blocklyTheme` | enum | `"auto"` | Theme applied to the Blockly panel (`auto` follows the VS Code theme). |
 | `P5Studio.debug.ShowDebugButton` | boolean | `true` | Show the beta Debug button that primes sketches for step execution. |
 | `P5Studio.debug.stepRunDelayMs` | number (≥ `0`) | `250` | Delay in milliseconds between Step-Run iterations. |
 | `P5Studio.lint.StrictSemicolonWarning` | enum | `"block"` | Severity for missing semicolons (overlay when set to `block`). |
