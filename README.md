@@ -68,21 +68,33 @@ However it can be also be used as a prototyping tool for any creative coder!
 
 
 ## Configuration
-All settings are in the `P5 Studio` namespace. You can configure these in your VS Code settings (search for "P5 Studio").
+All settings live under the `P5 Studio` namespace. Configure them from VS Code settings (search for "P5 Studio") or edit `settings.json` directly.
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
-| `P5Studio.reloadOnSave` | boolean | `true` | Automatically reload the P5 webpanel when saving the file. |
-| `P5Studio.reloadWhileTyping` | boolean | `true` | Automatically reload the P5 webpanel as you type. |
-| `P5Studio.debounceDelay` | number | `300` | Debounce delay in milliseconds for live reload while typing. |
-| `P5Studio.showRecordButton` | boolean | `true` | Show the Record (Toggle Capture Panel) button in the editor title bar for p5 panels. |
-| `P5Studio.variablePanelDebounceDelay` | number | `500` | Debounce delay (ms) for VARIABLE panel input changes before applying them to the sketch. |
-| `P5Studio.SingleP5Panel` | boolean | `true` | If enabled, only one P5 webpanel can be open at a time. Opening a new panel closes all others. |
-| `P5Studio.showSetupNotification` | boolean | `true` | Show a setup prompt when the workspace has no P5 marker (`.p5`). |
-| `P5Studio.oscRemoteAddress` | string | `127.0.0.1` | OSC remote address (host to send OSC messages to). |
-| `P5Studio.oscLocalAddress` | string | `127.0.0.1` | OSC local bind address for receiving. Use `127.0.0.1` for local-only; set to `0.0.0.0` to accept from the network. |
-| `P5Studio.oscRemotePort` | number | `57120` | OSC remote port (port to send OSC messages to). |
-| `P5Studio.oscLocalPort` | number | `57121` | OSC local port (port to listen for incoming OSC messages). |
+| `P5Studio.P5jsVersion` | enum | `"1.11"` | Selects the bundled p5.js version for LIVE panels (2.1 currently ships without autocomplete). |
+| `P5Studio.reloadOnSave` | boolean | `true` | Reload the P5 webview automatically when you save the sketch. |
+| `P5Studio.reloadWhileTyping` | boolean | `false` | Reload the P5 webview automatically while typing. |
+| `P5Studio.debounceDelay` | number (≥ `100`) | `250` | Debounce delay in milliseconds used when reload-on-typing is enabled. |
+| `P5Studio.variablePanelDebounceDelay` | number (≥ `10`) | `50` | Debounce delay in milliseconds before VARIABLE panel edits sync to the sketch. |
+| `P5Studio.showRecordButton` | boolean | `true` | Show the Record (Toggle Capture Panel) button in the editor title bar for P5 panels. |
+| `P5Studio.SingleP5Panel` | boolean | `true` | Keep only one P5 webview open at a time; opening another closes existing panels. |
+| `P5Studio.showSetupNotification` | boolean | `true` | Display the setup prompt when no `.p5` marker is detected in the workspace. |
+| `P5Studio.showFPS` | boolean | `false` | Overlay the current FPS (derived from `deltaTime`) in the top-left of the P5 webview. |
+| `P5Studio.editorFontSize` | number (≥ `6`) | `14` | Extension-managed editor font size mirrored to `editor.fontSize` on startup. |
+| `P5Studio.osc.oscRemoteAddress` | string | `"127.0.0.1"` | OSC destination host for outbound messages. |
+| `P5Studio.osc.oscRemotePort` | number | `57120` | OSC destination port for outbound messages. |
+| `P5Studio.osc.oscLocalAddress` | string | `"127.0.0.1"` | OSC bind address for inbound messages (`0.0.0.0` allows LAN clients). |
+| `P5Studio.osc.oscLocalPort` | number | `57121` | OSC listening port for inbound messages. |
+| `P5Studio.blockly.enableBlockly` | boolean | `true` | Enable Blockly integration, exposing the Blockly button and context menu entry. |
+| `P5Studio.blockly.blocklyTheme` | string (`"dark" \| "light" \| "auto"`) | `"auto"` | Theme applied to the Blockly panel (`auto` follows the VS Code theme). |
+| `P5Studio.debug.ShowDebugButton` | boolean | `true` | Show the beta Debug button that primes sketches for step execution. |
+| `P5Studio.debug.stepRunDelayMs` | number (≥ `0`) | `250` | Delay in milliseconds between Step-Run iterations. |
+| `P5Studio.lint.StrictSemicolonWarning` | enum | `"block"` | Severity for missing semicolons (overlay when set to `block`). |
+| `P5Studio.lint.StrictUndeclaredWarning` | enum | `"block"` | Severity for undeclared variable usage. |
+| `P5Studio.lint.StrictNoVarWarning` | enum | `"block"` | Severity for `var` usage instead of `let`/`const`. |
+| `P5Studio.lint.StrictLooseEqualityWarning` | enum | `"ignore"` | Severity for using `==` / `!=` instead of strict equality. |
+| `P5Studio.lint.logWarningsToOutput` | boolean | `true` | Mirror lint warnings to the Output panel in addition to the webview overlay. |
 
 ## OSC (Open Sound Control)
 P5 Studio supports sending and receiving OSC (Open Sound Control) messages between your p5.js sketch and other OSC-compatible software or devices.
@@ -91,6 +103,7 @@ P5 Studio supports sending and receiving OSC (Open Sound Control) messages betwe
 - **Send OSC messages** from your sketch to any remote OSC address/port.
 - **Receive OSC messages** in your sketch from other OSC clients.
 - Configure OSC remote/local address and ports in the extension settings.
+- Start/Stop the OSC server with the "Start OSC" or "Stop OSC" statusbar button.
 
 ### Usage
 
@@ -121,6 +134,19 @@ function receivedOSC(address, args) {
 #### Helper: `oscArgsToArray(args)`
 OSC args can be delivered with type metadata objects. The helper `oscArgsToArray(args)` converts these into a plain array of JavaScript values.
 
+#### Start/Stop the osc server from code
+Use the global function `startOSC(localAddress, localPort, remoteAddress, remotePort)` in your p5.js code to start the OSC Server.
+
+```js
+   startOSC("0.0.0.0", 57121, "192.168.0.1", 57120);
+```
+
+Use the global function `stopOSC()` in your p5.js code to stop the OSC Server.
+
+```js
+   stopOSC();
+```
+
 ### Configuration
 You can configure the OSC connection in your VS Code settings:
 - `P5Studio.oscRemoteAddress`: The remote host to send OSC messages to (default: `127.0.0.1`)
@@ -133,6 +159,17 @@ This allows you to connect your p5.js sketches to other creative coding tools, D
 ### Tips & self-test
 - To self-test without an external server, set the  `P5Studio.oscRemoteAddress` and  `P5Studio.oscLocalAddress` both to `127.0.0.1` and set `P5Studio.oscRemotePort` to match `P5Studio.oscLocalPort` (default `57121`) and call `sendOSC('/test', [1,'a',true])` from your sketch.
 - To receive from another device on your network, set `P5Studio.oscLocalAddress` to `0.0.0.0`, keep `P5Studio.oscLocalPort` (e.g., `57121`), and send to your computer’s LAN IP at that port.
+
+## Output / Input
+- Log messages to the output channel with the output(msg) function
+   ```js
+   output("Hello");
+   ```
+
+- Place a inputPrompt() function call at the top of your file to prompt for input:
+   ```js
+   let a = inputPrompt();
+   ```
 
 ## Tips
 - For autocompletion of functions in import/common files, use a `jsconfig.json` and/or JSDoc references.

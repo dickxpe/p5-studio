@@ -330,7 +330,7 @@
           },
           "P5Studio.reloadWhileTyping": {
             "type": "boolean",
-            "default": true,
+            "default": false,
             "description": "Determines if the P5 webpanel automatically reloads while typing.",
             "order": 3
           },
