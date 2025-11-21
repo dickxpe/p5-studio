@@ -10,26 +10,33 @@ However it can be also be used as a prototyping tool for any creative coder!
 ## Introduction
 **P5 Studio** is a Visual Studio Code extension that brings live coding and rapid prototyping to p5.js sketches. It provides an interactive webview panel for instant feedback, variable control, and error reporting, making it ideal for creative coding, teaching, and experimentation with p5.js in JavaScript or TypeScript.
 
-![P5 Studio Screenshot](./readme/p5live_Screenshot.png)
+![P5 Studio Screenshot](./readme/Screenshot.png)
 
 ## Features
 - **Live Preview:** Instantly see your p5.js sketch update as you type or save.
 - **Global Variable Controls:** Automatically detects global variables and provides a UI to adjust them in real time.
 - **Error Overlay:** Syntax and runtime errors are shown as overlays in the webview and logged in the Output panel.
-- **Reload Button:** Manually reload your sketch and preserve variable values.
+- **Reload Button:** Manually reload your sketch
 - **Auto Reload:** Optionally reload on typing or only on save (configurable).
 - **Workspace Imports:** Automatically loads scripts from `common/` and `import/` folders in your workspace.
 - **Include:** Automatically loads scripts and media from the `include/` folder in the same folder as the sketch.
 - **P5 Reference Integration:** Quick access to the p5.js reference and lookup for selected text.
 - **Project Bootstrap:** Quick setup to create a folder structure for p5.js projects and a `jsconfig.json` for p5js types intellisense.
+- **Debugging and Stepping:** 
+   - Step through your code line by line.
+   - Continue to the next breakpoint.
+   - Automatically run stepping with configurable intervals.
+   - Stop debugging at any time.
+   - Visualize local variable values in the variables panel.
 - **Capture:** Record animations or graphics from the webview with a record button.
 - **Save images:¨** Right click on your canvas to copy or save the current image.
 - **Duplicate sketches:** Right click on a file and duplicate it.
 - **OSC Bridge:** Send and Receive OSC messages with `sendOSC(address, args)` and the `receivedOSC(address, args)` handler.
+- **p5js v2 support:** Switch between v1.11 and 2.1
 
 ## How to Use
 1. **Install the Extension:**
-   - Search for `P5 LIVE LAUNCHER` in the VS Code Extensions marketplace and install it.
+   - Search for `P5 Studio` in the VS Code Extensions marketplace and install it.
 
 2. **Project Setup:**
    - Automatic project setup notification.
@@ -46,7 +53,7 @@ However it can be also be used as a prototyping tool for any creative coder!
    - Errors will appear as overlays and in a dedicated output channel per sketch.
 
 4. **Reload Options:**
-   - Use the reload button in the webview to manually reload and preserve variable values.
+   - Use the reload button in the webview to manually reload
    - Toggle auto-reload on typing or on save via in the settings.
 
 5. **Import Scripts:**
@@ -61,7 +68,7 @@ However it can be also be used as a prototyping tool for any creative coder!
 
 
 ## Configuration
-All settings are under the `P5 Studio` namespace. You can configure these in your VS Code settings (search for "P5 Studio").
+All settings are in the `P5 Studio` namespace. You can configure these in your VS Code settings (search for "P5 Studio").
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
@@ -124,7 +131,7 @@ You can configure the OSC connection in your VS Code settings:
 This allows you to connect your p5.js sketches to other creative coding tools, DAWs, or hardware that support OSC.
 
 ### Tips & self-test
-- To self-test without an external server, temporarily set `P5Studio.oscRemotePort` to match `P5Studio.oscLocalPort` (default `57121`) and call `sendOSC('/test', [1,'a',true])` from your sketch. You should see `receivedOSC` fire.
+- To self-test without an external server, set the  `P5Studio.oscRemoteAddress` and  `P5Studio.oscLocalAddress` both to `127.0.0.1` and set `P5Studio.oscRemotePort` to match `P5Studio.oscLocalPort` (default `57121`) and call `sendOSC('/test', [1,'a',true])` from your sketch.
 - To receive from another device on your network, set `P5Studio.oscLocalAddress` to `0.0.0.0`, keep `P5Studio.oscLocalPort` (e.g., `57121`), and send to your computer’s LAN IP at that port.
 
 ## Tips
