@@ -115,11 +115,15 @@ export function wrapInSetupIfNeeded(code: string): string {
                 continue;
             }
 
-            // If we are in the wrap-mode (no setup or no draw), we will:
-            // - move function declarations into setup
-            // - keep class/import/export at top-level
+            // If we need to wrap the entire sketch (no setup and no draw), we move function declarations into setup;
+            // otherwise keep them global so p5 can discover handlers like draw().
             if (t === 'FunctionDeclaration') {
-                moved.push(stmt);
+                const fnName = (stmt as any).id && (stmt as any).id.name ? (stmt as any).id.name : '';
+                if (!hasSetup && !hasDraw) {
+                    moved.push(stmt);
+                } else {
+                    retained.push(stmt);
+                }
                 continue;
             }
             if (t === 'ClassDeclaration' || t === 'ImportDeclaration' || t === 'ExportNamedDeclaration' || t === 'ExportDefaultDeclaration') {

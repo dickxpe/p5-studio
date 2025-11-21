@@ -202,6 +202,13 @@ export async function handleStepRunClicked(
     if ((panel as any)._autoStepTimer) { try { clearInterval((panel as any)._autoStepTimer); } catch { } (panel as any)._autoStepTimer = null; }
     (panel as any)._autoStepMode = true;
     (panel as any)._autoStepTimer = setInterval(() => { try { panel.webview.postMessage({ type: 'step-advance' }); } catch { } }, delayMs);
+
+    // If there are no top-level or setup steps but there are draw steps, immediately advance to the first draw step
+    const hasTopOrSetup = docStepMap.steps.some(s => s.phase === 'top-level' || s.phase === 'setup');
+    const hasDrawStep = docStepMap.steps.some(s => s.phase === 'draw');
+    if (!hasTopOrSetup && hasDrawStep) {
+      setTimeout(() => { panel.webview.postMessage({ type: 'step-advance' }); }, 100);
+    }
   };
   if (!hasDraw) {
     panel.webview.html = await deps.createHtml(instrumented, panel, deps.getExtensionPath(), { allowInteractiveTopInputs: deps.getAllowInteractiveTopInputs(), initialCaptureVisible: deps.getInitialCaptureVisible(panel) });
