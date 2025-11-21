@@ -1,6 +1,7 @@
 # Source, tests, build artifacts
 **/*.map
 **/src/**
+!assets/**/p5types/src/**
 **/test/**
 **/out/test/**
 **/typescript/**

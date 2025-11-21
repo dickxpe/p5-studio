@@ -2,7 +2,7 @@
   "name": "p5-studio",
   "displayName": "P5 Studio",
   "description": "Live code p5js in VS Code",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "icon": "images/ICON.png",
   "author": {
     "name": "peterdickx"
@@ -177,7 +177,7 @@
         },
         {
           "command": "P5Studio.debugPrime",
-          "title": "Debug",
+          "title": "Debug (BETA)",
           "icon": {
             "light": "images/bug-blue.svg",
             "dark": "images/bug-blue.svg"
@@ -427,7 +427,7 @@
           "P5Studio.debug.ShowDebugButton": {
             "type": "boolean",
             "default": true,
-            "description": "BETA FEATURE: Show the Debug button in the P5 webview title bar. Allows step-wise execution of the sketch for debugging purposes. Doesnt work correctly yet for sketches without setup/draw and in more complex sketches",
+            "description": "BETA FEATURE: Show the Debug button in the P5 webview title bar. Allows step-wise execution of the sketch for debugging purposes. Doesnt work correctly yet in more complex sketches",
             "order": 16
           },
         
