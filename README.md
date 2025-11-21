@@ -1,7 +1,7 @@
 # P5 Studio
 ## Who am I & why did i develop this extension?
 My name is Peter Dickx and I'm a coding teacher at [EHB (Erasmushogeschool Brussel)](http://www.ehb.be/).\
-In the course [Multimedia & Creative Technologies](https://www.erasmushogeschool.be/nl/opleidingen/multimedia-en-creatieve-technologie) I teach the first course module **"Creative Coding I"**,\
+In the program [Multimedia & Creative Technologies](https://www.erasmushogeschool.be/nl/opleidingen/multimedia-en-creatieve-technologie) I teach the first course **"Creative Coding I"**,\
 in which students learn the basic concepts of coding, in a fun and creative way!
 
 To make it easier for students to start coding, without having any prior technical knowledge, I created this extension as a teaching tool.

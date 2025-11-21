@@ -99,6 +99,18 @@ export function instrumentSetupForSingleStep(
                 b.literal(value)
             )
         );
+        const setFrameCounterExpr = (value: number) => b.expressionStatement(
+            b.assignmentExpression('=',
+                b.memberExpression(b.identifier('window'), b.identifier('__liveP5FrameCounter')),
+                b.literal(value)
+            )
+        );
+        const bumpFrameCounterExpr = () => b.expressionStatement(
+            b.updateExpression('++',
+                b.memberExpression(b.identifier('window'), b.identifier('__liveP5FrameCounter')),
+                true
+            )
+        );
 
         // Controller helpers placed at top of program so both setup and draw can use them.
         const helpers: any[] = [];
@@ -326,7 +338,8 @@ export function instrumentSetupForSingleStep(
                 b.literal(false)
             )
         );
-        helpers.push(highlightDecl, clearDecl, waitDecl, advanceDecl, revealGlobalsDecl, setupDoneInit, frameWaitInit, frameInProgressInit, steppingDoneInit, ...exposeHelpers);
+        const frameCounterInit = setFrameCounterExpr(0);
+        helpers.push(highlightDecl, clearDecl, waitDecl, advanceDecl, revealGlobalsDecl, setupDoneInit, frameCounterInit, frameWaitInit, frameInProgressInit, steppingDoneInit, ...exposeHelpers);
 
         // Helper to create a highlight call from a StepTarget.
         const docLookup = (() => {
@@ -431,8 +444,9 @@ export function instrumentSetupForSingleStep(
                         ])
                     );
                     const startFrame = setFrameInProgressExpr(true);
+                    const bumpFrameCounter = bumpFrameCounterExpr();
                     const existingBody = node.body && Array.isArray(node.body.body) ? node.body.body : [];
-                    node.body.body = [setupGuard, inProgressGuard, frameWaitGuard, startFrame, ...existingBody];
+                    node.body.body = [setupGuard, inProgressGuard, frameWaitGuard, startFrame, bumpFrameCounter, ...existingBody];
                 }
 
                 // For setup: emit top-level steps first, then setup body.

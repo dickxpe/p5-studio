@@ -18,8 +18,7 @@ export function extractGlobalVariablesWithConflicts(code: string): { globals: { 
                 } else if (decl.init && decl.init.type === 'ArrayExpression') {
                     try {
                         const arr = Function('Array', `return (${recast.print(decl.init).code});`)(Array);
-                        if (Array.isArray(arr)) { value = arr; type = 'array'; }
-                        else { value = undefined; type = 'other'; }
+                        if (Array.isArray(arr)) { value = arr; type = 'array'; } else { value = undefined; type = 'other'; }
                     } catch { value = undefined; type = 'other'; }
                 } else if (decl.init && decl.init.type === 'UnaryExpression' && decl.init.argument.type === 'Literal') {
                     value = decl.init.operator === '-' ? -decl.init.argument.value : decl.init.argument.value;
@@ -81,8 +80,7 @@ export function extractGlobalVariables(code: string): { name: string, value: any
                 } else if (decl.init && decl.init.type === 'ArrayExpression') {
                     try {
                         const arr = Function('Array', `return (${recast.print(decl.init).code});`)(Array);
-                        if (Array.isArray(arr)) { value = arr; type = 'array'; }
-                        else { value = undefined; type = 'other'; }
+                        if (Array.isArray(arr)) { value = arr; type = 'array'; } else { value = undefined; type = 'other'; }
                     } catch { value = undefined; type = 'other'; }
                 } else if (decl.init && decl.init.type === 'UnaryExpression' && decl.init.argument.type === 'Literal') {
                     value = decl.init.operator === '-' ? -decl.init.argument.value : decl.init.argument.value; type = typeof value;
@@ -317,9 +315,12 @@ export function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: 
             const isMemberOfWindow = !!(path.parentPath && path.parentPath.value && path.parentPath.value.type === 'MemberExpression' && (path.parentPath.value as any).property === path.value && (path.parentPath.value as any).object.type === 'Identifier' && (path.parentPath.value as any).object.name === 'window');
             const isDeclarationId = !!(path.parentPath && path.parentPath.value && (((path.parentPath.value as any).type === 'VariableDeclarator' && (path.parentPath.value as any).id === path.value) || ((path.parentPath.value as any).type === 'FunctionDeclaration' && (path.parentPath.value as any).id === path.value) || ((path.parentPath.value as any).type === 'FunctionExpression' && (path.parentPath.value as any).id === path.value) || ((path.parentPath.value as any).type === 'ClassDeclaration' && (path.parentPath.value as any).id === path.value)));
             const isThisMemberWindowProperty = !!(path.parentPath && path.parentPath.value && path.parentPath.value.type === 'MemberExpression' && (path.parentPath.value as any).property === path.value && (((path.parentPath.value as any).object.type === 'ThisExpression') || ((path.parentPath.value as any).object.type === 'MemberExpression' && (path.parentPath.value as any).object.object && (path.parentPath.value as any).object.object.type === 'ThisExpression' && (path.parentPath.value as any).object.property && (path.parentPath.value as any).object.property.name === 'window')));
-            // Do not rewrite function parameter identifiers
-            if (isFunctionParam(path) || isInBindingPattern(path) || isShadowedByParams(path, name)) {
-                return false;
+            const bindingScope = (path.scope && typeof path.scope.lookup === 'function') ? path.scope.lookup(name) : null;
+            const isLocallyBound = !!(bindingScope && !bindingScope.isGlobal);
+            // Do not rewrite identifiers that are parameters, binding patterns, shadowed names, or locally scoped helpers.
+            if (isFunctionParam(path) || isInBindingPattern(path) || isShadowedByParams(path, name) || isLocallyBound) {
+                this.traverse(path);
+                return;
             }
             if (isGlobalName && !isMemberOfWindow && !isDeclarationId && !isThisMemberWindowProperty) {
                 return recast.types.builders.memberExpression(recast.types.builders.identifier('window'), recast.types.builders.identifier(name), false);
