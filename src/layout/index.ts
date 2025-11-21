@@ -72,14 +72,14 @@ export function registerLayoutRestore(context: vscode.ExtensionContext, deps: La
         }
       } catch { /* ignore */ }
       _restoringPanels = true;
-      // Prepare right-hand top-row group for P5 panels
-      await prepareP5RestoreTargetGroup();
 
       const liveDocs = deps.restore.getRestoreList(deps.RESTORE_LIVE_KEY)
         .filter(p => typeof p === 'string' && p)
         .filter(p => fs.existsSync(p) && deps.isInWorkspace(p));
       const uniqueLive = Array.from(new Set(liveDocs));
       if (uniqueLive.length) {
+        // Prepare right-hand top-row group for P5 panels only when we will restore one
+        await prepareP5RestoreTargetGroup();
         const savedOrder = deps.restore.getRestoreList(deps.RESTORE_LIVE_ORDER_KEY).filter(p => fs.existsSync(p) && deps.isInWorkspace(p));
         const orderIndex = new Map<string, number>();
         savedOrder.forEach((p, i) => orderIndex.set(p, i));
