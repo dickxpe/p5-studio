@@ -389,18 +389,29 @@ export function registerBlockly(
     // Command to open a Blockly panel for the active editor
     context.subscriptions.push(
         vscode.commands.registerCommand('extension.open-blockly', async () => {
-            // Gate feature to P5 projects (have a .p5 marker in any workspace folder)
+            // Gate feature to P5 projects by checking for a jsconfig.json configured for p5
             const hasP5Project = (() => {
                 try {
                     const folders = vscode.workspace.workspaceFolders || [];
-                    for (const f of folders) {
-                        const markerPath = path.join(f.uri.fsPath, '.p5');
-                        if (fs.existsSync(markerPath)) return true;
+                    for (const folder of folders) {
+                        const rootPath = folder.uri.fsPath;
+                        const jsconfigPath = path.join(rootPath, 'jsconfig.json');
+                        if (fs.existsSync(jsconfigPath)) {
+                            try {
+                                const raw = fs.readFileSync(jsconfigPath, 'utf8');
+                                const parsed = JSON.parse(raw);
+                                const projectType = typeof parsed?.projectType === 'string' ? parsed.projectType.toLowerCase() : '';
+                                if (projectType === 'p5' || projectType === 'p5js') {
+                                    return true;
+                                }
+                            } catch { /* ignore parse errors and keep checking */ }
+                        }
                     }
-                } catch { }
+                } catch { /* ignore workspace errors */ }
                 return false;
             })();
             if (!hasP5Project) {
+                vscode.window.showInformationMessage('Blockly requires a configured P5 workspace. Run "Setup new p5 project" first.');
                 return;
             }
             const originatingEditor = vscode.window.activeTextEditor;

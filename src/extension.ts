@@ -59,7 +59,7 @@ let activeP5Panel: vscode.WebviewPanel | null = null;
 // Context service for context keys and focus watchers
 let contextService: ContextServiceApi;
 
-// Project marker: whether the workspace has a .p5 file at its root
+// Project marker: whether the workspace is configured for P5 (detected via jsconfig projectType)
 let hasP5Project: boolean = false;
 
 // Layout/Restore service for panel positioning and startup restore
@@ -422,7 +422,7 @@ export function activate(context: vscode.ExtensionContext) {
     editor = editor || vscode.window.activeTextEditor;
     const isJsOrTs = !!editor && ['javascript', 'typescript'].includes(editor.document.languageId);
     vscode.commands.executeCommand('setContext', 'isJsOrTs', isJsOrTs);
-    // Show status bar only when in JS/TS AND the workspace is a P5 project (.p5 exists)
+    // Show status bar only when in JS/TS AND the workspace is recognized as a P5 project
     if (isJsOrTs && hasP5Project) p5RefStatusBar.show(); else p5RefStatusBar.hide();
   }
 
@@ -443,7 +443,8 @@ export function activate(context: vscode.ExtensionContext) {
           try {
             const jsconfigRaw = fs.readFileSync(jsconfigPath, 'utf8');
             const jsconfig = JSON.parse(jsconfigRaw);
-            if (jsconfig && jsconfig.projectType === 'p5js') {
+            const projectType = typeof jsconfig?.projectType === 'string' ? jsconfig.projectType.toLowerCase() : '';
+            if (projectType === 'p5' || projectType === 'p5js') {
               found = true;
             }
           } catch { /* ignore parse errors */ }

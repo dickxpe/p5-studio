@@ -668,8 +668,11 @@ window.addEventListener('message', function(event) {
 </script>
   </body>
   </html>`;
-      // On first load, show latest vars if available
-      setTimeout(updateVariablesPanel, 100);
+      const triggerRefresh = () => { try { updateVariablesPanel(); } catch { } };
+      triggerRefresh();
+      setTimeout(triggerRefresh, 100);
+      webviewView.onDidChangeVisibility(() => { if (webviewView.visible) triggerRefresh(); });
+      webviewView.onDidDispose(() => { if (variablesPanelView === webviewView) variablesPanelView = undefined; });
 
       // Attach message listener for updates coming from VARIABLES panel
       webviewView.webview.onDidReceiveMessage((msg) => {
