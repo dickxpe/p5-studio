@@ -8,7 +8,7 @@ export function handleLog(
     getTime: () => string;
     focusOutputChannel?: () => void;
   }
-){
+) {
   if (!deps.canLog()) return;
   const toStr = (v: any) => typeof v === 'string' ? v : (v && v.toString ? v.toString() : String(v));
   const raw = Array.isArray(params.message) ? params.message.map(toStr).join(' ') : toStr(params.message);

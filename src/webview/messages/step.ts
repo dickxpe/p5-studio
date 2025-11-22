@@ -177,14 +177,6 @@ export async function handleStepRunClicked(
   wrapped = deps.rewriteFrameCountRefs(wrapped);
   const preGlobals = deps.extractGlobalVariables(wrapped);
   const lineOffsetTotal = computeLineOffset(codeForRun, wrapped, didWrap);
-  let instrumented = deps.instrumentSetupForSingleStep(wrapped, lineOffsetTotal, { docStepMap });
-  try {
-    const ch = deps.getOrCreateOutputChannel(docUri, fileName);
-    ch.appendLine(`${deps.getTime()} [DEBUG] Instrumented code for STEP-RUN (didWrap=${didWrap}, lineOffset=${lineOffsetTotal}):`);
-    ch.appendLine(instrumented.split('\n').map((l, i) => `${(i + 1).toString().padStart(3, '0')}: ${l}`).join('\n'));
-  } catch { }
-  const globals = preGlobals;
-  let rewrittenCode = deps.rewriteUserCodeWithWindowGlobals(instrumented, globals);
   const globalsPayload = (() => {
     const { globals } = deps.extractGlobalVariablesWithConflicts(wrapped);
     let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean', 'array'].includes(g.type));
@@ -193,6 +185,15 @@ export async function handleStepRunClicked(
     const readOnly = deps.hasOnlySetup(rawCode);
     return { filteredGlobals, readOnly };
   })();
+  const revealableGlobals = globalsPayload.filteredGlobals.map(g => g.name);
+  let instrumented = deps.instrumentSetupForSingleStep(wrapped, lineOffsetTotal, { docStepMap, topLevelGlobals: revealableGlobals });
+  try {
+    const ch = deps.getOrCreateOutputChannel(docUri, fileName);
+    ch.appendLine(`${deps.getTime()} [DEBUG] Instrumented code for STEP-RUN (didWrap=${didWrap}, lineOffset=${lineOffsetTotal}):`);
+    ch.appendLine(instrumented.split('\n').map((l, i) => `${(i + 1).toString().padStart(3, '0')}: ${l}`).join('\n'));
+  } catch { }
+  const globals = preGlobals;
+  let rewrittenCode = deps.rewriteUserCodeWithWindowGlobals(instrumented, globals);
   deps.primeGlobalsForDoc?.(docUri, globalsPayload.filteredGlobals);
   deps.updateVariablesPanel?.();
   const hasDraw = detectDrawFunction(wrapped);
@@ -396,9 +397,6 @@ export async function handleSingleStepClicked(
   wrapped = deps.rewriteFrameCountRefs(wrapped);
   const preGlobals = deps.extractGlobalVariables(wrapped);
   const lineOffsetTotal = computeLineOffset(codeForRun, wrapped, didWrap);
-  let instrumented = deps.instrumentSetupForSingleStep(wrapped, lineOffsetTotal, { docStepMap });
-  const globals = preGlobals;
-  let rewrittenCode = deps.rewriteUserCodeWithWindowGlobals(instrumented, globals);
   const globalsPayload = (() => {
     const { globals } = deps.extractGlobalVariablesWithConflicts(wrapped);
     let filteredGlobals = globals.filter(g => ['number', 'string', 'boolean', 'array'].includes(g.type));
@@ -407,6 +405,10 @@ export async function handleSingleStepClicked(
     const readOnly = deps.hasOnlySetup(rawCode);
     return { filteredGlobals, readOnly };
   })();
+  const revealableGlobals = globalsPayload.filteredGlobals.map(g => g.name);
+  let instrumented = deps.instrumentSetupForSingleStep(wrapped, lineOffsetTotal, { docStepMap, topLevelGlobals: revealableGlobals });
+  const globals = preGlobals;
+  let rewrittenCode = deps.rewriteUserCodeWithWindowGlobals(instrumented, globals);
   deps.primeGlobalsForDoc?.(docUri, globalsPayload.filteredGlobals);
   deps.updateVariablesPanel?.();
   const hasDraw = detectDrawFunction(wrapped);

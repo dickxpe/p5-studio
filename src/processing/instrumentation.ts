@@ -12,7 +12,7 @@ export function instrumentSetupWithDelays(code: string, _delayMs: number): strin
 export function instrumentSetupForSingleStep(
     code: string,
     lineOffset: number,
-    opts?: { disableTopLevelPreSteps?: boolean; docStepMap?: StepMap }
+    opts?: { disableTopLevelPreSteps?: boolean; docStepMap?: StepMap; topLevelGlobals?: string[] }
 ): string {
     try {
         const acornParser = require('recast/parsers/acorn');
@@ -52,6 +52,8 @@ export function instrumentSetupForSingleStep(
             return node.loc || null;
         };
 
+        const revealEligible = new Set<string>((opts?.topLevelGlobals || []).map(name => String(name)));
+        const restrictReveals = revealEligible.size > 0;
         const topLevelVarCounts = new Map<string, number>();
         for (const node of topLevelBody) {
             if (!node || node.type !== 'VariableDeclaration') continue;
@@ -61,7 +63,10 @@ export function instrumentSetupForSingleStep(
             const decls = Array.isArray(node.declarations) ? node.declarations : [];
             let count = 0;
             for (const d of decls) {
-                if (d && d.id && d.id.type === 'Identifier') count++;
+                if (!d || !d.id || d.id.type !== 'Identifier') continue;
+                const name = d.id.name;
+                if (restrictReveals && !revealEligible.has(name)) continue;
+                count++;
             }
             if (count > 0) topLevelVarCounts.set(key, count);
         }
