@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { config as cfg } from '../../config';
 import { buildStepMap, StepMap } from '../../processing/stepMap';
+import { detectDrawFunction } from '../../utils/helpers';
 
 function findFirstExecutableLine(code: string): number | null {
   try {
@@ -86,12 +87,15 @@ export async function handleStepRunClicked(
     setSteppingActive?: (docUri: string, value: boolean) => void;
     primeGlobalsForDoc?: (docUri: string, list: Array<{ name: string; value: any; type: string }>) => void;
     updateVariablesPanel?: () => void;
+    setHasDraw?: (docUri: string, value: boolean) => void;
+    setDrawLoopPaused?: (docUri: string, paused: boolean) => void;
   }
 ) {
-  const { panel, editor } = params;
-  const docUri = editor.document.uri.toString();
-  const fileName = require('path').basename(editor.document.fileName);
-  const rawCode = editor.document.getText();
+  try {
+    const drawPresent = detectDrawFunction(rawCode);
+    deps.setHasDraw?.(docUri, drawPresent);
+    deps.setDrawLoopPaused?.(docUri, false);
+  } catch { }
   const docStepMap = buildStepMap(rawCode);
   const delayMs = cfg.getStepRunDelayMs();
   const suppressGlobalsInPanel = /\bfunction\s+(setup|draw)\s*\(/.test(rawCode);
@@ -187,7 +191,11 @@ export async function handleStepRunClicked(
   })();
   deps.primeGlobalsForDoc?.(docUri, globalsPayload.filteredGlobals);
   deps.updateVariablesPanel?.();
-  const hasDraw = /\bfunction\s+draw\s*\(/.test(wrapped);
+  const hasDraw = detectDrawFunction(wrapped);
+  try {
+    deps.setHasDraw?.(docUri, hasDraw);
+    if (!hasDraw) deps.setDrawLoopPaused?.(docUri, false);
+  } catch { }
   try { const ch = deps.getOrCreateOutputChannel(docUri, fileName); ch.appendLine(`${deps.getTime()} [▶️INFO] STEP-RUN started: auto-advancing with ${delayMs}ms delay.`); } catch { }
   const afterLoad = () => {
     panel.webview.postMessage({
@@ -293,12 +301,19 @@ export async function handleSingleStepClicked(
     setSteppingActive?: (docUri: string, value: boolean) => void;
     primeGlobalsForDoc?: (docUri: string, list: Array<{ name: string; value: any; type: string }>) => void;
     updateVariablesPanel?: () => void;
+    setHasDraw?: (docUri: string, value: boolean) => void;
+    setDrawLoopPaused?: (docUri: string, paused: boolean) => void;
   }
 ) {
   const { panel, editor } = params;
   const docUri = editor.document.uri.toString();
   const fileName = require('path').basename(editor.document.fileName);
   const rawCode = editor.document.getText();
+  try {
+    const drawPresent = detectDrawFunction(rawCode);
+    deps.setHasDraw?.(docUri, drawPresent);
+    deps.setDrawLoopPaused?.(docUri, false);
+  } catch { }
   const docStepMap = buildStepMap(rawCode);
   const suppressGlobalsInPanel = /\bfunction\s+(setup|draw)\s*\(/.test(rawCode);
 
@@ -390,7 +405,11 @@ export async function handleSingleStepClicked(
   })();
   deps.primeGlobalsForDoc?.(docUri, globalsPayload.filteredGlobals);
   deps.updateVariablesPanel?.();
-  const hasDraw = /\bfunction\s+draw\s*\(/.test(wrapped);
+  const hasDraw = detectDrawFunction(wrapped);
+  try {
+    deps.setHasDraw?.(docUri, hasDraw);
+    if (!hasDraw) deps.setDrawLoopPaused?.(docUri, false);
+  } catch { }
   const sendGlobals = () => {
     panel.webview.postMessage({
       type: 'setGlobalVars',

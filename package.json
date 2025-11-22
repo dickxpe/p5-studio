@@ -149,6 +149,24 @@
           "category": "P5 Studio"
         },
         {
+          "command": "P5Studio.pauseDrawLoop",
+          "title": "Pause Draw Loop",
+          "icon": {
+            "light": "images/pause.svg",
+            "dark": "images/pause.svg"
+          },
+          "category": "P5 Studio"
+        },
+        {
+          "command": "P5Studio.resumeDrawLoop",
+          "title": "Resume Draw Loop",
+          "icon": {
+            "light": "images/continue.svg",
+            "dark": "images/continue.svg"
+          },
+          "category": "P5 Studio"
+        },
+        {
           "command": "P5Studio.captureToggle",
           "title": "Toggle Capture Panel",
             "icon": {
@@ -234,6 +252,16 @@
           "command": "P5Studio.reloadWebpanel",
           "group": "navigation",
           "when": "p5WebviewTabFocused && !p5SteppingActive"
+        },
+        {
+          "command": "P5Studio.pauseDrawLoop",
+          "group": "navigation@1",
+          "when": "p5WebviewTabFocused && p5HasDraw && !p5DrawLoopPaused && !p5SteppingActive"
+        },
+        {
+          "command": "P5Studio.resumeDrawLoop",
+          "group": "navigation@1",
+          "when": "p5WebviewTabFocused && p5HasDraw && p5DrawLoopPaused && !p5SteppingActive"
         },
         {
           "command": "P5Studio.stopStepping",

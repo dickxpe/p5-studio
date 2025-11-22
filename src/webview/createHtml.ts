@@ -673,6 +673,7 @@ function runUserSketch(code){
   window._p5ErrorLogged = false;
   window._p5SetupDone = false;
   window._p5PostedAfterSetup = false;
+  window._p5LoopPaused = false;
   if(window._p5Instance){window._p5Instance.remove();window._p5Instance=null;}
   document.querySelectorAll("canvas").forEach(c=>c.remove());
 
@@ -700,6 +701,7 @@ function runUserSketch(code){
 
   try {
   window._p5Instance = new window.p5();
+    try { applyDrawLoopState(); } catch {}
     // After p5 starts, poll for setup completion once and push all current globals to VARIABLES panel
     try {
       if (window._p5SetupWatcher) { try { clearInterval(window._p5SetupWatcher); } catch {} }
@@ -778,6 +780,18 @@ window.addEventListener("resize",()=>{
   }
 });
 
+window._p5LoopPaused = false;
+function applyDrawLoopState(){
+  try {
+    if (!window._p5Instance) return;
+    if (window._p5LoopPaused) {
+      if (typeof window._p5Instance.noLoop === 'function') { window._p5Instance.noLoop(); }
+    } else {
+      if (typeof window._p5Instance.loop === 'function') { window._p5Instance.loop(); }
+    }
+  } catch {}
+}
+
 window.addEventListener("message", e => {
   const data = e.data;
   switch(data.type){
@@ -792,6 +806,14 @@ window.addEventListener("message", e => {
       break;
     case "invokeSingleStep":
       vscode.postMessage({type:"single-step-clicked"});
+      break;
+    case "pauseDrawLoop":
+      window._p5LoopPaused = true;
+      applyDrawLoopState();
+      break;
+    case "resumeDrawLoop":
+      window._p5LoopPaused = false;
+      applyDrawLoopState();
       break;
     case "toggleCaptureVisibility":
       window._p5CaptureVisible = !window._p5CaptureVisible;

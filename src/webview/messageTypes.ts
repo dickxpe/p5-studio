@@ -48,6 +48,8 @@ export type ExtensionToWebviewMessage =
     | { type: 'invokeContinue' }
     | { type: 'invokeSingleStep' }
     | { type: 'invokeReload' }
-    | { type: 'toggleCaptureVisibility' };
+    | { type: 'toggleCaptureVisibility' }
+    | { type: 'pauseDrawLoop' }
+    | { type: 'resumeDrawLoop' };
 
 export type AnyWebviewMessage = WebviewToExtensionMessage | ExtensionToWebviewMessage;

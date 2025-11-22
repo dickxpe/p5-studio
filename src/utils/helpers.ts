@@ -54,3 +54,16 @@ export function toLocalISOString(d: Date): string {
     const ms = pad(d.getMilliseconds(), 3);
     return `${year}-${month}-${day}T${hour}:${minute}:${second}.${ms}`;
 }
+
+// Detect whether the sketch defines a draw loop using common p5 patterns
+export function detectDrawFunction(code: string | undefined | null): boolean {
+    if (!code) return false;
+    const patterns = [
+        /\bfunction\s+draw\s*\(/, // classic global mode function
+        /\bdraw\s*=\s*(?:async\s*)?function\s*\(/, // assigned function expression
+        /\bdraw\s*:\s*(?:async\s*)?function\s*\(/, // object literal property
+        /\bdraw\s*=\s*(?:async\s*)?\(?\s*[^=]*?\)?\s*=>/, // arrow function assignment
+        /(?:^|[{;,])\s*draw\s*\(\s*\)\s*\{/, // shorthand method definition
+    ];
+    return patterns.some(re => re.test(code));
+}

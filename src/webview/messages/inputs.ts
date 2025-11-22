@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { detectDrawFunction } from '../../utils/helpers';
 
 export async function handleSubmitTopInputs(
   params: { panel: vscode.WebviewPanel; editor: vscode.TextEditor; values: any[] },
@@ -65,7 +66,7 @@ export async function handleSubmitTopInputs(
     let rewrittenCode = deps.rewriteUserCodeWithWindowGlobals(code, globals);
     // Reload and then send globals
     panel.webview.postMessage({ type: 'hideTopInputs' });
-    const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
+    const hasDraw = detectDrawFunction(code);
     const extPath = deps.getExtensionPath();
     if (!hasDraw) {
       panel.webview.html = await deps.createHtml(code, panel, extPath, { allowInteractiveTopInputs: deps.getAllowInteractiveTopInputs(), initialCaptureVisible: deps.getInitialCaptureVisible(panel) });

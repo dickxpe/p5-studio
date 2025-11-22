@@ -5,7 +5,7 @@ import { postMessage as sendToWebview } from './webview/router';
 import * as fs from 'fs';
 import * as crypto from 'crypto';
 // Modularized helpers and constants
-import { getTime, toLocalISOString } from './utils/helpers';
+import { getTime, toLocalISOString, detectDrawFunction } from './utils/helpers';
 import { RESERVED_GLOBALS } from './constants';
 import { extractGlobalVariablesWithConflicts, extractGlobalVariables, rewriteUserCodeWithWindowGlobals } from './processing/codeRewriter';
 import { detectTopLevelInputs, hasNonTopInputUsage, preprocessTopLevelInputs, hasCachedInputsForKey, getCachedInputsForKey, setCachedInputsForKey } from './processing/topInputs';
@@ -268,7 +268,7 @@ export function activate(context: vscode.ExtensionContext) {
       const docUri = editor.document.uri.toString();
       const text = editor.document.getText();
       const hasSetup = /\bfunction\s+setup\s*\(/.test(text);
-      const hasDraw = /\bfunction\s+draw\s*\(/.test(text);
+      const hasDraw = detectDrawFunction(text);
       const heading: 'locals' | 'variables' = (!hasSetup && !hasDraw) ? 'variables' : 'locals';
       variablesService.setLocalsHeadingForDoc(docUri, heading);
       // Only treat sketch as having draw() if a draw function exists
@@ -308,6 +308,32 @@ export function activate(context: vscode.ExtensionContext) {
     const panel = getActiveP5Panel();
     if (!panel) return;
     await performPanelReload(panel);
+  }));
+
+  context.subscriptions.push(vscode.commands.registerCommand('P5Studio.pauseDrawLoop', async () => {
+    const panel = getActiveP5Panel();
+    if (!panel) return;
+    const docUri = getDocUriForPanel(panel);
+    if (!docUri) return;
+    const docUriStr = docUri.toString();
+    try {
+      if (!contextService?.getHasDraw(docUriStr)) return;
+    } catch { /* ignore */ }
+    try { sendToWebview(panel, { type: 'pauseDrawLoop' }); } catch { }
+    try { contextService?.setDrawLoopPaused(docUriStr, true); } catch { }
+  }));
+
+  context.subscriptions.push(vscode.commands.registerCommand('P5Studio.resumeDrawLoop', async () => {
+    const panel = getActiveP5Panel();
+    if (!panel) return;
+    const docUri = getDocUriForPanel(panel);
+    if (!docUri) return;
+    const docUriStr = docUri.toString();
+    try {
+      if (!contextService?.getHasDraw(docUriStr)) return;
+    } catch { /* ignore */ }
+    try { sendToWebview(panel, { type: 'resumeDrawLoop' }); } catch { }
+    try { contextService?.setDrawLoopPaused(docUriStr, false); } catch { }
   }));
 
   context.subscriptions.push(vscode.commands.registerCommand('P5Studio.stopStepping', async () => {
@@ -891,6 +917,11 @@ export function activate(context: vscode.ExtensionContext) {
 
         contextService.setCaptureVisible(docUri, false);
         try {
+          const drawPresent = detectDrawFunction(editor.document.getText());
+          contextService.setHasDraw(docUri, drawPresent);
+          contextService.setDrawLoopPaused(docUri, false);
+        } catch { }
+        try {
           await restore.addToRestore(RESTORE_LIVE_KEY, editor.document.fileName);
           await restore.moveToOrderEnd(editor.document.fileName);
         } catch { }
@@ -1023,6 +1054,8 @@ export function activate(context: vscode.ExtensionContext) {
               getHiddenGlobalsByDirective,
               hasOnlySetup,
               setSteppingActive: (docUri: string, active: boolean) => { try { contextService.setSteppingActive(docUri, active); } catch { } },
+              setHasDraw: (docUri: string, value: boolean) => { try { contextService.setHasDraw(docUri, value); } catch { } },
+              setDrawLoopPaused: (docUri: string, paused: boolean) => { try { contextService.setDrawLoopPaused(docUri, paused); } catch { } },
             });
           }
           // --- STEP RUN HANDLER (merged with single-step instrumentation + auto-advance) ---
@@ -1053,6 +1086,8 @@ export function activate(context: vscode.ExtensionContext) {
               setSteppingActive: (docUri: string, active: boolean) => { try { contextService.setSteppingActive(docUri, active); } catch { } },
               primeGlobalsForDoc: (docUri, list) => variablesService.primeGlobalsForDoc(docUri, list),
               updateVariablesPanel,
+              setHasDraw: (docUri: string, value: boolean) => { try { contextService.setHasDraw(docUri, value); } catch { } },
+              setDrawLoopPaused: (docUri: string, paused: boolean) => { try { contextService.setDrawLoopPaused(docUri, paused); } catch { } },
             });
             setTimeout(() => {
               try {
@@ -1097,6 +1132,8 @@ export function activate(context: vscode.ExtensionContext) {
               setSteppingActive: (docUri: string, active: boolean) => { try { contextService.setSteppingActive(docUri, active); } catch { } },
               primeGlobalsForDoc: (docUri, list) => variablesService.primeGlobalsForDoc(docUri, list),
               updateVariablesPanel,
+              setHasDraw: (docUri: string, value: boolean) => { try { contextService.setHasDraw(docUri, value); } catch { } },
+              setDrawLoopPaused: (docUri: string, paused: boolean) => { try { contextService.setDrawLoopPaused(docUri, paused); } catch { } },
             });
             setTimeout(() => {
               try {
@@ -1265,6 +1302,11 @@ export function activate(context: vscode.ExtensionContext) {
           }
         }
       } else {
+        try {
+          const drawPresent = detectDrawFunction(editor.document.getText());
+          contextService.setHasDraw(docUri, drawPresent);
+          contextService.setDrawLoopPaused(docUri, false);
+        } catch { }
         panel.reveal(panel.viewColumn, true);
         setTimeout(() => {
           let codeToSend = editor.document.getText();

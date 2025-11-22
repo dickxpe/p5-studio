@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { detectDrawFunction } from '../../utils/helpers';
 
 export async function handleReloadClicked(
   params: { panel: vscode.WebviewPanel; editor: vscode.TextEditor; preserveGlobals?: boolean },
@@ -40,6 +41,8 @@ export async function handleReloadClicked(
     getHiddenGlobalsByDirective: (code: string) => Set<string>;
     hasOnlySetup: (code: string) => boolean;
     setSteppingActive?: (docUri: string, value: boolean) => void;
+    setHasDraw?: (docUri: string, value: boolean) => void;
+    setDrawLoopPaused?: (docUri: string, paused: boolean) => void;
   }
 ) {
   const { panel, editor } = params;
@@ -63,7 +66,11 @@ export async function handleReloadClicked(
   (panel as any)._autoStepMode = false;
 
   const rawCode = editor.document.getText();
-  const drawRegex = /\bfunction\s+draw\s*\(/;
+  try {
+    const initialHasDraw = detectDrawFunction(rawCode);
+    deps.setHasDraw?.(docUri, initialHasDraw);
+    deps.setDrawLoopPaused?.(docUri, false);
+  } catch { }
 
   function postGlobalsSnapshot() {
     const globalsInfo = deps.extractGlobalVariablesWithConflicts(rawCode);
@@ -134,7 +141,11 @@ export async function handleReloadClicked(
       const globalsInfo = deps.extractGlobalVariablesWithConflicts(code);
       const globals = globalsInfo.globals;
       let rewrittenCode = deps.rewriteUserCodeWithWindowGlobals(code, globals);
-      const hasDraw = drawRegex.test(code);
+      const hasDraw = detectDrawFunction(code);
+      try {
+        deps.setHasDraw?.(docUri, hasDraw);
+        if (!hasDraw) deps.setDrawLoopPaused?.(docUri, false);
+      } catch { }
       if (!hasDraw) {
         panel.webview.html = await deps.createHtml(code, panel, deps.getExtensionPath(), { allowInteractiveTopInputs: deps.getAllowInteractiveTopInputs(), initialCaptureVisible: deps.getInitialCaptureVisible(panel) });
         setTimeout(() => {
@@ -174,7 +185,11 @@ export async function handleReloadClicked(
       rewrittenCode = rewrittenCode.replace(new RegExp('^\\s*window\\.' + g.name + '\\s*=\\s*' + g.name + ';?\\s*$', 'gm'), '');
     });
   }
-  const hasDraw = drawRegex.test(code);
+  const hasDraw = detectDrawFunction(code);
+  try {
+    deps.setHasDraw?.(docUri, hasDraw);
+    if (!hasDraw) deps.setDrawLoopPaused?.(docUri, false);
+  } catch { }
   if (!hasDraw) {
     panel.webview.html = await deps.createHtml(code, panel, deps.getExtensionPath(), { allowInteractiveTopInputs: deps.getAllowInteractiveTopInputs(), initialCaptureVisible: deps.getInitialCaptureVisible(panel) });
     setTimeout(() => {

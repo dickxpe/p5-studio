@@ -16,6 +16,10 @@ export type ContextServiceApi = {
   getCaptureVisible: (docUri: string) => boolean;
   setSteppingActive: (docUri: string, value: boolean) => void;
   getSteppingActive: (docUri: string) => boolean;
+  setHasDraw: (docUri: string, value: boolean) => void;
+  getHasDraw: (docUri: string) => boolean;
+  setDrawLoopPaused: (docUri: string, value: boolean) => void;
+  getDrawLoopPaused: (docUri: string) => boolean;
   clearForDoc: (docUri: string) => void;
   getInitialCaptureVisible: (panel: vscode.WebviewPanel) => boolean;
 };
@@ -23,6 +27,8 @@ export type ContextServiceApi = {
 const debugPrimedMap = new Map<string, boolean>();
 const captureVisibleMap = new Map<string, boolean>();
 const steppingActiveMap = new Map<string, boolean>();
+const hasDrawMap = new Map<string, boolean>();
+const drawLoopPausedMap = new Map<string, boolean>();
 
 export function registerContextService(
   context: vscode.ExtensionContext,
@@ -61,14 +67,20 @@ export function registerContextService(
       const primed = uri ? !!debugPrimedMap.get(uri.toString()) : false;
       const cap = uri ? !!captureVisibleMap.get(uri.toString()) : false;
       const stepping = uri ? !!steppingActiveMap.get(uri.toString()) : false;
+      const hasDraw = uri ? !!hasDrawMap.get(uri.toString()) : false;
+      const loopPaused = hasDraw ? !!drawLoopPausedMap.get(uri.toString()) : false;
       setContext('p5DebugPrimed', primed);
       setContext('p5CaptureVisible', cap);
       setContext('p5SteppingActive', stepping);
+      setContext('p5HasDraw', hasDraw);
+      setContext('p5DrawLoopPaused', loopPaused);
       deps.updateVariablesPanel();
     } else {
       setContext('p5DebugPrimed', false);
       setContext('p5CaptureVisible', false);
       setContext('p5SteppingActive', false);
+      setContext('p5HasDraw', false);
+      setContext('p5DrawLoopPaused', false);
       deps.updateVariablesPanel();
     }
   }
@@ -97,7 +109,39 @@ export function registerContextService(
       } catch { }
     },
     getSteppingActive: (docUri: string) => { try { return !!steppingActiveMap.get(docUri); } catch { return false; } },
-    clearForDoc: (docUri: string) => { try { debugPrimedMap.delete(docUri); captureVisibleMap.delete(docUri); steppingActiveMap.delete(docUri); } catch { } },
+    setHasDraw: (docUri: string, value: boolean) => {
+      try {
+        if (value) hasDrawMap.set(docUri, true);
+        else { hasDrawMap.set(docUri, false); drawLoopPausedMap.set(docUri, false); }
+      } catch { }
+      try {
+        const activeUri = getDocUriForActivePanel();
+        if (activeUri && activeUri.toString() === docUri) {
+          setContext('p5HasDraw', !!value);
+          setContext('p5DrawLoopPaused', value ? !!drawLoopPausedMap.get(docUri) : false);
+        }
+      } catch { }
+    },
+    getHasDraw: (docUri: string) => { try { return !!hasDrawMap.get(docUri); } catch { return false; } },
+    setDrawLoopPaused: (docUri: string, value: boolean) => {
+      try { drawLoopPausedMap.set(docUri, !!value); } catch { }
+      try {
+        const activeUri = getDocUriForActivePanel();
+        if (activeUri && activeUri.toString() === docUri) {
+          setContext('p5DrawLoopPaused', !!value && !!hasDrawMap.get(docUri));
+        }
+      } catch { }
+    },
+    getDrawLoopPaused: (docUri: string) => { try { return !!drawLoopPausedMap.get(docUri); } catch { return false; } },
+    clearForDoc: (docUri: string) => {
+      try {
+        debugPrimedMap.delete(docUri);
+        captureVisibleMap.delete(docUri);
+        steppingActiveMap.delete(docUri);
+        hasDrawMap.delete(docUri);
+        drawLoopPausedMap.delete(docUri);
+      } catch { }
+    },
     getInitialCaptureVisible: (panel: vscode.WebviewPanel): boolean => {
       try {
         const uri = deps.getDocUriForPanel(panel);
