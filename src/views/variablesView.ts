@@ -356,7 +356,8 @@ var _hasDraw = false;
 function normalizeForInput(type, v) {
   if (type === 'number') {
     var n = Number(v);
-    return Number.isNaN(n) ? '' : String(n);
+    if (Number.isNaN(n)) return '';
+    return n.toString();
   }
   if (type === 'array') {
     // Render arrays without surrounding brackets for compactness
@@ -376,14 +377,40 @@ function normalizeForInput(type, v) {
   if (type === 'boolean') return !!v;
   return (v === undefined || v === null) ? '' : String(v);
 }
+// Normalize localized decimal separators before parsing user input.
+function parseNumberFieldValue(raw) {
+  if (typeof raw !== 'string') {
+    return { isValid: false, normalized: '', value: NaN, replaced: false };
+  }
+  var trimmed = raw.trim();
+  if (!trimmed) {
+    return { isValid: false, normalized: '', value: NaN, replaced: false };
+  }
+  var normalized = trimmed;
+  var replaced = false;
+  var commaCount = (normalized.match(/,/g) || []).length;
+  var hasDot = normalized.indexOf('.') !== -1;
+  if (commaCount === 1 && !hasDot) {
+    if (normalized.endsWith(',')) {
+      return { isValid: false, normalized: normalized, value: NaN, replaced: false };
+    }
+    normalized = normalized.replace(',', '.');
+    replaced = true;
+  }
+  var value = Number(normalized);
+  if (Number.isNaN(value)) {
+    return { isValid: false, normalized: normalized, value: NaN, replaced: replaced };
+  }
+  return { isValid: true, normalized: normalized, value: value, replaced: replaced };
+}
 function adjustNumberValue(input, direction) {
   var rawStep = input.getAttribute('step');
   var parsedStep = Number(rawStep);
   var step = !rawStep || rawStep === 'any' || Number.isNaN(parsedStep) ? 1 : parsedStep;
-  var current = Number(input.value);
-  if (input.value === '' || Number.isNaN(current)) current = 0;
+  var parsedCurrent = parseNumberFieldValue(String(input.value || ''));
+  var current = parsedCurrent.isValid ? parsedCurrent.value : 0;
   var next = current + direction * step;
-  var valueStr = String(next);
+  var valueStr = next.toString();
   input.value = valueStr;
   input.dispatchEvent(new Event('input', { bubbles: true }));
   input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -414,7 +441,7 @@ function startSpinHold(input, direction) {
 }
 function decorateNumberInputs(rootEl) {
   if (!rootEl) return;
-  var numberInputs = rootEl.querySelectorAll('input[type="number"][data-var]:not([data-spin-wrapped="true"])');
+  var numberInputs = rootEl.querySelectorAll('input[data-number-field="true"][data-var]:not([data-spin-wrapped="true"])');
   numberInputs.forEach(function(input) {
     // Skip read-only/disabled inputs so spinners only appear for editable ones
     if (input.hasAttribute('readonly') || input.hasAttribute('disabled')) return;
@@ -474,7 +501,7 @@ function buildTable(targetId, vars, scope) {
     if (v.type === 'boolean') {
       html += '<label class="checkbox-wrapper"><input type="checkbox" data-var="' + v.name + '" data-scope="' + scope + '"' + (v.value ? ' checked' : '') + disabledAttr + ' /><span class="checkbox-custom" aria-hidden="true"></span></label>';
     } else if (v.type === 'number') {
-      html += '<input type="number" data-var="' + v.name + '" data-scope="' + scope + '" value="' + normalizeForInput('number', v.value) + '" step="any"' + readonlyAttr + ' />';
+      html += '<input type="text" data-number-field="true" lang="en" inputmode="decimal" autocomplete="off" data-var="' + v.name + '" data-scope="' + scope + '" value="' + normalizeForInput('number', v.value) + '" step="any"' + readonlyAttr + ' />';
     } else if (v.type === 'array') {
       html += '<input type="text" data-var="' + v.name + '" data-scope="' + scope + '" data-type="array" value="' + normalizeForInput('array', v.value).replace(/"/g, '&quot;') + '"' + readonlyAttr + ' />';
     } else {
@@ -497,20 +524,30 @@ function buildTable(targetId, vars, scope) {
     }
     if (input.type === 'checkbox') {
       input.addEventListener('change', function() { sendVarUpdate(name, input.checked, scopeAttr); });
-    } else if (input.type === 'number') {
+    } else if (input.getAttribute('data-number-field') === 'true') {
       let numDebounceTimer = null;
       input.addEventListener('input', function() {
         if (numDebounceTimer) clearTimeout(numDebounceTimer);
         numDebounceTimer = setTimeout(function() {
           if (input.value === '') { sendVarUpdate(name, '', scopeAttr); return; }
-          var num = Number(input.value);
-          if (!Number.isNaN(num)) sendVarUpdate(name, num, scopeAttr); else sendVarUpdate(name, '', scopeAttr);
+          var parsed = parseNumberFieldValue(String(input.value));
+          if (parsed.isValid) {
+            if (input.value !== parsed.normalized) input.value = parsed.normalized;
+            sendVarUpdate(name, parsed.value, scopeAttr);
+          } else {
+            sendVarUpdate(name, '', scopeAttr);
+          }
         }, 25);
       });
       input.addEventListener('change', function() {
         if (input.value === '') { sendVarUpdate(name, '', scopeAttr); return; }
-        var num = Number(input.value);
-        if (!Number.isNaN(num)) sendVarUpdate(name, num, scopeAttr); else sendVarUpdate(name, '', scopeAttr);
+        var parsed = parseNumberFieldValue(String(input.value));
+        if (parsed.isValid) {
+          if (input.value !== parsed.normalized) input.value = parsed.normalized;
+          sendVarUpdate(name, parsed.value, scopeAttr);
+        } else {
+          sendVarUpdate(name, '', scopeAttr);
+        }
       });
     } else if (input.getAttribute('data-type') === 'array') {
       let arrDebounceTimer = null;
