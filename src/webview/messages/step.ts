@@ -91,6 +91,10 @@ export async function handleStepRunClicked(
     setDrawLoopPaused?: (docUri: string, paused: boolean) => void;
   }
 ) {
+  const { panel, editor } = params;
+  const docUri = editor.document.uri.toString();
+  const fileName = require('path').basename(editor.document.fileName);
+  const rawCode = editor.document.getText();
   try {
     const drawPresent = detectDrawFunction(rawCode);
     deps.setHasDraw?.(docUri, drawPresent);
