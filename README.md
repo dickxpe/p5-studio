@@ -26,6 +26,7 @@ Like this extension and want to support me? Buy me a coffee:
 - **Include:** Automatically loads scripts and media from the `include/` folder in the same folder as the sketch.
 - **P5 Reference Integration:** Quick access to the p5.js reference and lookup for selected text.
 - **Project Bootstrap:** Quick setup to create a folder structure for p5.js projects and a `jsconfig.json` for p5js types intellisense.
+- **Pause/Resume Draw Loop:** A context-aware pause/play button in the editor title bar lets you toggle the sketch loop (`noLoop()` / `loop()`) without reloading when your code defines `draw()`.
 - **Debugging and Stepping:** 
    - Step through your code line by line.
    - Continue to the next breakpoint.
