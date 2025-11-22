@@ -7,7 +7,7 @@ in which students learn the basic concepts of coding, in a fun and creative way!
 To make it easier for students to start coding, without having any prior technical knowledge, I created this extension as a teaching tool.
 However it can be also be used as a prototyping tool for any creative coder!
 
-Like this extension and want to support me? Buy me a coffee:\ 
+Like this extension and want to support me? Buy me a coffee: 
 
 <a href="https://www.buymeacoffee.com/zebugames"><img src="https://cdn.buymeacoffee.com/buttons/v2/arial-yellow.png" height="40px"></a>
 
