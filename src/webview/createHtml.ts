@@ -571,8 +571,15 @@ function _p5ShouldSuppressError(raw){
 }
 
 (function(){
-  const origLog=console.log;
-  console.log=function(...args){vscode.postMessage({type:"log",message:args}); origLog.apply(console,args);}
+  const origLog = console.log;
+  console.log = function(...args){
+    try { vscode.postMessage({ type: "log", message: args }); } catch { }
+    origLog.apply(console, args);
+  };
+  window.output = function(...args){
+    try { vscode.postMessage({ type: "log", message: args, focus: true }); } catch { }
+    origLog.apply(console, args);
+  };
   const origErr=console.error;
   console.error=function(...args){
     // Always prefix with [‼️RUNTIME ERROR] and stringify arguments, including Arguments objects and Error objects

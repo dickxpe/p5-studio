@@ -6,7 +6,7 @@ export type WebviewToExtensionMessage =
     | { type: 'updateGlobalVar'; name: string; value: any; generatedAt?: number }
     | { type: 'focus-script-tab' }
     | { type: 'captureVisibilityChanged'; visible: boolean }
-    | { type: 'log'; message: string }
+    | { type: 'log'; message: any; focus?: boolean }
     | { type: 'showError'; message: string }
     | { type: 'submitTopInputs'; values: any[] }
     | { type: 'reload-button-clicked'; preserveGlobals?: boolean }

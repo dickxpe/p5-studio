@@ -458,6 +458,37 @@ export function activate(context: vscode.ExtensionContext) {
   lintActiveEditor();
 
 
+  async function updateJsconfigTimestamps() {
+    try {
+      const folders = vscode.workspace.workspaceFolders || [];
+      if (!folders.length) return;
+      const nowIso = toLocalISOString(new Date());
+      for (const folder of folders) {
+        const jsconfigPath = path.join(folder.uri.fsPath, 'jsconfig.json');
+        try {
+          const raw = await fsp.readFile(jsconfigPath, 'utf8');
+          let parsed: any;
+          try {
+            parsed = JSON.parse(raw);
+          } catch {
+            continue;
+          }
+          if (!parsed || typeof parsed !== 'object') continue;
+          if (parsed.createdAt === nowIso) continue;
+          parsed.createdAt = nowIso;
+          const endingNewline = raw.endsWith('\n') ? '\n' : '';
+          const serialized = JSON.stringify(parsed, null, 2) + endingNewline;
+          await fsp.writeFile(jsconfigPath, serialized, 'utf8');
+        } catch {
+          continue;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+
   // Detect whether the workspace has a jsconfig.json with projectType: 'p5js' and set context
   function updateP5ProjectContext() {
     try {
@@ -492,6 +523,8 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(watcher);
   } catch { /* ignore */ }
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => updateP5ProjectContext()));
+
+  (async () => { try { await updateJsconfigTimestamps(); } catch { } })();
 
   // Apply P5Studio editor font size (if configured) on activation
   try {
@@ -998,10 +1031,11 @@ export function activate(context: vscode.ExtensionContext) {
           const docUri = editor.document.uri.toString();
           const outputChannel = getOrCreateOutputChannel(docUri, fileName);
           if (msg.type === 'log') {
-            handleLog({ message: msg.message }, {
+            handleLog({ message: msg.message, focus: !!msg.focus }, {
               canLog: () => !ignoreLogs,
               outputChannel,
               getTime,
+              focusOutputChannel: () => showAndTrackOutputChannel(outputChannel),
             });
           } else if (msg.type === 'showError') {
             handleShowError({ panel, editor, message: msg.message }, {

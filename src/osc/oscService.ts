@@ -30,13 +30,18 @@ function getConfig(): OscConfig {
 }
 
 import { showAndTrackOutputChannel } from '../logging/output';
-function ensureOutput() {
+function ensureOutput(focus: boolean = false) {
     if (!output) output = vscode.window.createOutputChannel('P5 STUDIO: OSC');
-    showAndTrackOutputChannel(output!);
+    if (focus) {
+        showAndTrackOutputChannel(output!);
+    }
     return output!;
 }
 
-function openPort(override?: { localAddress?: string; localPort?: number; remoteAddress?: string; remotePort?: number }) {
+function openPort(
+    override?: { localAddress?: string; localPort?: number; remoteAddress?: string; remotePort?: number },
+    focusOutput: boolean = false
+) {
     // Close previous ports if any
     if (port) { try { port.close(); } catch { } port = null; }
     if (sendPort) { try { sendPort.close(); } catch { } sendPort = null; }
@@ -64,7 +69,7 @@ function openPort(override?: { localAddress?: string; localPort?: number; remote
         metadata: true
     };
     sendPort = new osc.UDPPort(sendOptions);
-    const ch = ensureOutput();
+    const ch = ensureOutput(focusOutput);
     // ch.appendLine(`[DEBUG] Opening OSC receive port on ${localAddress}:${localPort}`);
     // ch.appendLine(`[DEBUG] Opening OSC send port to ${remoteAddress}:${remotePort}`);
     port.open();
@@ -81,7 +86,7 @@ function openPort(override?: { localAddress?: string; localPort?: number; remote
         } catch { }
     });
     port.on('message', (msg: any) => {
-        try { ch.appendLine(`[${new Date().toLocaleTimeString()}] [OSC] RX ${msg.address} ${JSON.stringify(msg.args)}`); } catch { }
+        try { ch.appendLine(`[${new Date().toLocaleTimeString()}] [OSC] Received @ ${msg.address} ${JSON.stringify(msg.args)}`); } catch { }
         if (broadcast) {
             try { broadcast(msg.address, msg.args); } catch (e) { try { ch.appendLine(`[DEBUG] Broadcast error: ${e}`); } catch { } }
         }
@@ -120,7 +125,7 @@ function toPacket(address: string, args: any[]) {
 // Accepts optional override: { localAddress, localPort, remoteAddress, remotePort }
 export function initOsc(bcast: BroadcastFn, override?: { localAddress?: string; localPort?: number; remoteAddress?: string; remotePort?: number }): OscServiceApi {
     broadcast = bcast;
-    openPort(override);
+    openPort(override, true);
 
     function send(address: string, args: any[]) {
         const ch = ensureOutput();
@@ -130,18 +135,18 @@ export function initOsc(bcast: BroadcastFn, override?: { localAddress?: string; 
                 return;
             }
             const packet = toPacket(address, args);
-            ch.appendLine(`[DEBUG] Sending OSC packet: ${JSON.stringify(packet)}`);
+            ch.appendLine(`[OSC] Sending to address ${address}: ${JSON.stringify(packet)}`);
             sendPort.send(packet);
         } catch (e) {
-            try { ch.appendLine(`[DEBUG] OSC send error: ${e}`); } catch { }
+            try { ch.appendLine(`[OSC] OSC send error: ${e}`); } catch { }
             console.error('OSC send error:', e);
         }
     }
 
-    function reload() { openPort(); }
+    function reload() { openPort(undefined, false); }
 
     function dispose() {
-        const ch = ensureOutput();
+        const ch = ensureOutput(true);
         try { if (port) port.close(); } catch { }
         try { if (sendPort) sendPort.close(); } catch { }
         port = null;
