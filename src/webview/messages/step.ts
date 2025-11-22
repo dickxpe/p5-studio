@@ -73,7 +73,7 @@ export async function handleStepRunClicked(
     preprocessTopLevelInputs: (code: string, opts: { key: string; interactive: boolean }) => Promise<string>;
     wrapInSetupIfNeeded: (code: string) => string;
     rewriteFrameCountRefs: (code: string) => string;
-    instrumentSetupForSingleStep: (code: string, lineOffset: number, opts?: { disableTopLevelPreSteps?: boolean; docStepMap?: StepMap }) => string;
+    instrumentSetupForSingleStep: (code: string, lineOffset: number, opts?: { disableTopLevelPreSteps?: boolean; docStepMap?: StepMap; topLevelGlobals?: string[] }) => string;
     extractGlobalVariablesWithConflicts: (code: string) => { globals: Array<{ name: string; value: any; type: string }>; conflicts: string[] };
     extractGlobalVariables: (code: string) => Array<{ name: string; value: any; type: string }>;
     rewriteUserCodeWithWindowGlobals: (code: string, globals: Array<{ name: string; value?: any }>) => string;
@@ -294,7 +294,7 @@ export async function handleSingleStepClicked(
     preprocessTopLevelInputs: (code: string, opts: { key: string; interactive: boolean }) => Promise<string>;
     wrapInSetupIfNeeded: (code: string) => string;
     rewriteFrameCountRefs: (code: string) => string;
-    instrumentSetupForSingleStep: (code: string, lineOffset: number, opts?: { disableTopLevelPreSteps?: boolean; docStepMap?: StepMap }) => string;
+    instrumentSetupForSingleStep: (code: string, lineOffset: number, opts?: { disableTopLevelPreSteps?: boolean; docStepMap?: StepMap; topLevelGlobals?: string[] }) => string;
     extractGlobalVariablesWithConflicts: (code: string) => { globals: Array<{ name: string; value: any; type: string }>; conflicts: string[] };
     extractGlobalVariables: (code: string) => Array<{ name: string; value: any; type: string }>;
     rewriteUserCodeWithWindowGlobals: (code: string, globals: Array<{ name: string; value?: any }>) => string;
