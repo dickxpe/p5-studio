@@ -542,7 +542,7 @@ function showError(msg){
   window._p5ErrorActive = true;
   const el = document.getElementById("error-overlay");
   if(el){el.textContent = msg; el.style.display = "block";}
-  if(window._p5Instance){window._p5Instance.remove(); window._p5Instance = null;}
+  safeRemoveP5Instance();
   document.querySelectorAll("canvas").forEach(c=>c.remove());
   // Prevent p5.js from calling user draw/setup again
   window.draw = undefined;
@@ -675,13 +675,24 @@ window.onunhandledrejection = function(event) {
   // event.preventDefault();
 };
 
+function safeRemoveP5Instance(){
+  if(!window._p5Instance) return;
+  try{
+    const inst=window._p5Instance;
+    if(inst && typeof inst.remove === 'function') inst.remove();
+  }catch(err){
+    try{console.warn('p5 remove() failed', err);}catch{}
+  }
+  try{window._p5Instance=null;}catch{}
+}
+
 function runUserSketch(code){
   clearError();
   window._p5ErrorLogged = false;
   window._p5SetupDone = false;
   window._p5PostedAfterSetup = false;
   window._p5LoopPaused = false;
-  if(window._p5Instance){window._p5Instance.remove();window._p5Instance=null;}
+  safeRemoveP5Instance();
   document.querySelectorAll("canvas").forEach(c=>c.remove());
 
   // Remove previous user code script if present
@@ -888,13 +899,11 @@ window.addEventListener("message", e => {
         window.__liveP5StepAdvance = null;
         window.__liveP5Stepping = false;
       } catch {}
-  try { if (typeof window._resetCaptureUIAndTimer === 'function') window._resetCaptureUIAndTimer(); } catch {}
-  if(window._p5Instance){window._p5Instance.remove(); window._p5Instance=null;}
+      try { if (typeof window._resetCaptureUIAndTimer === 'function') window._resetCaptureUIAndTimer(); } catch {}
+      safeRemoveP5Instance();
       document.querySelectorAll("canvas").forEach(c=>c.remove());
       break;
-  case "showError": showError(data.message); break;
-  case "showWarning": showWarning(data.message); break;
-    // Removed toolbar toggle handlers (reload/debug buttons handled via title bar)
+    case "showError": showError(data.message); break;
   case "resetErrorFlag": window._p5ErrorLogged = false; break;
     case "syntaxError": showError(data.message); break;
     case "requestLastRuntimeError":
