@@ -241,7 +241,7 @@
         {
           "command": "extension.open-blockly",
           "group": "navigation",
-          "when": "hasP5Project == true && config.P5Studio.blockly.enableBlockly == true && isP5js && (editorLangId == javascript || editorLangId == typescript)"
+          "when": "hasP5Project == true && config.P5Studio.blockly.enableBlockly == true && isP5js && p5BlocklyEligible == true && (editorLangId == javascript || editorLangId == typescript)"
         },
         {
           "command": "extension.reload-p5-sketch",

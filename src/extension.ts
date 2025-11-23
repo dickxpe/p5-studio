@@ -452,8 +452,33 @@ export function activate(context: vscode.ExtensionContext) {
     if (isJsOrTs && hasP5Project) p5RefStatusBar.show(); else p5RefStatusBar.hide();
   }
 
+  function updateBlocklyAvailability(editor?: vscode.TextEditor) {
+    editor = editor || vscode.window.activeTextEditor;
+    let eligible = false;
+    try {
+      if (editor && ['javascript', 'typescript'].includes(editor.document.languageId)) {
+        const text = editor.document.getText();
+        const isEmpty = text.trim().length === 0;
+        let hasSidecar = false;
+        let hasEmbedded = false;
+        if (!isEmpty) {
+          const sidecarPath = getBlocklySidecarPath(editor.document.fileName);
+          hasSidecar = !!(sidecarPath && fs.existsSync(sidecarPath));
+          if (!hasSidecar) {
+            hasEmbedded = /\/\*@BlocklyWorkspace[\s\S]*?\*\//.test(text);
+          }
+        }
+        eligible = isEmpty || hasSidecar || hasEmbedded;
+      }
+    } catch {
+      eligible = false;
+    }
+    vscode.commands.executeCommand('setContext', 'p5BlocklyEligible', eligible);
+  }
+
   updateP5Context();
   updateJsOrTsContext();
+  updateBlocklyAvailability();
   // Run initial semicolon lint on the active editor
   lintActiveEditor();
 
@@ -600,6 +625,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
     updateP5Context(editor);
     updateJsOrTsContext(editor);
+    updateBlocklyAvailability(editor);
     if (!editor) return;
     const docUri = editor.document.uri.toString();
     // Restore focus for P5 panel and set hasP5Webview context per sketch
@@ -636,6 +662,7 @@ export function activate(context: vscode.ExtensionContext) {
   vscode.workspace.onDidChangeTextDocument(e => {
     if (e.document === vscode.window.activeTextEditor?.document) {
       updateP5Context(vscode.window.activeTextEditor);
+      updateBlocklyAvailability(vscode.window.activeTextEditor);
       // Stop highlighting as soon as code is changed
       clearStepHighlight(vscode.window.activeTextEditor);
     }
@@ -656,6 +683,7 @@ export function activate(context: vscode.ExtensionContext) {
   vscode.workspace.onDidSaveTextDocument(doc => {
     if (doc === vscode.window.activeTextEditor?.document) {
       updateP5Context(vscode.window.activeTextEditor);
+      updateBlocklyAvailability(vscode.window.activeTextEditor);
     }
   });
   // Lint when a document is opened/closed
