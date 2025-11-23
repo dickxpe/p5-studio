@@ -1,4 +1,5 @@
 import * as recast from 'recast';
+import { detectDrawFunction } from '../utils/helpers';
 
 export function rewriteFrameCountRefs(code: string): string {
     try {
@@ -59,10 +60,8 @@ export function rewriteFrameCountRefs(code: string): string {
 }
 
 export function wrapInSetupIfNeeded(code: string): string {
-    const hasSetupRegex = /\bfunction\s+setup\s*\(/;
-    const hasDrawRegex = /\bfunction\s+draw\s*\(/;
-    const hasSetup = hasSetupRegex.test(code);
-    const hasDraw = hasDrawRegex.test(code);
+    const hasSetup = /\bfunction\s+setup\s*\(/.test(code);
+    const hasDraw = detectDrawFunction(code);
 
     // Only act when there's no setup and/or no draw
     if (hasSetup && hasDraw) return code;
@@ -194,14 +193,21 @@ export function wrapInSetupIfNeeded(code: string): string {
             ast.program.body = [setupFn, ...retained];
         }
 
+        if (!hasDraw) {
+            const drawFn = b.functionDeclaration(b.identifier('draw'), [], b.blockStatement([]));
+            const bodyArray: any[] = Array.isArray(ast.program.body) ? ast.program.body : [];
+            bodyArray.push(drawFn);
+            ast.program.body = bodyArray;
+        }
+
         return recast.print(ast).code;
     } catch {
         // Fallback on parse error: if no draw, wrap entire code; else ensure setup exists
-        const hasDraw = /\bfunction\s+draw\s*\(/.test(code);
         if (!hasDraw) {
-            return `function setup() {\n${code}\n}`;
+            const wrapped = hasSetup ? code : `function setup() {\n${code}\n}`;
+            return `${wrapped}\nfunction draw() { }\n`;
         }
-        if (!/\bfunction\s+setup\s*\(/.test(code)) {
+        if (!hasSetup) {
             return `function setup() { }\n${code}`;
         }
         return code;
