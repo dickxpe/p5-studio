@@ -18,6 +18,8 @@ import {
     formatSyntaxErrorMsg,
     getHiddenGlobalsByDirective,
     hasOnlySetup,
+    findFirstTemplateLiteral,
+    formatTemplateLiteralError,
 } from './astHelpers';
 
 export type ReloadReason = 'typing' | 'save' | 'command' | 'open' | undefined;
@@ -104,6 +106,16 @@ export async function prepareSketch(opts: SketchPrepOptions): Promise<SketchPrep
     const fileName = path.basename(document.fileName);
     const originalCode = document.getText();
     let code = originalCode;
+
+    const templateInfo = findFirstTemplateLiteral(originalCode);
+    if (templateInfo) {
+        const message = formatTemplateLiteralError(getTime, fileName, templateInfo);
+        return {
+            ok: false,
+            codeToInject: '',
+            runtimeErrorMsg: message,
+        };
+    }
 
     try {
         if (hasNonTopInputUsage(code)) {

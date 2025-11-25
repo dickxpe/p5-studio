@@ -1,6 +1,116 @@
 import * as recast from 'recast';
 import { detectDrawFunction } from '../utils/helpers';
 
+export interface TemplateLiteralInfo {
+    line?: number;
+    column?: number;
+}
+
+export function findFirstTemplateLiteral(code: string): TemplateLiteralInfo | null {
+    let line = 1;
+    let column = 1;
+    let inLineComment = false;
+    let inBlockComment = false;
+    let inString: '"' | "'" | null = null;
+    let escapeNext = false;
+
+    for (let i = 0; i < code.length; i++) {
+        const ch = code[i];
+        const next = code[i + 1];
+
+        if (ch === '\r') {
+            if (next === '\n') {
+                i++;
+            }
+            line++;
+            column = 1;
+            inLineComment = false;
+            escapeNext = false;
+            continue;
+        }
+
+        if (ch === '\n') {
+            line++;
+            column = 1;
+            inLineComment = false;
+            escapeNext = false;
+            continue;
+        }
+
+        if (inLineComment) {
+            column++;
+            continue;
+        }
+
+        if (inBlockComment) {
+            if (ch === '*' && next === '/') {
+                inBlockComment = false;
+                i++;
+                column += 2;
+            } else {
+                column++;
+            }
+            continue;
+        }
+
+        if (inString) {
+            if (escapeNext) {
+                escapeNext = false;
+            } else if (ch === '\\') {
+                escapeNext = true;
+            } else if (ch === inString) {
+                inString = null;
+            }
+            column++;
+            continue;
+        }
+
+        if (ch === '/' && next === '/') {
+            inLineComment = true;
+            i++;
+            column += 2;
+            continue;
+        }
+
+        if (ch === '/' && next === '*') {
+            inBlockComment = true;
+            i++;
+            column += 2;
+            continue;
+        }
+
+        if (ch === '"' || ch === "'") {
+            inString = ch as '"' | "'";
+            column++;
+            continue;
+        }
+
+        if (ch === '`') {
+            return { line, column };
+        }
+
+        column++;
+    }
+
+    return null;
+}
+
+export function formatTemplateLiteralError(
+    getTime: () => string,
+    fileName: string,
+    info?: TemplateLiteralInfo | null
+): string {
+    const parts: string[] = [];
+    if (info?.line) {
+        parts.push(`line ${info.line}`);
+    }
+    if (info?.column) {
+        parts.push(`column ${info.column}`);
+    }
+    const where = parts.length > 0 ? ` (${parts.join(', ')})` : '';
+    return `${getTime()} [‼️RUNTIME ERROR in ${fileName}] Template literals${where} are not supported. Replace them with string concatenation.`;
+}
+
 export function rewriteFrameCountRefs(code: string): string {
     try {
         const acornParser = require('recast/parsers/acorn');

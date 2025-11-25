@@ -1325,6 +1325,25 @@ export function activate(context: vscode.ExtensionContext) {
           return;
         }
 
+        if (prep.runtimeErrorMsg) {
+          const friendly = prep.runtimeErrorMsg;
+          await setHtmlAndPost(panel, {
+            code: '',
+            extensionPath: context.extensionPath,
+            allowInteractiveTopInputs: _allowInteractiveTopInputs,
+            initialCaptureVisible: getInitialCaptureVisible(panel),
+            p5Version: (panel as any)._p5Version,
+          }, [
+            { delayMs: 150, message: { type: 'showError', message: friendly } as ExtensionToWebviewMessage },
+          ], sendToWebview);
+          if (cfg.getLogWarningsToOutput()) {
+            outputChannel.appendLine(friendly);
+          }
+          (panel as any)._lastRuntimeError = friendly;
+          (panel as any)._lastSyntaxError = null;
+          return;
+        }
+
         if (prep.blockOnLint) {
           await setHtmlAndPost(panel, {
             code: '',

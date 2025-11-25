@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { config as cfg } from '../../config';
 import { buildStepMap, StepMap } from '../../processing/stepMap';
+import { findFirstTemplateLiteral, formatTemplateLiteralError } from '../../processing/astHelpers';
 import { detectDrawFunction } from '../../utils/helpers';
 
 function findFirstExecutableLine(code: string): number | null {
@@ -152,6 +153,17 @@ export async function handleStepRunClicked(
     try { const ch = deps.getOrCreateOutputChannel(docUri, fileName); ch.appendLine(syntaxErrorMsg); } catch { }
     (panel as any)._lastSyntaxError = syntaxErrorMsg;
     (panel as any)._lastRuntimeError = null;
+    return;
+  }
+
+  const templateInfo = findFirstTemplateLiteral(rawCode);
+  if (templateInfo) {
+    const friendly = formatTemplateLiteralError(deps.getTime, fileName, templateInfo);
+    panel.webview.html = await deps.createHtml('', panel, deps.getExtensionPath(), { allowInteractiveTopInputs: deps.getAllowInteractiveTopInputs(), initialCaptureVisible: deps.getInitialCaptureVisible(panel) });
+    setTimeout(() => { panel.webview.postMessage({ type: 'showError', message: friendly }); }, 150);
+    try { const ch = deps.getOrCreateOutputChannel(docUri, fileName); ch.appendLine(friendly); } catch { }
+    (panel as any)._lastRuntimeError = friendly;
+    (panel as any)._lastSyntaxError = null;
     return;
   }
 
@@ -376,6 +388,17 @@ export async function handleSingleStepClicked(
     try { const ch = deps.getOrCreateOutputChannel(docUri, fileName); ch.appendLine(syntaxErrorMsg); } catch { }
     (panel as any)._lastSyntaxError = syntaxErrorMsg;
     (panel as any)._lastRuntimeError = null;
+    return;
+  }
+
+  const templateInfo = findFirstTemplateLiteral(rawCode);
+  if (templateInfo) {
+    const friendly = formatTemplateLiteralError(deps.getTime, fileName, templateInfo);
+    panel.webview.html = await deps.createHtml('', panel, deps.getExtensionPath());
+    setTimeout(() => { panel.webview.postMessage({ type: 'showError', message: friendly }); }, 150);
+    try { const ch = deps.getOrCreateOutputChannel(docUri, fileName); ch.appendLine(friendly); } catch { }
+    (panel as any)._lastRuntimeError = friendly;
+    (panel as any)._lastSyntaxError = null;
     return;
   }
 

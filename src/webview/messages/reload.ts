@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { detectDrawFunction } from '../../utils/helpers';
+import { findFirstTemplateLiteral, formatTemplateLiteralError } from '../../processing/astHelpers';
 
 export async function handleReloadClicked(
   params: { panel: vscode.WebviewPanel; editor: vscode.TextEditor; preserveGlobals?: boolean },
@@ -66,6 +67,16 @@ export async function handleReloadClicked(
   (panel as any)._autoStepMode = false;
 
   const rawCode = editor.document.getText();
+  const templateInfo = findFirstTemplateLiteral(rawCode);
+  if (templateInfo) {
+    const friendly = formatTemplateLiteralError(deps.getTime, fileName, templateInfo);
+    panel.webview.html = await deps.createHtml('', panel, deps.getExtensionPath(), { allowInteractiveTopInputs: deps.getAllowInteractiveTopInputs(), initialCaptureVisible: deps.getInitialCaptureVisible(panel) });
+    setTimeout(() => { panel.webview.postMessage({ type: 'showError', message: friendly }); }, 150);
+    try { const ch = deps.getOrCreateOutputChannel(docUri, fileName); ch.appendLine(friendly); } catch { }
+    (panel as any)._lastRuntimeError = friendly;
+    (panel as any)._lastSyntaxError = null;
+    return;
+  }
   try {
     const initialHasDraw = detectDrawFunction(rawCode);
     deps.setHasDraw?.(docUri, initialHasDraw);
