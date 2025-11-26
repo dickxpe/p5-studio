@@ -98,6 +98,7 @@ export const RESERVED_GLOBALS = new Set<string>([
     "ALT", "CONTROL", "SHIFT",
     // Filter
     "INVERT", "THRESHOLD", "GRAY", "OPAQUE", "POSTERIZE", "BLUR", "ERODE", "DILATE",
+    "pixels"
 ]);
 
 // Add a set of known p5 numeric properties
