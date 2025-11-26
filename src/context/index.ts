@@ -46,12 +46,12 @@ export function registerContextService(
     const activeTab = vscode.window.tabGroups.activeTabGroup?.activeTab;
     let isP5Webview = false;
     if (activeTab) {
-      try {
-        console.log('[P5Studio] activeTab.label:', activeTab.label);
-        console.log('[P5Studio] activeTab.input:', JSON.stringify(activeTab.input));
-      } catch (e) {
-        console.log('[P5Studio] Error logging activeTab.input:', e);
-      }
+      // try {
+      //   console.log('[P5Studio] activeTab.label:', activeTab.label);
+      //   console.log('[P5Studio] activeTab.input:', JSON.stringify(activeTab.input));
+      // } catch (e) {
+      //   console.log('[P5Studio] Error logging activeTab.input:', e);
+      // }
       if (activeTab.label && activeTab.input) {
         const input = activeTab.input as { viewType?: string };
         const vt = (input && typeof input.viewType === 'string') ? String(input.viewType) : '';
