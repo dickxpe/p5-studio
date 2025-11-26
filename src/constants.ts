@@ -95,7 +95,9 @@ export const RESERVED_GLOBALS = new Set<string>([
     // Arrow keys
     "UP_ARROW", "DOWN_ARROW", "LEFT_ARROW", "RIGHT_ARROW",
     // Modifier keys
-    "ALT", "CONTROL", "SHIFT"
+    "ALT", "CONTROL", "SHIFT",
+    // Filter
+    "INVERT", "THRESHOLD", "GRAY", "OPAQUE", "POSTERIZE", "BLUR", "ERODE", "DILATE",
 ]);
 
 // Add a set of known p5 numeric properties

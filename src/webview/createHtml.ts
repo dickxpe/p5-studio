@@ -580,15 +580,88 @@ function _p5ShouldSuppressError(raw){
     try { vscode.postMessage({ type: "log", message: args, focus: true }); } catch { }
     origLog.apply(console, args);
   };
+  function describeResourceErrorFromEvent(ev) {
+    try {
+      const target = ev && (ev.target || ev.currentTarget);
+      if (!target || (typeof target !== 'object')) return null;
+      const tagName = typeof target.tagName === 'string' ? target.tagName.toLowerCase() : undefined;
+      const attrSrc = typeof target.getAttribute === 'function'
+        ? (target.getAttribute('src') || target.getAttribute('href'))
+        : undefined;
+      let rawResource = attrSrc || target.src || target.href;
+      if (!rawResource || typeof rawResource !== 'string') {
+        return tagName ? ('Failed to load ' + tagName + ' resource (unknown URL).') : null;
+      }
+      let displayResource = rawResource;
+      try {
+        const parsed = new URL(rawResource, window.location.href);
+        // Prefer original attribute when available so relative paths stay recognizable
+        displayResource = attrSrc || parsed.pathname || parsed.href;
+      } catch {
+        // Fallback: trim query/hash for readability
+        const clean = rawResource.split('?')[0].split('#')[0];
+        if (clean) displayResource = clean;
+      }
+      if (displayResource.startsWith('vscode-webview://') || displayResource.startsWith('vscode-resource://')) {
+        // Extract trailing segment to avoid noisy authority details
+        const parts = displayResource.split('/');
+        if (parts.length > 1) {
+          const tail = parts.filter(Boolean).slice(-3).join('/');
+          if (tail) displayResource = tail;
+        }
+      }
+      if (tagName === 'img') {
+        return 'Failed to load image resource: ' + displayResource + '. Check that the file exists and the path is correct.';
+      }
+      if (tagName === 'script') {
+        return 'Failed to load script resource: ' + displayResource + '.';
+      }
+      if (tagName === 'link') {
+        return 'Failed to load stylesheet resource: ' + displayResource + '.';
+      }
+      return 'Failed to load resource' + (tagName ? ' (' + tagName + ')' : '') + ': ' + displayResource + '.';
+    } catch {
+      return null;
+    }
+  }
+
+  function formatErrorArgument(arg) {
+    if (typeof arg === 'string') return arg;
+    if (arg == null) return '';
+    if (Object.prototype.toString.call(arg) === '[object Arguments]') {
+      return Array.prototype.join.call(arg, ' ');
+    }
+    if (typeof ErrorEvent !== 'undefined' && arg instanceof ErrorEvent) {
+      if (arg.message) return arg.message;
+    }
+    if (arg instanceof Error) {
+      return arg.message || arg.name;
+    }
+    if (typeof Event !== 'undefined' && arg instanceof Event) {
+      const detail = describeResourceErrorFromEvent(arg);
+      if (detail) return detail;
+      return arg.type ? ('Runtime event error (' + arg.type + ')') : 'Runtime event error';
+    }
+    if (typeof arg === 'object') {
+      try {
+        return JSON.stringify(arg);
+      } catch {
+        if (arg && typeof arg.toString === 'function' && arg.toString !== Object.prototype.toString) {
+          try { return arg.toString(); } catch { /* ignore */ }
+        }
+      }
+    }
+    return String(arg);
+  }
+
   const origErr=console.error;
   console.error=function(...args){
     // Always prefix with [‼️RUNTIME ERROR] and stringify arguments, including Arguments objects and Error objects
-    let msg = Array.prototype.map.call(args, a => {
-      if (typeof a === "string") return a;
-      if (Object.prototype.toString.call(a) === "[object Arguments]") return Array.prototype.join.call(a, " ");
-      if (a instanceof Error) return a.message;
-      return (a && a.toString ? a.toString() : String(a));
-    }).join(" ");
+    const parts = args.map(formatErrorArgument).filter(part => part != null && String(part).length > 0);
+    let msg = parts.length > 0 ? parts.join(' ') : '';
+    if (!msg) {
+      msg = args.map(a => (a && a.toString ? a.toString() : String(a))).join(' ');
+    }
     // Suppress only the specific benign p5 internal error
     if (_p5ShouldSuppressError(msg)) { origErr.apply(console,args); return; }
     if (!msg.startsWith("[RUNTIME ERROR]")) {
@@ -904,6 +977,7 @@ window.addEventListener("message", e => {
       document.querySelectorAll("canvas").forEach(c=>c.remove());
       break;
     case "showError": showError(data.message); break;
+    case "showWarning": showWarning(data.message); break;
   case "resetErrorFlag": window._p5ErrorLogged = false; break;
     case "syntaxError": showError(data.message); break;
     case "requestLastRuntimeError":
