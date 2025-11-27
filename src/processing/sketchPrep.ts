@@ -1,5 +1,6 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
+import * as acorn from 'acorn';
 import { getTime } from '../utils/helpers';
 import {
     detectTopLevelInputs,
@@ -87,10 +88,17 @@ export function validateSource(document: vscode.TextDocument, code?: string): Va
     }
 
     try {
-        // eslint-disable-next-line no-new-func
-        new Function(code);
+        acorn.parse(code, {
+            ecmaVersion: 2020,
+            sourceType: 'script',
+            locations: true,
+            allowReturnOutsideFunction: true,
+            allowAwaitOutsideFunction: true,
+            allowImportExportEverywhere: true,
+        });
     } catch (err: any) {
-        const msg = `${getTime()} [‼️SYNTAX ERROR in ${fileName}] ${err.message}`;
+        const reason = err && err.message ? err.message : 'Unknown syntax error';
+        const msg = `${getTime()} [‼️SYNTAX ERROR in ${fileName}] ${reason}`;
         return {
             ok: false,
             code: '',
