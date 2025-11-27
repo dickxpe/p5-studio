@@ -411,7 +411,7 @@
             "type": "number",
             "default": 500,
             "minimum": 50,
-            "description": "Maximum time in milliseconds the guard allows a loop to run before aborting.",
+            "description": "Maximum time in milliseconds the guard allows a loop to run before aborting (this is not the time the loop actually takes, but the time spent in the loop code, excluding time spent in async calls like drawing to canvas). This value should be set relatively low to catch infinite loops quickly.",
             "order": 9.2
           },
           "P5Studio.editorFontSize": {
