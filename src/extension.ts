@@ -27,6 +27,7 @@ import { resolveLiveAssets } from './assets/resolver';
 import { config as cfg } from './config/index';
 import { setHtmlAndPost } from './webview/helpers';
 import { prepareSketch, validateSource, ReloadReason } from './processing/sketchPrep';
+import { injectLoopGuards } from './processing/loopGuards';
 // Commands groups
 import { registerDebugCommands } from './commands/debug';
 import { registerCaptureCommands } from './commands/capture';
@@ -1065,6 +1066,11 @@ export function activate(context: vscode.ExtensionContext) {
               getTime,
               focusOutputChannel: () => showAndTrackOutputChannel(outputChannel),
             });
+          } else if (msg.type === 'loopGuardHit') {
+            try {
+              const toast = 'Infinite loop detected, sketch was terminated.\n\r VS Code can be unresponsive for a few seconds.';
+              vscode.window.showWarningMessage(toast);
+            } catch { }
           } else if (msg.type === 'showError') {
             handleShowError({ panel, editor, message: msg.message }, {
               getTime,
@@ -1395,6 +1401,9 @@ export function activate(context: vscode.ExtensionContext) {
           try {
             new Function(codeToSend);
             codeToSend = wrapInSetupIfNeeded(codeToSend);
+            try {
+              codeToSend = injectLoopGuards(codeToSend, { tagPrefix: path.basename(editor.document.fileName) }).code;
+            } catch { /* ignore guard errors */ }
             // Optionally block on semicolon warnings
             const warnSemi_RO = lintApi.hasSemicolonWarnings(editor.document);
             const warnUnd_RO = lintApi.hasUndeclaredWarnings(editor.document);

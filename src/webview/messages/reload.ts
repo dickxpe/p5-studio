@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { detectDrawFunction } from '../../utils/helpers';
 import { findFirstTemplateLiteral, formatTemplateLiteralError } from '../../processing/astHelpers';
+import { injectLoopGuards } from '../../processing/loopGuards';
 
 export async function handleReloadClicked(
   params: { panel: vscode.WebviewPanel; editor: vscode.TextEditor; preserveGlobals?: boolean },
@@ -77,8 +78,10 @@ export async function handleReloadClicked(
     (panel as any)._lastSyntaxError = null;
     return;
   }
+  const initialHasDraw = (() => {
+    try { return detectDrawFunction(rawCode); } catch { return false; }
+  })();
   try {
-    const initialHasDraw = detectDrawFunction(rawCode);
     deps.setHasDraw?.(docUri, initialHasDraw);
     deps.setDrawLoopPaused?.(docUri, false);
   } catch { }
@@ -93,6 +96,15 @@ export async function handleReloadClicked(
     const readOnly = deps.hasOnlySetup(editor.document.getText());
     panel.webview.postMessage({ type: 'setGlobalVars', variables: filteredGlobals, readOnly });
   }
+
+  const applyLoopGuards = (code: string) => {
+    try {
+      const result = injectLoopGuards(code, { tagPrefix: fileName });
+      return result.code;
+    } catch {
+      return code;
+    }
+  };
 
   // Friendly error for inputPrompt misuse
   if (deps.hasNonTopInputUsage(rawCode)) {
@@ -152,11 +164,7 @@ export async function handleReloadClicked(
       const globalsInfo = deps.extractGlobalVariablesWithConflicts(code);
       const globals = globalsInfo.globals;
       let rewrittenCode = deps.rewriteUserCodeWithWindowGlobals(code, globals);
-      const hasDraw = detectDrawFunction(code);
-      try {
-        deps.setHasDraw?.(docUri, hasDraw);
-        if (!hasDraw) deps.setDrawLoopPaused?.(docUri, false);
-      } catch { }
+      const hasDraw = initialHasDraw;
       if (!hasDraw) {
         panel.webview.html = await deps.createHtml(code, panel, deps.getExtensionPath(), { allowInteractiveTopInputs: deps.getAllowInteractiveTopInputs(), initialCaptureVisible: deps.getInitialCaptureVisible(panel) });
         setTimeout(() => {
@@ -169,7 +177,8 @@ export async function handleReloadClicked(
           }
         }, 600);
       } else {
-        panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: false });
+        const guarded = applyLoopGuards(rewrittenCode);
+        panel.webview.postMessage({ type: 'reload', code: guarded, preserveGlobals: false });
         setTimeout(() => {
           try { postGlobalsSnapshot(); } catch { }
         }, 200);
@@ -196,11 +205,7 @@ export async function handleReloadClicked(
       rewrittenCode = rewrittenCode.replace(new RegExp('^\\s*window\\.' + g.name + '\\s*=\\s*' + g.name + ';?\\s*$', 'gm'), '');
     });
   }
-  const hasDraw = detectDrawFunction(code);
-  try {
-    deps.setHasDraw?.(docUri, hasDraw);
-    if (!hasDraw) deps.setDrawLoopPaused?.(docUri, false);
-  } catch { }
+  const hasDraw = initialHasDraw;
   if (!hasDraw) {
     panel.webview.html = await deps.createHtml(code, panel, deps.getExtensionPath(), { allowInteractiveTopInputs: deps.getAllowInteractiveTopInputs(), initialCaptureVisible: deps.getInitialCaptureVisible(panel) });
     setTimeout(() => {
@@ -214,7 +219,8 @@ export async function handleReloadClicked(
     }, 600);
   } else {
     // For sketches with draw(), always reset globals to initial values on reload
-    panel.webview.postMessage({ type: 'reload', code: rewrittenCode, preserveGlobals: false });
+    const guarded = applyLoopGuards(rewrittenCode);
+    panel.webview.postMessage({ type: 'reload', code: guarded, preserveGlobals: false });
     setTimeout(() => {
       try { postGlobalsSnapshot(); } catch { }
     }, 200);

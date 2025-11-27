@@ -2,7 +2,7 @@
   "name": "p5-studio",
   "displayName": "P5 Studio",
   "description": "Live code p5js in VS Code",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "icon": "images/ICON.png",
   "author": {
     "name": "peterdickx"
@@ -399,6 +399,20 @@
             "default": false,
             "description": "Show the current FPS (rounded from 1000/deltaTime) in the top-left of the P5 web panel.",
             "order": 9
+          },
+          "P5Studio.loopGuard.maxIterations": {
+            "type": "number",
+            "default": 10000,
+            "minimum": 100,
+            "description": "Maximum number of loop iterations allowed before the infinite-loop guard throws.",
+            "order": 9.1
+          },
+          "P5Studio.loopGuard.maxTimeMs": {
+            "type": "number",
+            "default": 500,
+            "minimum": 50,
+            "description": "Maximum time in milliseconds the guard allows a loop to run before aborting.",
+            "order": 9.2
           },
           "P5Studio.editorFontSize": {
             "type": "number",

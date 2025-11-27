@@ -37,6 +37,20 @@ function getDebounceDelay(): number {
     } catch { return 250; }
 }
 
+function getLoopGuardMaxIterations(): number {
+    try {
+        const value = vscode.workspace.getConfiguration('P5Studio').get<number>('loopGuard.maxIterations', 4000);
+        return (typeof value === 'number' && value > 0) ? value : 4000;
+    } catch { return 4000; }
+}
+
+function getLoopGuardMaxTimeMs(): number {
+    try {
+        const value = vscode.workspace.getConfiguration('P5Studio').get<number>('loopGuard.maxTimeMs', 250);
+        return (typeof value === 'number' && value > 0) ? value : 250;
+    } catch { return 250; }
+}
+
 function getVariablePanelDebounceDelay(): number {
     try {
         return vscode.workspace.getConfiguration('P5Studio').get<number>('variablePanelDebounceDelay', 500);
@@ -148,6 +162,8 @@ export const config = {
     getShowDebugButton,
     getShowFPS,
     getDebounceDelay,
+    getLoopGuardMaxIterations,
+    getLoopGuardMaxTimeMs,
     getVariablePanelDebounceDelay,
     getEditorFontSize,
     getReloadWhileTyping,

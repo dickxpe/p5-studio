@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { preprocessTopLevelInputs } from '../processing/topInputs';
 import { extractGlobalVariablesWithConflicts, rewriteUserCodeWithWindowGlobals } from '../processing/codeRewriter';
+import { injectLoopGuards, LOOP_GUARD_HELPER_SNIPPET } from '../processing/loopGuards';
 import { listFilesRecursively } from '../utils/helpers';
 import { config as cfg } from '../config/index';
 import { getP5AssetUris } from '../assets/resolver';
@@ -47,7 +48,9 @@ export async function createHtml(
   // Detect globals and rewrite code
   const { globals, conflicts } = extractGlobalVariablesWithConflicts(sanitizedCode);
   const rewrittenCode = rewriteUserCodeWithWindowGlobals(sanitizedCode, globals);
-  const escapedCode = escapeBackticks(rewrittenCode);
+  const loopGuardResult = injectLoopGuards(rewrittenCode, { tagPrefix: sketchFileName || 'sketch' });
+  const escapedCode = escapeBackticks(loopGuardResult.code);
+  const loopGuardHelperScript = LOOP_GUARD_HELPER_SNIPPET.trim();
 
   const uniqueId = Date.now() + '-' + Math.random().toString(36).substr(2, 8);
   const p5UriWithCacheBust = vscode.Uri.parse(p5Uri.toString() + `?v=${uniqueId}`);
@@ -119,6 +122,10 @@ export async function createHtml(
 
   // Match overlay font size to the editor font size
   const editorFontSize = vscode.workspace.getConfiguration('editor').get<number>('fontSize', 14);
+  const loopGuardConfig = {
+    maxIterations: cfg.getLoopGuardMaxIterations(),
+    maxTimeMs: cfg.getLoopGuardMaxTimeMs(),
+  };
 
   return `<!DOCTYPE html>
 <!-- cache-bust: ${uniqueId} -->
@@ -141,6 +148,9 @@ window.output = function(...args) { console.log(...args); };
   window.MEDIA_FOLDER = ensureTrailingSlash(${JSON.stringify(mediaWebviewUriPrefix)});
   window.INCLUDE_FOLDER = ensureTrailingSlash(${JSON.stringify(includeWebviewUriPrefix)});
 })();
+window.__p5LoopGuardActive = false;
+window.__p5LoopGuardMsg = '';
+window.__p5LoopGuardConfig = ${JSON.stringify(loopGuardConfig)};
 </script>
 <script>
 // --- OSC SEND/RECEIVE API for user sketches ---
@@ -306,6 +316,9 @@ window.addEventListener("message", function(e) {
     }, 0);
   });
 })();
+</script>
+<script>
+${loopGuardHelperScript}
 </script>
 <style>
 :root { --overlay-font-size: ${editorFontSize}px; --toolbar-scale: 1.5; }
@@ -542,6 +555,10 @@ function showError(msg){
   window._p5ErrorActive = true;
   const el = document.getElementById("error-overlay");
   if(el){el.textContent = msg; el.style.display = "block";}
+  try {
+    window.__p5LoopGuardActive = !!window.__p5LoopGuardActive;
+    window.__p5LoopGuardMsg = msg || '';
+  } catch {}
   safeRemoveP5Instance();
   document.querySelectorAll("canvas").forEach(c=>c.remove());
   // Prevent p5.js from calling user draw/setup again
@@ -559,6 +576,18 @@ function showWarning(msg){
   const wl = document.getElementById('warning-overlay');
   if (wl) { wl.textContent = msg; wl.style.display = 'block'; }
 }
+window.__p5HandleLoopGuardHit = function(tag, rawMessage) {
+  const base = (typeof rawMessage === 'string' && rawMessage.trim().length > 0)
+    ? rawMessage.trim()
+    : ('Potential infinite loop detected' + (tag ? ' near ' + tag : '') + '.');
+  const msg = base.startsWith('[‼️RUNTIME ERROR]') ? base : '[‼️RUNTIME ERROR] ' + base;
+  try { window.__p5LoopGuardActive = true; window.__p5LoopGuardMsg = msg; } catch {}
+  showError(msg);
+  try {
+    vscode.postMessage({ type: 'loopGuardHit', message: msg });
+  } catch {}
+  try { vscode.postMessage({ type: 'showError', message: msg }); } catch {}
+};
 // Suppress benign internal p5 error that can appear after another error
 function _p5ShouldSuppressError(raw){
   try{
@@ -662,6 +691,10 @@ function _p5ShouldSuppressError(raw){
     if (!msg) {
       msg = args.map(a => (a && a.toString ? a.toString() : String(a))).join(' ');
     }
+    if (window.__p5LoopGuardActive && typeof msg === 'string' && msg.indexOf('Potential infinite loop detected') !== -1) {
+      origErr.apply(console,args);
+      return;
+    }
     // Suppress only the specific benign p5 internal error
     if (_p5ShouldSuppressError(msg)) { origErr.apply(console,args); return; }
     if (!msg.startsWith("[RUNTIME ERROR]")) {
@@ -681,6 +714,9 @@ window.onerror = function(message, source, lineno, colno, error) {
   }
   if (_p5ShouldSuppressError(msg)) {
     // Let it go to the browser console but do not show overlay or VS Code output
+    return false;
+  }
+  if (window.__p5LoopGuardActive && typeof msg === 'string' && msg.indexOf('Potential infinite loop detected') !== -1) {
     return false;
   }
   if (!msg.startsWith('[RUNTIME ERROR]')) {
@@ -736,6 +772,9 @@ window.onunhandledrejection = function(event) {
   } else {
     msg = 'Unhandled promise rejection';
   }
+  if (window.__p5LoopGuardActive && typeof msg === 'string' && msg.indexOf('Potential infinite loop detected') !== -1) {
+    return;
+  }
   if (_p5ShouldSuppressError(msg)) {
     return; // do not show overlay or postMessage for this specific error
   }
@@ -767,6 +806,11 @@ function runUserSketch(code){
   window._p5LoopPaused = false;
   safeRemoveP5Instance();
   document.querySelectorAll("canvas").forEach(c=>c.remove());
+
+  if (typeof window.__p5ResetLoopGuards === 'function') {
+    try { window.__p5ResetLoopGuards(); } catch {}
+  }
+  try { window.__p5LoopGuardActive = false; window.__p5LoopGuardMsg = ''; } catch {}
 
   // Remove previous user code script if present
   const prevScript = document.getElementById('user-code-script');
@@ -800,6 +844,7 @@ function runUserSketch(code){
         try {
           if (window._p5SetupDone && !window._p5PostedAfterSetup) {
             window._p5PostedAfterSetup = true;
+            try { window.__p5LoopGuardActive = false; window.__p5LoopGuardMsg = ''; } catch {}
             if (window._p5GlobalVarTypes) {
               Object.keys(window._p5GlobalVarTypes).forEach(name => {
                 try {
@@ -926,6 +971,11 @@ window.addEventListener("message", e => {
           window.__liveP5StepAdvance = null;
           window.__liveP5Stepping = false;
         } catch {}
+        try {
+          window.__p5LoopGuardActive = false;
+          window.__p5LoopGuardMsg = '';
+          if (typeof window.__p5ResetLoopGuards === 'function') window.__p5ResetLoopGuards();
+        } catch {}
         // Save current global values
   const prevGlobals = {};
         if (window._p5GlobalVarTypes) {
@@ -960,6 +1010,11 @@ window.addEventListener("message", e => {
           window.__liveP5StepAdvance = null;
           window.__liveP5Stepping = false;
         } catch {}
+        try {
+          window.__p5LoopGuardActive = false;
+          window.__p5LoopGuardMsg = '';
+          if (typeof window.__p5ResetLoopGuards === 'function') window.__p5ResetLoopGuards();
+        } catch {}
   runUserSketch(String(data.code));
       }
       break;
@@ -971,6 +1026,11 @@ window.addEventListener("message", e => {
         window.__liveP5StepResolve = null;
         window.__liveP5StepAdvance = null;
         window.__liveP5Stepping = false;
+      } catch {}
+      try {
+        window.__p5LoopGuardActive = false;
+        window.__p5LoopGuardMsg = '';
+        if (typeof window.__p5ResetLoopGuards === 'function') window.__p5ResetLoopGuards();
       } catch {}
       try { if (typeof window._resetCaptureUIAndTimer === 'function') window._resetCaptureUIAndTimer(); } catch {}
       safeRemoveP5Instance();

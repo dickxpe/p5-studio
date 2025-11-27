@@ -8,6 +8,7 @@ export type WebviewToExtensionMessage =
     | { type: 'captureVisibilityChanged'; visible: boolean }
     | { type: 'log'; message: any; focus?: boolean }
     | { type: 'showError'; message: string }
+    | { type: 'loopGuardHit'; message?: string }
     | { type: 'submitTopInputs'; values: any[] }
     | { type: 'reload-button-clicked'; preserveGlobals?: boolean }
     | { type: 'step-run-clicked' }
