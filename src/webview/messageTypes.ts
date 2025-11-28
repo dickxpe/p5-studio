@@ -11,6 +11,9 @@ export type WebviewToExtensionMessage =
     | { type: 'loopGuardHit'; message?: string }
     | { type: 'submitTopInputs'; values: any[] }
     | { type: 'reload-button-clicked'; preserveGlobals?: boolean }
+    | { type: 'context-menu-refresh' }
+    | { type: 'context-menu-toggle-pause'; pause: boolean }
+    | { type: 'context-menu-toggle-capture' }
     | { type: 'step-run-clicked' }
     | { type: 'continue-clicked' }
     | { type: 'single-step-clicked' }
@@ -48,7 +51,7 @@ export type ExtensionToWebviewMessage =
     | { type: 'invokeStepRun' }
     | { type: 'invokeContinue' }
     | { type: 'invokeSingleStep' }
-    | { type: 'invokeReload' }
+    | { type: 'invokeReload'; preserveGlobals?: boolean }
     | { type: 'toggleCaptureVisibility' }
     | { type: 'pauseDrawLoop' }
     | { type: 'resumeDrawLoop' };

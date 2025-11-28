@@ -304,8 +304,40 @@ window.addEventListener("message", function(e) {
       customMenu.remove();
     });
 
+    const refreshItem = document.createElement('div');
+    refreshItem.className = 'p5-custom-context-menu-item';
+    refreshItem.textContent = 'Refresh';
+    refreshItem.addEventListener('mousedown', function(ev) { ev.stopPropagation(); ev.preventDefault(); });
+    refreshItem.addEventListener('click', function() {
+      try { vscode.postMessage({ type: 'context-menu-refresh' }); } catch { }
+      customMenu.remove();
+    });
+
+    const pauseState = !!window._p5LoopPaused;
+    const pauseItem = document.createElement('div');
+    pauseItem.className = 'p5-custom-context-menu-item';
+    pauseItem.textContent = pauseState ? 'Resume draw loop' : 'Pause draw loop';
+    pauseItem.addEventListener('mousedown', function(ev) { ev.stopPropagation(); ev.preventDefault(); });
+    pauseItem.addEventListener('click', function() {
+      try { vscode.postMessage({ type: 'context-menu-toggle-pause', pause: !pauseState }); } catch { }
+      customMenu.remove();
+    });
+
+    const captureVisible = !!window._p5CaptureVisible;
+    const recordItem = document.createElement('div');
+    recordItem.className = 'p5-custom-context-menu-item';
+    recordItem.textContent = captureVisible ? 'Hide capture panel' : 'Show capture panel';
+    recordItem.addEventListener('mousedown', function(ev) { ev.stopPropagation(); ev.preventDefault(); });
+    recordItem.addEventListener('click', function() {
+      try { vscode.postMessage({ type: 'context-menu-toggle-capture' }); } catch { }
+      customMenu.remove();
+    });
+
     customMenu.appendChild(saveItem);
     customMenu.appendChild(copyItem);
+    customMenu.appendChild(refreshItem);
+    customMenu.appendChild(pauseItem);
+    customMenu.appendChild(recordItem);
     document.body.appendChild(customMenu);
 
     // Remove menu on click elsewhere or escape
@@ -931,9 +963,11 @@ function applyDrawLoopState(){
 window.addEventListener("message", e => {
   const data = e.data;
   switch(data.type){
-    case "invokeReload":
-      vscode.postMessage({type:"reload-button-clicked", preserveGlobals: true});
+    case "invokeReload": {
+      const preserveGlobals = (data && typeof data.preserveGlobals === 'boolean') ? !!data.preserveGlobals : true;
+      vscode.postMessage({type:"reload-button-clicked", preserveGlobals});
       break;
+    }
     case "invokeStepRun":
       vscode.postMessage({type:"step-run-clicked"});
       break;

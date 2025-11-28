@@ -62,27 +62,27 @@ export function registerContextService(
       }
     }
     setContext('p5WebviewTabFocused', isP5Webview);
+    let docUriForContext: string | undefined;
     if (isP5Webview) {
       const uri = getDocUriForActivePanel();
-      const primed = uri ? !!debugPrimedMap.get(uri.toString()) : false;
-      const cap = uri ? !!captureVisibleMap.get(uri.toString()) : false;
-      const stepping = uri ? !!steppingActiveMap.get(uri.toString()) : false;
-      const hasDraw = uri ? !!hasDrawMap.get(uri.toString()) : false;
-      const loopPaused = hasDraw ? !!drawLoopPausedMap.get(uri.toString()) : false;
-      setContext('p5DebugPrimed', primed);
-      setContext('p5CaptureVisible', cap);
-      setContext('p5SteppingActive', stepping);
-      setContext('p5HasDraw', hasDraw);
-      setContext('p5DrawLoopPaused', loopPaused);
-      deps.updateVariablesPanel();
+      docUriForContext = uri ? uri.toString() : undefined;
     } else {
-      setContext('p5DebugPrimed', false);
-      setContext('p5CaptureVisible', false);
-      setContext('p5SteppingActive', false);
-      setContext('p5HasDraw', false);
-      setContext('p5DrawLoopPaused', false);
-      deps.updateVariablesPanel();
+      const editor = vscode.window.activeTextEditor;
+      if (editor) {
+        docUriForContext = editor.document.uri.toString();
+      }
     }
+    const primed = docUriForContext ? !!debugPrimedMap.get(docUriForContext) : false;
+    const cap = docUriForContext ? !!captureVisibleMap.get(docUriForContext) : false;
+    const stepping = docUriForContext ? !!steppingActiveMap.get(docUriForContext) : false;
+    const hasDraw = docUriForContext ? !!hasDrawMap.get(docUriForContext) : false;
+    const loopPaused = (docUriForContext && hasDraw) ? !!drawLoopPausedMap.get(docUriForContext) : false;
+    setContext('p5DebugPrimed', primed);
+    setContext('p5CaptureVisible', cap);
+    setContext('p5SteppingActive', stepping);
+    setContext('p5HasDraw', hasDraw);
+    setContext('p5DrawLoopPaused', loopPaused);
+    deps.updateVariablesPanel();
   }
 
   // Watchers to keep contexts in sync with UI focus

@@ -191,6 +191,14 @@ export function activate(context: vscode.ExtensionContext) {
   // (No auto-start of OSC server)
   // Helper: find active P5 panel
   function getActiveP5Panel(): vscode.WebviewPanel | undefined {
+    // 0) Prefer whichever panel VS Code currently reports as active. This works across detached windows.
+    try {
+      for (const [, panel] of webviewPanelMap.entries()) {
+        if (panel?.active) {
+          return panel;
+        }
+      }
+    } catch { }
     // 1) If a webview tab is focused, resolve by matching the tab label to a panel title
     try {
       const activeTab = vscode.window.tabGroups.activeTabGroup?.activeTab;
@@ -221,17 +229,16 @@ export function activate(context: vscode.ExtensionContext) {
   async function invokeSingleStep(panel: vscode.WebviewPanel, editor: vscode.TextEditor) {
     try { sendToWebview(panel, { type: 'invokeSingleStep' }); } catch { }
   }
-  async function invokeReload(panel: vscode.WebviewPanel) {
-    try { sendToWebview(panel, { type: 'invokeReload' }); } catch { }
+  async function invokeReload(panel: vscode.WebviewPanel, opts?: { preserveGlobals?: boolean }) {
+    const preserveGlobals = opts?.preserveGlobals !== false;
+    try { sendToWebview(panel, { type: 'invokeReload', preserveGlobals }); } catch { }
   }
 
-  async function performPanelReload(panel: vscode.WebviewPanel) {
+  async function performPanelReload(panel: vscode.WebviewPanel, opts?: { preserveGlobals?: boolean }) {
     const uri = getDocUriForPanel(panel);
     const uriStr = uri ? uri.toString() : undefined;
     if (uriStr) {
-      try { contextService.setDebugPrimed(uriStr, false); } catch { }
-      try { contextService.setContext('p5DebugPrimed', false); } catch { }
-      try { contextService.setSteppingActive(uriStr, false); } catch { }
+      resetDebugStateForDoc(uriStr);
     }
     try { (panel as any)._steppingActive = false; } catch { }
     if ((panel as any)._autoStepTimer) {
@@ -239,7 +246,26 @@ export function activate(context: vscode.ExtensionContext) {
       (panel as any)._autoStepTimer = null;
     }
     (panel as any)._autoStepMode = false;
-    await invokeReload(panel);
+    await invokeReload(panel, opts);
+  }
+
+  function resetDebugStateForDoc(docUri?: string) {
+    if (!docUri) return;
+    try { contextService.setDebugPrimed(docUri, false); } catch { }
+    try { contextService.setSteppingActive(docUri, false); } catch { }
+    try { contextService.setContext('p5DebugPrimed', false); } catch { }
+    try { contextService.setContext('p5SteppingActive', false); } catch { }
+    try {
+      const editorToClear = vscode.window.visibleTextEditors.find(ed => ed.document?.uri?.toString() === docUri);
+      if (editorToClear) {
+        clearStepHighlight(editorToClear);
+      }
+    } catch { }
+    try { blocklyApi.clearHighlight(docUri); } catch { }
+    const panel = webviewPanelMap.get(docUri);
+    if (panel) {
+      try { (panel as any)._steppingActive = false; } catch { }
+    }
   }
   async function toggleCapture(panel: vscode.WebviewPanel) {
     sendToWebview(panel, { type: 'toggleCaptureVisibility' });
@@ -1095,6 +1121,24 @@ export function activate(context: vscode.ExtensionContext) {
               getAllowInteractiveTopInputs: () => _allowInteractiveTopInputs,
               setAllowInteractiveTopInputs: (v: boolean) => { _allowInteractiveTopInputs = v; },
             });
+          } else if (msg.type === 'context-menu-refresh') {
+            await performPanelReload(panel, { preserveGlobals: false });
+            return;
+          } else if (msg.type === 'context-menu-toggle-pause') {
+            const docUri = editor.document.uri.toString();
+            const hasDraw = contextService?.getHasDraw?.(docUri);
+            if (!hasDraw) {
+              return;
+            }
+            const targetPause = !!msg.pause;
+            try {
+              sendToWebview(panel, { type: targetPause ? 'pauseDrawLoop' : 'resumeDrawLoop' });
+            } catch { }
+            try { contextService?.setDrawLoopPaused(docUri, targetPause); } catch { }
+            return;
+          } else if (msg.type === 'context-menu-toggle-capture') {
+            await toggleCapture(panel);
+            return;
           } else if (msg.type === 'reload-button-clicked') {
             syncLocalsHeadingForEditor(editor);
             await handleReloadClicked({ panel, editor, preserveGlobals: !!msg.preserveGlobals }, {
@@ -1453,6 +1497,7 @@ export function activate(context: vscode.ExtensionContext) {
           if (docUri) {
             const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === docUri);
             if (doc) {
+              resetDebugStateForDoc(docUri);
               // Log all warnings on explicit reload command
               lintApi.logAllWarningsForDocument(doc);
               _pendingReloadReason = 'command';
@@ -1462,6 +1507,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
         return;
       }
+      resetDebugStateForDoc(editor.document.uri.toString());
       // Log all warnings on explicit reload command
       lintApi.logAllWarningsForDocument(editor.document);
       _pendingReloadReason = 'command';

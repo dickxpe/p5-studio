@@ -235,17 +235,17 @@
       "editor/title": [
         {
           "command": "extension.live-p5",
-          "group": "navigation",
+          "group": "navigation@3",
           "when": "hasP5Project == true && isP5js && !hasP5Webview && (editorLangId == javascript || editorLangId == typescript)"
         },
         {
           "command": "extension.open-blockly",
-          "group": "navigation",
+          "group": "navigation@2",
           "when": "hasP5Project == true && config.P5Studio.blockly.enableBlockly == true && isP5js && p5BlocklyEligible == true && (editorLangId == javascript || editorLangId == typescript)"
         },
         {
           "command": "extension.reload-p5-sketch",
-          "group": "navigation",
+          "group": "navigation@3",
           "when": "hasP5Project == true && isP5js && hasP5Webview && (editorLangId == javascript || editorLangId == typescript)"
         },
         {
@@ -265,28 +265,28 @@
         },
         {
           "command": "P5Studio.stopStepping",
-          "group": "navigation",
-          "when": "p5WebviewTabFocused && p5SteppingActive"
+          "group": "navigation@3.1",
+          "when": "hasP5Project == true && isP5js && hasP5Webview && (editorLangId == javascript || editorLangId == typescript) && p5SteppingActive"
         },
         {
           "command": "P5Studio.debugPrime",
-          "group": "navigation@3",
-          "when": "p5WebviewTabFocused && !p5DebugPrimed && config.P5Studio.debug.ShowDebugButton"
+          "group": "navigation@4",
+          "when": "hasP5Project == true && isP5js && hasP5Webview && (editorLangId == javascript || editorLangId == typescript) && !p5DebugPrimed && config.P5Studio.debug.ShowDebugButton"
         },
         {
           "command": "P5Studio.stepRun",
-          "group": "navigation@3",
-          "when": "p5WebviewTabFocused && p5DebugPrimed && config.P5Studio.debug.ShowDebugButton"
+          "group": "navigation@3.2",
+          "when": "hasP5Project == true && isP5js && hasP5Webview && (editorLangId == javascript || editorLangId == typescript) && p5DebugPrimed && config.P5Studio.debug.ShowDebugButton"
         },
           {
           "command": "P5Studio.singleStep",
-          "group": "navigation@5",
-          "when": "p5WebviewTabFocused && p5DebugPrimed && config.P5Studio.debug.ShowDebugButton"
+          "group": "navigation@3.3",
+          "when": "hasP5Project == true && isP5js && hasP5Webview && (editorLangId == javascript || editorLangId == typescript) && p5DebugPrimed && config.P5Studio.debug.ShowDebugButton"
         },
         {
           "command": "P5Studio.continueToBreakpoint",
-          "group": "navigation@4",
-          "when": "p5WebviewTabFocused && p5SteppingActive && config.P5Studio.debug.ShowDebugButton"
+          "group": "navigation@3.4",
+          "when": "hasP5Project == true && isP5js && hasP5Webview && (editorLangId == javascript || editorLangId == typescript) && p5SteppingActive && config.P5Studio.debug.ShowDebugButton"
         },
       
         {
@@ -301,12 +301,12 @@
         },
         {
           "command": "P5Studio.toggleReloadWhileTypingOn",
-          "group": "navigation@2",
+          "group": "navigation@10",
           "when": "hasP5Project == true && isP5js && liveP5ReloadWhileTypingEnabled == true && (editorLangId == javascript || editorLangId == typescript)"
         },
         {
           "command": "P5Studio.toggleReloadWhileTypingOff",
-          "group": "navigation@2",
+          "group": "navigation@10",
           "when": "hasP5Project == true && isP5js && liveP5ReloadWhileTypingEnabled != true && (editorLangId == javascript || editorLangId == typescript)"
         }
       ],
