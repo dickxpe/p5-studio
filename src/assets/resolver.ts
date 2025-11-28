@@ -39,7 +39,7 @@ export function resolveLiveAssets(
         try {
             const t = opts.getTime ? opts.getTime() : new Date().toLocaleTimeString();
             opts.output.appendLine(`${t} [ℹ️INFO] Using p5.js version ${versionLabel}`);
-            // Warn about missing p5types for 2.1+ to inform users editor types might be disabled
+            // Warn about missing p5types for 2.1+ to inform users editor type definitions might be disabled
             try {
                 const typesDir = path.join(context.extensionPath, 'assets', selected, 'p5types');
                 if (selected !== '1.11' && !fs.existsSync(typesDir)) {

@@ -58,17 +58,40 @@ export async function createHtml(
   const p5CaptureUriWithCacheBust = vscode.Uri.parse(p5CaptureUri.toString() + `?v=${uniqueId}`);
   // --- Inject common, import, and include scripts ---
   let scriptTags = '';
+  let styleTags = '';
   try {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     // --- Determine sketch file's folder for "include" ---
     let includeFiles: string[] = [];
+    let includeCssUris: vscode.Uri[] = [];
+    const includeDirs: string[] = [];
+    const seenIncludeDirs = new Set<string>();
+    const trackIncludeDir = (dir?: string) => {
+      if (!dir) return;
+      const normalized = path.normalize(dir);
+      if (seenIncludeDirs.has(normalized)) return;
+      seenIncludeDirs.add(normalized);
+      includeDirs.push(normalized);
+    };
     if (panel && (panel as any)._sketchFilePath) {
       const sketchDir = path.dirname((panel as any)._sketchFilePath);
-      const includeDir = path.join(sketchDir, 'include');
-      // Only try to list files if the include folder exists
-      if (fs.existsSync(includeDir) && fs.statSync(includeDir).isDirectory()) {
-        includeFiles = await listFilesRecursively(vscode.Uri.file(includeDir), ['.js', '.ts']);
+      trackIncludeDir(path.join(sketchDir, 'include'));
+      const parentDir = path.dirname(sketchDir);
+      if (parentDir && parentDir !== sketchDir) {
+        trackIncludeDir(path.join(parentDir, 'include'));
       }
+    }
+    if (workspaceFolder) {
+      trackIncludeDir(path.join(workspaceFolder.uri.fsPath, 'include'));
+    }
+    for (const includeDir of includeDirs) {
+      try {
+        if (fs.existsSync(includeDir) && fs.statSync(includeDir).isDirectory()) {
+          includeFiles = includeFiles.concat(await listFilesRecursively(vscode.Uri.file(includeDir), ['.js', '.ts']));
+          const cssFiles = await listFilesRecursively(vscode.Uri.file(includeDir), ['.css']);
+          includeCssUris.push(...cssFiles.map(f => panel.webview.asWebviewUri(vscode.Uri.file(f))));
+        }
+      } catch { /* ignore include errors */ }
     }
     if (workspaceFolder) {
       // --- Collect import, common, and include scripts in the requested order ---
@@ -84,11 +107,25 @@ export async function createHtml(
         `<script src='${p5SoundUriWithCacheBust}'></script>\n` +
         `<script src='${p5CaptureUriWithCacheBust}'></script>\n` +
         allFiles.map(s => `<script src='${panel.webview.asWebviewUri(vscode.Uri.file(s))}'></script>`).join('\n');
+
+      let commonCssFiles: string[] = [];
+      try {
+        const commonDir = path.join(workspaceFolder.uri.fsPath, 'common');
+        commonCssFiles = await listFilesRecursively(vscode.Uri.file(commonDir), ['.css']);
+      } catch { commonCssFiles = []; }
+      const commonCssUris = commonCssFiles.map(f => panel.webview.asWebviewUri(vscode.Uri.file(f)));
+      const allCssUris = [...commonCssUris, ...includeCssUris];
+      if (allCssUris.length > 0) {
+        styleTags = allCssUris.map(uri => `<link rel='stylesheet' href='${uri}'>`).join('\n');
+      }
     } else {
       // Fallback: just p5 and p5.sound
       scriptTags = `<script src='${p5UriWithCacheBust}'></script>\n` +
         `<script src='${p5SoundUriWithCacheBust}'></script>`;
       // capture is optional in fallback
+      if (includeCssUris.length > 0) {
+        styleTags = includeCssUris.map(uri => `<link rel='stylesheet' href='${uri}'>`).join('\n');
+      }
     }
   } catch (e) { /* ignore */ }
 
@@ -131,6 +168,7 @@ export async function createHtml(
 <!-- cache-bust: ${uniqueId} -->
 <html>
 <head>
+${styleTags}
 ${scriptTags}
 <script>
 // Provide the sketch filename (without extension) to the webview

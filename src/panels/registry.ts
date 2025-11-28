@@ -39,21 +39,40 @@ export function buildLiveLocalResourceRoots(context: vscode.ExtensionContext, ed
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) return roots;
     const selectedP5VersionForRoots = cfg.getP5jsVersion();
-    roots.push(
-      vscode.Uri.file(path.join(context.extensionPath, 'assets')),
-      vscode.Uri.file(path.join(context.extensionPath, 'assets', selectedP5VersionForRoots)),
-      vscode.Uri.file(path.join(context.extensionPath, 'images')),
-      vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'common')),
-      vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'import')),
-      vscode.Uri.file(path.join(workspaceFolder.uri.fsPath, 'media')),
-    );
-    // Include folder next to the sketch, if present
+    const addRoot = (dir: string) => {
+      try {
+        const normalized = path.normalize(dir);
+        roots.push(vscode.Uri.file(normalized));
+        if (process.platform === 'win32') {
+          const lower = normalized.toLowerCase();
+          if (lower !== normalized) {
+            roots.push(vscode.Uri.file(lower));
+          }
+        }
+      } catch { /* ignore invalid root */ }
+    };
+    addRoot(path.join(context.extensionPath, 'assets'));
+    addRoot(path.join(context.extensionPath, 'assets', selectedP5VersionForRoots));
+    addRoot(path.join(context.extensionPath, 'images'));
+    addRoot(workspaceFolder.uri.fsPath);
+    addRoot(path.join(workspaceFolder.uri.fsPath, 'common'));
+    addRoot(path.join(workspaceFolder.uri.fsPath, 'import'));
+    addRoot(path.join(workspaceFolder.uri.fsPath, 'media'));
+    // Include folders relevant to the sketch (current dir, parent include, workspace include)
     try {
       const sketchFilePath = editor.document.fileName;
       const sketchDir = path.dirname(sketchFilePath);
-      const includeDir = path.join(sketchDir, 'include');
-      if (fs.existsSync(includeDir) && fs.statSync(includeDir).isDirectory()) {
-        roots.push(vscode.Uri.file(includeDir));
+      const includeCandidates = new Set<string>();
+      includeCandidates.add(sketchDir);
+      includeCandidates.add(path.join(sketchDir, 'include'));
+      const parentDir = path.dirname(sketchDir);
+      if (parentDir && parentDir !== sketchDir) {
+        includeCandidates.add(parentDir);
+        includeCandidates.add(path.join(parentDir, 'include'));
+      }
+      includeCandidates.add(path.join(workspaceFolder.uri.fsPath, 'include'));
+      for (const dir of includeCandidates) {
+        addRoot(dir);
       }
     } catch { /* ignore */ }
   } catch { /* ignore */ }
