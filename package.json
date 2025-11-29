@@ -32,7 +32,8 @@
     "dist",
     "assets",
     "images",
-    "p5types"
+    "common",
+    "import"
   ],
   "contributes": {
     "commands": [
@@ -541,8 +542,8 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "npm run build",
-    "build": "webpack --mode production",
+    "vscode:prepublish": "npm run build && node ./scripts/copy-common-import.js",
+    "build": "webpack --mode production && node ./scripts/copy-common-import.js",
     "compile": "tsc -p ./",
     "postinstall": "node ./node_modules/vscode/bin/install",
     "test": "mocha --require ts-node/register test/**/*.test.ts",

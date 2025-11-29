@@ -1668,10 +1668,25 @@ export function activate(context: vscode.ExtensionContext) {
             ]);
 
             progress.report({ message: 'Seeding helper files' });
-            const utilsPath = path.join(commonDir, 'utils.js');
-            if (!(await pathExists(utilsPath))) {
-              await fsp.writeFile(utilsPath, '', 'utf8');
+
+            // Copy extension's common/ and import/ files into the new project
+            const extCommon = path.join(context.extensionPath, 'common');
+            const extImport = path.join(context.extensionPath, 'import');
+            async function copyDir(src: string, dest: string) {
+              if (!fs.existsSync(src)) return;
+              for (const entry of fs.readdirSync(src)) {
+                const srcPath = path.join(src, entry);
+                const destPath = path.join(dest, entry);
+                if (fs.statSync(srcPath).isDirectory()) {
+                  await fsp.mkdir(destPath, { recursive: true });
+                  await copyDir(srcPath, destPath);
+                } else {
+                  await fsp.copyFile(srcPath, destPath);
+                }
+              }
             }
+            await copyDir(extCommon, commonDir);
+            await copyDir(extImport, importDir);
 
             sketch1Path = path.join(sketchesDir, 'sketch1.js');
             const sketchExists = await pathExists(sketch1Path);
