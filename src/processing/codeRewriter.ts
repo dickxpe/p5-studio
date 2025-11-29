@@ -135,6 +135,8 @@ export function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: 
     const acorn = require('acorn');
     const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
     const globalNames = new Set(globals.map(g => g.name).filter(n => !STEPPING_HELPERS.has(n)));
+    const declarationKinds = new Map<string, string>();
+    const globalsWithNoInit = new Set<string>();
     const programBody = (ast as any).program.body;
     const newBody: any[] = [];
     let setupFound = false;
@@ -166,6 +168,14 @@ export function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: 
     for (let i = 0; i < programBody.length; i++) {
         let stmt = programBody[i];
         if (stmt.type === 'VariableDeclaration') {
+            for (const decl of stmt.declarations) {
+                if (decl.id && decl.id.name) {
+                    if (decl.init == null) {
+                        globalsWithNoInit.add(decl.id.name);
+                    }
+                    declarationKinds.set(decl.id.name, stmt.kind);
+                }
+            }
             stmt.declarations = stmt.declarations.map((decl: any) => {
                 if (decl.id && decl.id.name && globalNames.has(decl.id.name)) { return Object.assign({}, decl, { init: null }); }
                 return decl;
@@ -265,6 +275,11 @@ export function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: 
         return false;
     }
 
+    function isObjectPropertyKey(path: any): boolean {
+        const parent = path.parentPath && path.parentPath.value;
+        return !!(parent && parent.type === 'Property' && parent.key === path.value && !parent.computed);
+    }
+
     function collectBoundNamesFromPattern(pattern: any, out: Set<string>) {
         if (!pattern) return;
         if (pattern.type === 'Identifier') { out.add(pattern.name); return; }
@@ -315,15 +330,19 @@ export function rewriteUserCodeWithWindowGlobals(code: string, globals: { name: 
             const isMemberOfWindow = !!(path.parentPath && path.parentPath.value && path.parentPath.value.type === 'MemberExpression' && (path.parentPath.value as any).property === path.value && (path.parentPath.value as any).object.type === 'Identifier' && (path.parentPath.value as any).object.name === 'window');
             const isDeclarationId = !!(path.parentPath && path.parentPath.value && (((path.parentPath.value as any).type === 'VariableDeclarator' && (path.parentPath.value as any).id === path.value) || ((path.parentPath.value as any).type === 'FunctionDeclaration' && (path.parentPath.value as any).id === path.value) || ((path.parentPath.value as any).type === 'FunctionExpression' && (path.parentPath.value as any).id === path.value) || ((path.parentPath.value as any).type === 'ClassDeclaration' && (path.parentPath.value as any).id === path.value)));
             const isThisMemberWindowProperty = !!(path.parentPath && path.parentPath.value && path.parentPath.value.type === 'MemberExpression' && (path.parentPath.value as any).property === path.value && (((path.parentPath.value as any).object.type === 'ThisExpression') || ((path.parentPath.value as any).object.type === 'MemberExpression' && (path.parentPath.value as any).object.object && (path.parentPath.value as any).object.object.type === 'ThisExpression' && (path.parentPath.value as any).object.property && (path.parentPath.value as any).object.property.name === 'window')));
+            const isNonComputedProperty = !!(path.parentPath && path.parentPath.value && path.parentPath.value.type === 'MemberExpression' && (path.parentPath.value as any).property === path.value && !(path.parentPath.value as any).computed);
             const bindingScope = (path.scope && typeof path.scope.lookup === 'function') ? path.scope.lookup(name) : null;
             const isLocallyBound = !!(bindingScope && !bindingScope.isGlobal);
             // Do not rewrite identifiers that are parameters, binding patterns, shadowed names, or locally scoped helpers.
-            if (isFunctionParam(path) || isInBindingPattern(path) || isShadowedByParams(path, name) || isLocallyBound) {
+            if (isFunctionParam(path) || isInBindingPattern(path) || isShadowedByParams(path, name) || isLocallyBound || isNonComputedProperty || isObjectPropertyKey(path)) {
                 this.traverse(path);
                 return;
             }
             if (isGlobalName && !isMemberOfWindow && !isDeclarationId && !isThisMemberWindowProperty) {
-                return recast.types.builders.memberExpression(recast.types.builders.identifier('window'), recast.types.builders.identifier(name), false);
+                const declaredKind = declarationKinds.get(name);
+                if (declaredKind !== 'const' && !globalsWithNoInit.has(name)) {
+                    return recast.types.builders.memberExpression(recast.types.builders.identifier('window'), recast.types.builders.identifier(name), false);
+                }
             }
             this.traverse(path);
         }

@@ -65,6 +65,7 @@ export async function createHtml(
     let includeFiles: string[] = [];
     let includeCssUris: vscode.Uri[] = [];
     const includeDirs: string[] = [];
+    const filterExecutableScripts = (files: string[]) => files.filter(f => f.toLowerCase().endsWith('.js') && !f.toLowerCase().endsWith('.d.ts'));
     const seenIncludeDirs = new Set<string>();
     const trackIncludeDir = (dir?: string) => {
       if (!dir) return;
@@ -87,7 +88,8 @@ export async function createHtml(
     for (const includeDir of includeDirs) {
       try {
         if (fs.existsSync(includeDir) && fs.statSync(includeDir).isDirectory()) {
-          includeFiles = includeFiles.concat(await listFilesRecursively(vscode.Uri.file(includeDir), ['.js', '.ts']));
+          const scripts = await listFilesRecursively(vscode.Uri.file(includeDir), ['.js']);
+          includeFiles = includeFiles.concat(filterExecutableScripts(scripts));
           const cssFiles = await listFilesRecursively(vscode.Uri.file(includeDir), ['.css']);
           includeCssUris.push(...cssFiles.map(f => panel.webview.asWebviewUri(vscode.Uri.file(f))));
         }
@@ -97,8 +99,8 @@ export async function createHtml(
       // --- Collect import, common, and include scripts in the requested order ---
       const importDir = path.join(workspaceFolder.uri.fsPath, 'import');
       const commonDir = path.join(workspaceFolder.uri.fsPath, 'common');
-      const importFiles = await listFilesRecursively(vscode.Uri.file(importDir), ['.js', '.ts']);
-      const commonFiles = await listFilesRecursively(vscode.Uri.file(commonDir), ['.js', '.ts']);
+      const importFiles = filterExecutableScripts(await listFilesRecursively(vscode.Uri.file(importDir), ['.js']));
+      const commonFiles = filterExecutableScripts(await listFilesRecursively(vscode.Uri.file(commonDir), ['.js']));
       // includeFiles already set above
 
       const allFiles = [...importFiles, ...commonFiles, ...includeFiles];
