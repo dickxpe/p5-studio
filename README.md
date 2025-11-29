@@ -216,11 +216,11 @@ To prevent infinite loops or runaway code from freezing your editor, P5 Studio a
 🚫 No warranty / no liability
 
 ## Attributions
-Shout out to: https://github.com/filipesabella/
-with his extension vscode-live-p5
+Shout out to: https://github.com/filipesabella/ with his extension vscode-live-p5.
 His project was the start for mine, initially i made a few UI Changes,
 but i had a different vision for this tool and went back to the drawing board.
 Not much of the original code is left in my project, but I still wanted to give credit to Filipe for his great work and inspiration!
+Also a shout out to https://github.com/p5-types for generating the P5 type definitions for p5.js 1.x & 2.x!
 
 ## AI
 This extension was developed with the use of github copilot & chatgpt.
