@@ -70,8 +70,6 @@ Like this extension and want to support me? Buy me a coffee:
    - Use the status bar button or command palette to quickly open the p5.js reference.
    - Select text in your code, right click and choose "Search in P5 reference" for a shortcut.
 
-
-
 ## Configuration
 All settings live under the `P5 Studio` namespace. Configure them from VS Code settings (search for "P5 Studio") or edit `settings.json` directly.
 
@@ -87,6 +85,8 @@ All settings live under the `P5 Studio` namespace. Configure them from VS Code s
 | `P5Studio.showSetupNotification` | boolean | `true` | Display the setup prompt when no `.p5` marker is detected in the workspace. |
 | `P5Studio.showFPS` | boolean | `false` | Overlay the current FPS (derived from `deltaTime`) in the top-left of the P5 webview. |
 | `P5Studio.editorFontSize` | number (≥ `6`) | `14` | Extension-managed editor font size mirrored to `editor.fontSize` on startup. |
+| `P5Studio.loopGuard.MaxIterations` | number  (≥ `100`)  | `10000` | Maximum number of iterations allowed per loop before halting execution. |
+| `P5Studio.loopGuard.MaxTimeMs` | number  (≥ `50`)  | `500` | Maximum time in milliseconds allowed per loop before halting execution. |
 | `P5Studio.osc.oscRemoteAddress` | string | `"127.0.0.1"` | OSC destination host for outbound messages. |
 | `P5Studio.osc.oscRemotePort` | number | `57120` | OSC destination port for outbound messages. |
 | `P5Studio.osc.oscLocalAddress` | string | `"127.0.0.1"` | OSC bind address for inbound messages (`0.0.0.0` allows LAN clients). |
@@ -100,6 +100,7 @@ All settings live under the `P5 Studio` namespace. Configure them from VS Code s
 | `P5Studio.lint.StrictNoVarWarning` | enum | `"block"` | Severity for `var` usage instead of `let`/`const`. |
 | `P5Studio.lint.StrictLooseEqualityWarning` | enum | `"ignore"` | Severity for using `==` / `!=` instead of strict equality. |
 | `P5Studio.lint.logWarningsToOutput` | boolean | `true` | Mirror lint warnings to the Output panel in addition to the webview overlay. |
+
 
 ## OSC (Open Sound Control)
 P5 Studio supports sending and receiving OSC (Open Sound Control) messages between your p5.js sketch and other OSC-compatible software or devices.
@@ -175,6 +176,29 @@ This allows you to connect your p5.js sketches to other creative coding tools, D
    ```js
    let a = inputPrompt();
    ```
+
+## Custom CSS Support
+You can style html elements in your sketches using your own CSS files. P5 Studio will automatically load and apply any `.css` files found in these locations:
+
+- The `common/` folder at the root of your workspace (recursively)
+- Any `include/` folder next to your sketch, its parent folder, or at the workspace root
+
+All discovered CSS files are injected into the webview for every sketch.
+
+**How to use:**
+- Place your shared styles in `common/` (e.g., `common/global.css`)
+- Place sketch-specific styles in an `include/` folder next to your sketch file
+- All matching `.css` files will be loaded automatically when you open or reload a sketch
+- **Note:** If you move or rename CSS files, reload the P5 panel to apply changes.
+
+## Loop Guard Protection
+To prevent infinite loops or runaway code from freezing your editor, P5 Studio automatically injects a loop guard into your sketches. This mechanism detects when a loop (such as `while`, `for`, or `do...while`) exceeds a safe number of iterations or runs for too long, and will stop execution with a clear error overlay in the webview.
+
+**How it works:**
+- Every loop in your code is instrumented with a guard counter and timer.
+- If a loop exceeds the configured maximum number of iterations or total execution time, the sketch is halted and an error message is shown.
+- This helps protect your editor and system from accidental infinite loops during live coding.
+- You can adjust guard settings in your VS Code settings under the P5Studio.loopGuard section.
 
 ## Tips
 - For autocompletion of functions in import/common files, use a `jsconfig.json` and/or JSDoc references.
