@@ -45,10 +45,13 @@ export async function createHtml(
     });
   }
   const sanitizedCode = sanitizeUserCode(userCode);
+  const loopGuardEnabled = cfg.getLoopGuardEnabled();
   // Detect globals and rewrite code
   const { globals, conflicts } = extractGlobalVariablesWithConflicts(sanitizedCode);
   const rewrittenCode = rewriteUserCodeWithWindowGlobals(sanitizedCode, globals);
-  const loopGuardResult = injectLoopGuards(rewrittenCode, { tagPrefix: sketchFileName || 'sketch' });
+  const loopGuardResult = loopGuardEnabled
+    ? injectLoopGuards(rewrittenCode, { tagPrefix: sketchFileName || 'sketch' })
+    : { code: rewrittenCode, modified: false };
   const escapedCode = escapeBackticks(loopGuardResult.code);
   const loopGuardHelperScript = LOOP_GUARD_HELPER_SNIPPET.trim();
 
@@ -162,6 +165,7 @@ export async function createHtml(
   // Match overlay font size to the editor font size
   const editorFontSize = vscode.workspace.getConfiguration('editor').get<number>('fontSize', 14);
   const loopGuardConfig = {
+    enabled: loopGuardEnabled,
     maxIterations: cfg.getLoopGuardMaxIterations(),
     maxTimeMs: cfg.getLoopGuardMaxTimeMs(),
   };
@@ -230,6 +234,57 @@ window.addEventListener("message", function(e) {
     }
   }
 });
+
+// --- p5Stream WebSocket API for user sketches ---
+window.p5Stream = {
+  ws: undefined,
+  wsAddress: undefined,
+  uuid: undefined,
+  webviewuuid: undefined,
+  reconnectTimeout: null,
+  reconnecting: false
+};
+
+window.connectStream = function(wsAddress, streamId, userCode) {
+  window.p5Stream.webviewuuid = streamId;
+  window.p5Stream.uuid = userCode;
+  if (window.p5Stream.ws) {
+    window.p5Stream.ws.onopen = window.p5Stream.ws.onclose = window.p5Stream.ws.onerror = window.p5Stream.ws.onmessage = null;
+    try { window.p5Stream.ws.close(); } catch (e) { }
+    window.p5Stream.ws = null;
+  }
+  window.p5Stream.wsAddress = wsAddress;
+  window.p5Stream.ws = new window.WebSocket(wsAddress);
+  window.p5Stream.ws.onopen = () => {
+    window.p5Stream.reconnecting = false;
+    console.log('[Sender] WebSocket opened');
+  };
+  window.p5Stream.ws.onclose = () => {
+    if (!window.p5Stream.reconnecting) {
+      window.p5Stream.reconnecting = true;
+      window.p5Stream.reconnectTimeout = setTimeout(() => window.connectStream(wsAddress, streamId, userCode), 3000);
+    }
+    console.log('[Sender] WebSocket closed');
+  };
+  window.p5Stream.ws.onerror = () => {
+    // Only log error, do not force close/reconnect here
+    console.log('[Sender] WebSocket error');
+  };
+  window.p5Stream.ws.onmessage = (e) => {
+    console.log('[Sender] Message from server:', e.data);
+  };
+};
+
+window.sendPixels = function() {
+  if (window.p5Stream.ws && window.p5Stream.ws.readyState === window.WebSocket.OPEN) {
+    if (typeof window.loadPixels === 'function') window.loadPixels();
+    window.p5Stream.ws.send(JSON.stringify({
+      webviewuuid: window.p5Stream.webviewuuid,
+      uuid: window.p5Stream.uuid,
+      pixels: Array.from(window.pixels)
+    }));
+  }
+};
 // --- Custom context menu for "Save As png..." and "Copy image" on canvas ---
 (function() {
   // Inject style for custom context menu hover effect

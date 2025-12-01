@@ -22,6 +22,11 @@ export const LOOP_GUARD_HELPER_SNIPPET = `
   const DEFAULT_MAX_TIME_MS = 250;
   const DEFAULT_IDLE_RESET_MS = 5;
   const guardConfig = (window && window.__p5LoopGuardConfig) || {};
+  if (guardConfig && guardConfig.enabled === false) {
+    window.__p5LoopGuard = function(){ };
+    window.__p5ResetLoopGuards = function(){ };
+    return;
+  }
   function clampPositive(value, fallback) {
     const n = Number(value);
     return Number.isFinite(n) && n > 0 ? n : fallback;

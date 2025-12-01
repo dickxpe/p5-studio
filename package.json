@@ -2,7 +2,7 @@
   "name": "p5-studio",
   "displayName": "P5 Studio",
   "description": "Live code p5js in VS Code",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "icon": "images/ICON.png",
   "author": {
     "name": "peterdickx"
@@ -400,6 +400,12 @@
             "default": false,
             "description": "Show the current FPS (rounded from 1000/deltaTime) in the top-left of the P5 web panel.",
             "order": 9
+          },
+          "P5Studio.loopGuard.enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable the automatic infinite-loop guard that injects safety checks into user sketches.",
+            "order": 9.05
           },
           "P5Studio.loopGuard.maxIterations": {
             "type": "number",

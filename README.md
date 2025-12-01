@@ -85,6 +85,7 @@ All settings live under the `P5 Studio` namespace. Configure them from VS Code s
 | `P5Studio.showSetupNotification` | boolean | `true` | Display the setup prompt when no `.p5` marker is detected in the workspace. |
 | `P5Studio.showFPS` | boolean | `false` | Overlay the current FPS (derived from `deltaTime`) in the top-left of the P5 webview. |
 | `P5Studio.editorFontSize` | number (≥ `6`) | `14` | Extension-managed editor font size mirrored to `editor.fontSize` on startup. |
+| `P5Studio.loopGuard.enabled` | boolean | `true` | Prevents infinite loops or runaway code from freezing your editor |
 | `P5Studio.loopGuard.MaxIterations` | number  (≥ `100`)  | `10000` | Maximum number of iterations allowed per loop before halting execution. |
 | `P5Studio.loopGuard.MaxTimeMs` | number  (≥ `50`)  | `500` | Maximum time in milliseconds allowed per loop before halting execution. |
 | `P5Studio.osc.oscRemoteAddress` | string | `"127.0.0.1"` | OSC destination host for outbound messages. |
@@ -199,6 +200,7 @@ To prevent infinite loops or runaway code from freezing your editor, P5 Studio a
 - If a loop exceeds the configured maximum number of iterations or total execution time, the sketch is halted and an error message is shown.
 - This helps protect your editor and system from accidental infinite loops during live coding.
 - You can adjust guard settings in your VS Code settings under the P5Studio.loopGuard section.
+- Set `P5Studio.loopGuard.enabled` to `false` if you want to disable the guard entirely (for example, when benchmarking or when working with intentionally long-running loops).
 
 ## Tips
 - For autocompletion of functions in import/common files, use a `jsconfig.json` and/or JSDoc references.

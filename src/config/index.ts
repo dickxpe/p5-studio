@@ -37,6 +37,12 @@ function getDebounceDelay(): number {
     } catch { return 250; }
 }
 
+function getLoopGuardEnabled(): boolean {
+    try {
+        return vscode.workspace.getConfiguration('P5Studio').get<boolean>('loopGuard.enabled', true) !== false;
+    } catch { return true; }
+}
+
 function getLoopGuardMaxIterations(): number {
     try {
         const value = vscode.workspace.getConfiguration('P5Studio').get<number>('loopGuard.maxIterations', 4000);
@@ -162,6 +168,7 @@ export const config = {
     getShowDebugButton,
     getShowFPS,
     getDebounceDelay,
+    getLoopGuardEnabled,
     getLoopGuardMaxIterations,
     getLoopGuardMaxTimeMs,
     getVariablePanelDebounceDelay,
