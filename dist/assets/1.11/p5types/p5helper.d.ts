@@ -77,3 +77,15 @@ declare function connectStream(wsAddress: string, streamId: string, userCode: st
  * Send the current canvas pixels over the WebSocket stream.
  */
 declare function sendPixels(): void;
+
+type LossyMimeShorthand = 'webp' | 'png' | 'jpeg' | 'jpg';
+
+/**
+ * Enable lossy pixel streaming.
+ * @param quality Optional quality between 0 and 1 (clamped to 0.05-1, default ≈0.7).
+ * @param mimeType Optional shorthand ('webp'|'png'|'jpeg'|'jpg') that maps to the actual mime sent.
+ */
+declare function enableLossySend(quality: number, mimeType?: LossyMimeShorthand): void;
+
+/** Disable lossy pixel streaming and resume raw pixel sends. */
+declare function disableLossySend(): void;

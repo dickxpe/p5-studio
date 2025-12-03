@@ -237,6 +237,8 @@ window.addEventListener("message", function(e) {
 
 // --- p5Stream WebSocket API for user sketches ---
 (function(){
+  const LOSSY_ALLOWED_MIME_TYPES = ['image/webp', 'image/png', 'image/jpeg'];
+  const DEFAULT_LOSSY_OPTIONS = { quality: 0.7, mimeType: 'image/webp' };
   function clampPositive(value, fallback){
     const n = Number(value);
     return (Number.isFinite(n) && n > 0) ? n : fallback;
@@ -258,9 +260,73 @@ window.addEventListener("message", function(e) {
     maxTileCount: 200,
     maxTileSendPerFrame: 6,
     pixelPoolMaxBucket: 24,
-    keyframeIntervalMs: 2000
+    keyframeIntervalMs: 2000,
+    lossyEnabled: false,
+    lossyOptions: Object.assign({}, DEFAULT_LOSSY_OPTIONS)
   };
   window.p5Stream = Object.assign({}, DEFAULT_STREAM_STATE, window.p5Stream || {});
+  window.p5Stream.lossyOptions = normalizeLossyOptions(window.p5Stream.lossyOptions);
+
+  function clampLossyQuality(value){
+    if (!Number.isFinite(value)) {
+      return null;
+    }
+    const clamped = Math.min(1, Math.max(0.05, value));
+    return clamped;
+  }
+
+  function sanitizeLossyMimeType(value){
+    if (typeof value !== 'string') {
+      return null;
+    }
+    let normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+    if (!normalized.includes('/')) {
+      if (normalized === 'jpg') {
+        normalized = 'jpeg';
+      }
+      normalized = 'image/' + normalized;
+    }
+    if (normalized === 'image/jpg') {
+      normalized = 'image/jpeg';
+    }
+    return LOSSY_ALLOWED_MIME_TYPES.includes(normalized) ? normalized : null;
+  }
+
+  function normalizeLossyOptions(options){
+    const merged = Object.assign({}, DEFAULT_LOSSY_OPTIONS, options || {});
+    const quality = clampLossyQuality(merged.quality);
+    merged.quality = quality === null ? DEFAULT_LOSSY_OPTIONS.quality : quality;
+    const mime = sanitizeLossyMimeType(merged.mimeType);
+    merged.mimeType = mime || DEFAULT_LOSSY_OPTIONS.mimeType;
+    return merged;
+  }
+
+  function updateLossyOptions(partial){
+    const ps = window.p5Stream;
+    const candidate = Object.assign({}, ps.lossyOptions || {}, partial || {});
+    const normalized = normalizeLossyOptions(candidate);
+    ps.lossyOptions = normalized;
+    return normalized;
+  }
+
+  function parseLossyArgs(arg1, arg2){
+    if (arg1 && typeof arg1 === 'object') {
+      return { quality: arg1.quality, mimeType: arg1.mimeType };
+    }
+    const result = {};
+    if (typeof arg1 === 'number') {
+      result.quality = arg1;
+    } else if (typeof arg1 === 'string') {
+      result.mimeType = arg1;
+    }
+    if (typeof arg2 === 'string') {
+      result.mimeType = arg2;
+    }
+    return result;
+  }
 
   class Uint8ClampedArrayPool {
     constructor(maxPerBucket){
@@ -294,6 +360,64 @@ window.addEventListener("message", function(e) {
   const pixelPool = new Uint8ClampedArrayPool(window.p5Stream.pixelPoolMaxBucket);
 
   const textEncoder = (typeof TextEncoder !== 'undefined') ? new TextEncoder() : null;
+
+  function setLossyEnabled(ps, enabled){
+    const next = !!enabled;
+    if (ps.lossyEnabled === next) {
+      return;
+    }
+    ps.lossyEnabled = next;
+    if (next && ps.lastPixels) {
+      pixelPool.release(ps.lastPixels);
+      ps.lastPixels = null;
+    }
+    if (!next) {
+      ps.lastKeyframeSentAt = 0;
+    }
+  }
+
+  function getLossyOptions(){
+    const normalized = normalizeLossyOptions(window.p5Stream.lossyOptions);
+    window.p5Stream.lossyOptions = normalized;
+    return normalized;
+  }
+
+  function resolveCanvasElement(){
+    if (window._p5Instance && window._p5Instance._renderer && window._p5Instance._renderer.elt) {
+      return window._p5Instance._renderer.elt;
+    }
+    if (window._renderer && window._renderer.elt) {
+      return window._renderer.elt;
+    }
+    if (window.canvas instanceof window.HTMLCanvasElement) {
+      return window.canvas;
+    }
+    const canvases = typeof document !== 'undefined' ? document.getElementsByTagName('canvas') : null;
+    return canvases && canvases.length ? canvases[0] : null;
+  }
+
+  function dataUrlToUint8Array(dataUrl){
+    if (typeof dataUrl !== 'string') {
+      return new Uint8Array(0);
+    }
+    const commaIndex = dataUrl.indexOf(',');
+    if (commaIndex === -1) {
+      return new Uint8Array(0);
+    }
+    const base64 = dataUrl.slice(commaIndex + 1);
+    const binaryString = (typeof window.atob === 'function')
+      ? window.atob(base64)
+      : (typeof atob === 'function' ? atob(base64) : null);
+    if (!binaryString) {
+      return new Uint8Array(0);
+    }
+    const length = binaryString.length;
+    const bytes = new Uint8Array(length);
+    for (let i = 0; i < length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
+  }
 
   function isSocketOpen(ps = window.p5Stream){
     return !!(ps && ps.ws && ps.ws.readyState === window.WebSocket.OPEN);
@@ -361,15 +485,6 @@ window.addEventListener("message", function(e) {
       return;
     }
     const deltaMs = ps.lastFrameSentAt > 0 ? Math.max(0, now - ps.lastFrameSentAt) : 0;
-    if (typeof window.loadPixels === 'function') {
-      try { window.loadPixels(); } catch { }
-    }
-    const pixelSource = (window.pixels instanceof Uint8ClampedArray)
-      ? window.pixels
-      : (Array.isArray(window.pixels) ? Uint8ClampedArray.from(window.pixels) : window.pixels);
-    if (!pixelSource || !pixelSource.length) {
-      return;
-    }
     const widthCandidates = [
       Number(window.width),
       Number(window._p5Instance?.width),
@@ -387,6 +502,25 @@ window.addEventListener("message", function(e) {
     const canvasWidth = widthCandidates.find((value) => typeof value === 'number' && value > 0) || 0;
     const canvasHeight = heightCandidates.find((value) => typeof value === 'number' && value > 0) || 0;
     if (!canvasWidth || !canvasHeight) {
+      return;
+    }
+
+    if (ps.lossyEnabled) {
+      const sent = sendLossyFrame(ps, canvasWidth, canvasHeight, deltaMs);
+      if (sent) {
+        ps.lastFrameSentAt = now;
+        ps.lastKeyframeSentAt = now;
+        return;
+      }
+    }
+
+    if (typeof window.loadPixels === 'function') {
+      try { window.loadPixels(); } catch { }
+    }
+    const pixelSource = (window.pixels instanceof Uint8ClampedArray)
+      ? window.pixels
+      : (Array.isArray(window.pixels) ? Uint8ClampedArray.from(window.pixels) : window.pixels);
+    if (!pixelSource || !pixelSource.length) {
       return;
     }
     const current = pixelPool.acquire(pixelSource.length);
@@ -424,6 +558,33 @@ window.addEventListener("message", function(e) {
     }
   }
 
+  function sendLossyFrame(ps, canvasWidth, canvasHeight, deltaMs){
+    const canvas = resolveCanvasElement();
+    if (!canvas || typeof canvas.toDataURL !== 'function') {
+      console.warn('[Sender] Unable to locate canvas for lossy streaming');
+      return false;
+    }
+    const options = getLossyOptions();
+    let dataUrl;
+    try {
+      dataUrl = canvas.toDataURL(options.mimeType, options.quality);
+    } catch (err) {
+      console.warn('[Sender] Failed to encode canvas', err);
+      return false;
+    }
+    const payload = dataUrlToUint8Array(dataUrl);
+    if (!payload.byteLength) {
+      return false;
+    }
+    sendPayloadToTarget(ps, payload, null, true, deltaMs, canvasWidth, canvasHeight, {
+      mimeType: options.mimeType,
+      encoding: 'image',
+      isLossy: true,
+      quality: options.quality
+    });
+    return true;
+  }
+
   function transmitPayload(ps, diff, deltaMs){
     if (!ps || !diff) return;
     if (!ps.targetUuid || !ps.targetWebviewuuid) return;
@@ -445,7 +606,7 @@ window.addEventListener("message", function(e) {
     });
   }
 
-  function sendPayloadToTarget(ps, pixelsArray, region, isFullFrame, deltaMs, canvasWidth, canvasHeight){
+  function sendPayloadToTarget(ps, pixelsArray, region, isFullFrame, deltaMs, canvasWidth, canvasHeight, extraMetadata){
     if (!isSocketOpen(ps) || !pixelsArray) {
       return;
     }
@@ -462,6 +623,9 @@ window.addEventListener("message", function(e) {
     };
     if (region) {
       header.region = region;
+    }
+    if (extraMetadata && typeof extraMetadata === 'object') {
+      Object.assign(header, extraMetadata);
     }
     const frame = buildBinaryFrame(header, typedPixels);
     try {
@@ -653,6 +817,47 @@ window.addEventListener("message", function(e) {
     }
     return arr;
   }
+
+  const enableLossySendInvoker = function(arg1, arg2) {
+    const ps = window.p5Stream;
+    const parsed = parseLossyArgs(arg1, arg2) || {};
+    if (parsed.quality !== undefined || parsed.mimeType) {
+      updateLossyOptions(parsed);
+    }
+    setLossyEnabled(ps, true);
+  };
+
+  enableLossySendInvoker.disable = function() {
+    setLossyEnabled(window.p5Stream, false);
+  };
+
+  Object.defineProperty(window, 'enableLossySend', {
+    configurable: false,
+    enumerable: true,
+    get() {
+      return enableLossySendInvoker;
+    },
+    set(value) {
+      setLossyEnabled(window.p5Stream, Boolean(value));
+    }
+  });
+
+  Object.defineProperty(window, 'lossySendOptions', {
+    configurable: false,
+    enumerable: true,
+    get() {
+      return Object.assign({}, getLossyOptions());
+    },
+    set(value) {
+      if (value && typeof value === 'object') {
+        updateLossyOptions(value);
+      }
+    }
+  });
+
+  window.disableLossySend = function(){
+    setLossyEnabled(window.p5Stream, false);
+  };
 
   window.connectStream = function(wsAddress, streamId, userCode, targetFPS) {
     pixelDensity(1); // Ensure pixelDensity is 1 for consistent pixel data

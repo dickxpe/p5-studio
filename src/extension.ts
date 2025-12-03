@@ -1717,9 +1717,13 @@ export function activate(context: vscode.ExtensionContext) {
             const globalDts = path.join(p5typesRoot, 'global.d.ts');
             const helperDts = path.join(p5typesRoot, 'p5helper.d.ts');
             const include: string[] = [
-              '*.js', '**/*.js', '*.ts', '**/*.ts',
-              '*.d.ts', '**/*.d.ts',
-              'common/*.js', 'import/*.js', 'import/*.d.ts'
+              "sketches/**/*.js",
+              "include/**/*.js",
+              "import/**/*.js",
+              "common/**/*.js",
+              "include/**/*d.ts",
+              "import/**/*.d.ts",
+              "common/**/*.d.ts",
             ];
             const hasGlobal = await pathExists(globalDts);
             const hasHelper = await pathExists(helperDts);
