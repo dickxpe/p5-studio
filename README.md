@@ -12,7 +12,7 @@ Like this extension and want to support me? Buy me a coffee:
 <a href="https://www.buymeacoffee.com/zebugames"><img src="https://cdn.buymeacoffee.com/buttons/v2/arial-yellow.png" height="40px"></a>
 
 ## Introduction
-**P5 Studio** is a Visual Studio Code extension that brings live coding and rapid prototyping to p5.js sketches. It provides an interactive webview panel for instant feedback, variable control, and error reporting, making it ideal for creative coding, teaching, and experimentation with p5.js in JavaScript or TypeScript.
+**P5 Studio** is a Visual Studio Code extension that brings live coding and rapid prototyping to p5.js sketches. It provides an interactive webview panel for instant feedback, variable control, and error reporting, making it ideal for creative coding, teaching, and experimentation with p5.js in JavaScript.
 
 ![P5 Studio Screenshot](./readme/Screenshot.png)
 
