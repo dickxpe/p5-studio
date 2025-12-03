@@ -202,6 +202,14 @@ To prevent infinite loops or runaway code from freezing your editor, P5 Studio a
 - You can adjust guard settings in your VS Code settings under the P5Studio.loopGuard section.
 - Set `P5Studio.loopGuard.enabled` to `false` if you want to disable the guard entirely (for example, when benchmarking or when working with intentionally long-running loops).
 
+## Pixel Streaming Helpers
+Stream the canvas to a website and/or remote display with the built-in `connectStream()` and `sendPixels()` helpers:
+
+- `connectStream(wsAddress, webviewuuid, uuid, targetFPS?)` opens a WebSocket connection to your relay server. The optional `targetFPS` defaults to **30 FPS** if you omit it.
+- `sendPixels()` captures the current canvas, diffs it against the previous frame, and streams only the changed tiles (falling back to a full frame when needed).
+- Call `connectStream()` once during `setup()`, then invoke `sendPixels()` whenever you want to push an update (e.g., inside `draw()`).
+- The helpers automatically handle reconnect logic, throttling, and Uint8ClampedArray pooling, so you can focus on sketch logic.
+
 ## Tips
 - For autocompletion of functions in import/common files, use a `jsconfig.json` and/or JSDoc references.
 - Prototype extensions (e.g., `p5.prototype.myFunc`) may require a `.d.ts` or JSDoc shim for IntelliSense.

@@ -1,3 +1,23 @@
+/**
+ * Connect to a WebSocket stream for pixel streaming.
+ * @param {string} wsAddress - The WebSocket address.
+ * @param {string} streamId - The webview UUID.
+ * @param {string} userCode - The canvas UUID.
+ * @param {number} [targetFPS=30] - Optional target FPS for throttling pixel sends.
+ */
+function connectStream(wsAddress, streamId, userCode, targetFPS = 30) {
+    // This is a stub for autocompletion only.
+    // The real implementation is injected in the webview.
+}
+
+/**
+ * Send the current canvas pixels over the WebSocket stream.
+ */
+function sendPixels() {
+    // This is a stub for autocompletion only.
+    // The real implementation is injected in the webview.
+}
+
 /* Start the OSC server.If address and port are given, use them; otherwise use settings.
 * @param { string } [address] Optional address to bind the OSC server.
 * @param { number } [port] Optional port to bind the OSC server.

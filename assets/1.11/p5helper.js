@@ -5,8 +5,9 @@
  * @param {string} wsAddress - The WebSocket address.
  * @param {string} streamId - The webview UUID.
  * @param {string} userCode - The canvas UUID.
+ * @param {number} [targetFPS=30] - Optional target FPS for throttling pixel sends.
  */
-function connectStream(wsAddress, streamId, userCode) {
+function connectStream(wsAddress, streamId, userCode, targetFPS = 30) {
     // This is a stub for autocompletion only.
     // The real implementation is injected in the webview.
 }

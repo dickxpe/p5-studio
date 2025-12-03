@@ -236,55 +236,445 @@ window.addEventListener("message", function(e) {
 });
 
 // --- p5Stream WebSocket API for user sketches ---
-window.p5Stream = {
-  ws: undefined,
-  wsAddress: undefined,
-  uuid: undefined,
-  webviewuuid: undefined,
-  reconnectTimeout: null,
-  reconnecting: false
-};
-
-window.connectStream = function(wsAddress, streamId, userCode) {
-  window.p5Stream.webviewuuid = streamId;
-  window.p5Stream.uuid = userCode;
-  if (window.p5Stream.ws) {
-    window.p5Stream.ws.onopen = window.p5Stream.ws.onclose = window.p5Stream.ws.onerror = window.p5Stream.ws.onmessage = null;
-    try { window.p5Stream.ws.close(); } catch (e) { }
-    window.p5Stream.ws = null;
+(function(){
+  function clampPositive(value, fallback){
+    const n = Number(value);
+    return (Number.isFinite(n) && n > 0) ? n : fallback;
   }
-  window.p5Stream.wsAddress = wsAddress;
-  window.p5Stream.ws = new window.WebSocket(wsAddress);
-  window.p5Stream.ws.onopen = () => {
-    window.p5Stream.reconnecting = false;
-    console.log('[Sender] WebSocket opened');
+  const DEFAULT_STREAM_STATE = {
+    ws: null,
+    wsAddress: undefined,
+    targetUuid: undefined,
+    targetWebviewuuid: undefined,
+    senderId: 'p5studio-' + Math.random().toString(36).slice(-8),
+    targetFPS: 30,
+    lastFrameSentAt: 0,
+    lastKeyframeSentAt: 0,
+    lastPixels: null,
+    reconnectTimer: null,
+    reconnectDelayMs: 1000,
+    tileSize: 8,
+    maxTileRatio: 0.6,
+    maxTileCount: 200,
+    maxTileSendPerFrame: 6,
+    pixelPoolMaxBucket: 24,
+    keyframeIntervalMs: 2000
   };
-  window.p5Stream.ws.onclose = () => {
-    if (!window.p5Stream.reconnecting) {
-      window.p5Stream.reconnecting = true;
-      window.p5Stream.reconnectTimeout = setTimeout(() => window.connectStream(wsAddress, streamId, userCode), 3000);
+  window.p5Stream = Object.assign({}, DEFAULT_STREAM_STATE, window.p5Stream || {});
+
+  class Uint8ClampedArrayPool {
+    constructor(maxPerBucket){
+      this.maxPerBucket = clampPositive(maxPerBucket, DEFAULT_STREAM_STATE.pixelPoolMaxBucket);
+      this.buckets = new Map();
     }
-    console.log('[Sender] WebSocket closed');
-  };
-  window.p5Stream.ws.onerror = () => {
-    // Only log error, do not force close/reconnect here
-    console.log('[Sender] WebSocket error');
-  };
-  window.p5Stream.ws.onmessage = (e) => {
-    console.log('[Sender] Message from server:', e.data);
-  };
-};
-
-window.sendPixels = function() {
-  if (window.p5Stream.ws && window.p5Stream.ws.readyState === window.WebSocket.OPEN) {
-    if (typeof window.loadPixels === 'function') window.loadPixels();
-    window.p5Stream.ws.send(JSON.stringify({
-      webviewuuid: window.p5Stream.webviewuuid,
-      uuid: window.p5Stream.uuid,
-      pixels: Array.from(window.pixels)
-    }));
+    acquire(length){
+      if (!Number.isFinite(length) || length <= 0) {
+        return new Uint8ClampedArray(0);
+      }
+      const bucket = this.buckets.get(length);
+      if (bucket && bucket.length) {
+        return bucket.pop();
+      }
+      return new Uint8ClampedArray(length);
+    }
+    release(buffer){
+      if (!(buffer instanceof Uint8ClampedArray) || !buffer.length) {
+        return;
+      }
+      const length = buffer.length;
+      const bucket = this.buckets.get(length) || [];
+      if (bucket.length >= this.maxPerBucket) {
+        return;
+      }
+      bucket.push(buffer);
+      this.buckets.set(length, bucket);
+    }
   }
-};
+
+  const pixelPool = new Uint8ClampedArrayPool(window.p5Stream.pixelPoolMaxBucket);
+
+  const textEncoder = (typeof TextEncoder !== 'undefined') ? new TextEncoder() : null;
+
+  function isSocketOpen(ps = window.p5Stream){
+    return !!(ps && ps.ws && ps.ws.readyState === window.WebSocket.OPEN);
+  }
+
+  function cleanupSocket(ps){
+    if (ps.ws) {
+      try { ps.ws.onopen = ps.ws.onclose = ps.ws.onerror = ps.ws.onmessage = null; } catch { }
+      try { ps.ws.close(); } catch { }
+      ps.ws = null;
+    }
+  }
+
+  function scheduleReconnect(ps){
+    if (ps.reconnectTimer || !ps.wsAddress) return;
+    const delay = clampPositive(ps.reconnectDelayMs, DEFAULT_STREAM_STATE.reconnectDelayMs);
+    ps.reconnectTimer = setTimeout(() => {
+      ps.reconnectTimer = null;
+      openSocket(ps);
+    }, delay);
+  }
+
+  function openSocket(ps){
+    cleanupSocket(ps);
+    if (!ps.wsAddress) {
+      console.warn('[Sender] No WebSocket address provided');
+      return;
+    }
+    try {
+      ps.ws = new window.WebSocket(ps.wsAddress);
+    } catch (err) {
+      console.warn('[Sender] Failed to open WebSocket', err);
+      scheduleReconnect(ps);
+      return;
+    }
+    ps.ws.onopen = () => {
+      console.log('[Sender] WebSocket opened');
+      if (ps.reconnectTimer) {
+        clearTimeout(ps.reconnectTimer);
+        ps.reconnectTimer = null;
+      }
+    };
+    ps.ws.onclose = (evt) => {
+      console.log('[Sender] WebSocket closed', evt && evt.code, evt && evt.reason);
+      cleanupSocket(ps);
+      scheduleReconnect(ps);
+    };
+    ps.ws.onerror = (err) => {
+      console.warn('[Sender] WebSocket error', err);
+    };
+    ps.ws.onmessage = (event) => {
+      console.log('[Sender] Message from server:', event.data);
+    };
+  }
+
+  function sendPixels(ps = window.p5Stream){
+    if (!ps || !ps.targetUuid || !ps.targetWebviewuuid) return;
+    if (!isSocketOpen(ps)) return;
+    const now = (typeof performance !== 'undefined' && performance && typeof performance.now === 'function')
+      ? performance.now()
+      : Date.now();
+    const targetFps = clampPositive(ps.targetFPS, DEFAULT_STREAM_STATE.targetFPS);
+    const minInterval = 1000 / targetFps;
+    if (ps.lastFrameSentAt > 0 && (now - ps.lastFrameSentAt) < minInterval) {
+      return;
+    }
+    const deltaMs = ps.lastFrameSentAt > 0 ? Math.max(0, now - ps.lastFrameSentAt) : 0;
+    if (typeof window.loadPixels === 'function') {
+      try { window.loadPixels(); } catch { }
+    }
+    const pixelSource = (window.pixels instanceof Uint8ClampedArray)
+      ? window.pixels
+      : (Array.isArray(window.pixels) ? Uint8ClampedArray.from(window.pixels) : window.pixels);
+    if (!pixelSource || !pixelSource.length) {
+      return;
+    }
+    const widthCandidates = [
+      Number(window.width),
+      Number(window._p5Instance?.width),
+      Number(window._p5Instance?._renderer?.width),
+      Number(window._renderer?.width),
+      Number(window.drawingContext?.canvas?.width)
+    ];
+    const heightCandidates = [
+      Number(window.height),
+      Number(window._p5Instance?.height),
+      Number(window._p5Instance?._renderer?.height),
+      Number(window._renderer?.height),
+      Number(window.drawingContext?.canvas?.height)
+    ];
+    const canvasWidth = widthCandidates.find((value) => typeof value === 'number' && value > 0) || 0;
+    const canvasHeight = heightCandidates.find((value) => typeof value === 'number' && value > 0) || 0;
+    if (!canvasWidth || !canvasHeight) {
+      return;
+    }
+    const current = pixelPool.acquire(pixelSource.length);
+    current.set(pixelSource instanceof Uint8ClampedArray ? pixelSource : new Uint8ClampedArray(pixelSource));
+
+    if (!ps.lastPixels) {
+      transmitPayload(ps, { isFullFrame: true, pixels: current, width: canvasWidth, height: canvasHeight }, deltaMs);
+      ps.lastPixels = current;
+      ps.lastFrameSentAt = now;
+      ps.lastKeyframeSentAt = now;
+      return;
+    }
+
+    let diff = extractDirtyTiles(ps, current, ps.lastPixels, canvasWidth, canvasHeight);
+    if (!diff) {
+      pixelPool.release(ps.lastPixels);
+      ps.lastPixels = current;
+      return;
+    }
+
+    const keyframeInterval = clampPositive(ps.keyframeIntervalMs, DEFAULT_STREAM_STATE.keyframeIntervalMs);
+    const lastKeyframe = ps.lastKeyframeSentAt || 0;
+    const keyframeDue = keyframeInterval > 0 && (now - lastKeyframe) >= keyframeInterval;
+    if (!diff.isFullFrame && keyframeDue) {
+      diff = { isFullFrame: true, pixels: current, width: canvasWidth, height: canvasHeight };
+    }
+
+    transmitPayload(ps, diff, deltaMs);
+    releaseDiffTiles(diff);
+    pixelPool.release(ps.lastPixels);
+    ps.lastPixels = current;
+    ps.lastFrameSentAt = now;
+    if (diff.isFullFrame) {
+      ps.lastKeyframeSentAt = now;
+    }
+  }
+
+  function transmitPayload(ps, diff, deltaMs){
+    if (!ps || !diff) return;
+    if (!ps.targetUuid || !ps.targetWebviewuuid) return;
+    if (diff.isFullFrame) {
+      sendPayloadToTarget(ps, diff.pixels, null, true, deltaMs, diff.width, diff.height);
+      return;
+    }
+    if (!Array.isArray(diff.tiles) || !diff.tiles.length) {
+      return;
+    }
+    let firstTile = true;
+    diff.tiles.forEach((tile) => {
+      if (!tile || !tile.pixels) {
+        return;
+      }
+      const tileDelta = firstTile ? deltaMs : 0;
+      firstTile = false;
+      sendPayloadToTarget(ps, tile.pixels, tile.region, false, tileDelta, diff.width, diff.height);
+    });
+  }
+
+  function sendPayloadToTarget(ps, pixelsArray, region, isFullFrame, deltaMs, canvasWidth, canvasHeight){
+    if (!isSocketOpen(ps) || !pixelsArray) {
+      return;
+    }
+    const typedPixels = toUint8ArrayView(pixelsArray);
+    const header = {
+      webviewuuid: ps.targetWebviewuuid,
+      senderId: ps.senderId,
+      uuid: ps.targetUuid,
+      isFullFrame: !!isFullFrame,
+      fullWidth: canvasWidth,
+      fullHeight: canvasHeight,
+      pixelLength: typedPixels.byteLength,
+      deltaMs: normalizeDelta(ps, deltaMs)
+    };
+    if (region) {
+      header.region = region;
+    }
+    const frame = buildBinaryFrame(header, typedPixels);
+    try {
+      if (ps.ws) {
+        ps.ws.send(frame);
+      }
+    } catch (err) {
+      console.warn('[Sender] Failed to send pixels', err);
+    }
+  }
+
+  function normalizeDelta(ps, value){
+    if (!Number.isFinite(value) || value < 0) {
+      return 0;
+    }
+    return Math.min(2000, value);
+  }
+
+  function extractDirtyTiles(ps, current, previous, canvasWidth, canvasHeight){
+    if (!previous || previous.length !== current.length) {
+      return { isFullFrame: true, pixels: current, width: canvasWidth, height: canvasHeight };
+    }
+    const tileSize = clampPositive(ps.tileSize, DEFAULT_STREAM_STATE.tileSize);
+    const maxRatio = (typeof ps.maxTileRatio === 'number')
+      ? Math.min(Math.max(ps.maxTileRatio, 0.05), 1)
+      : DEFAULT_STREAM_STATE.maxTileRatio;
+    const maxCount = clampPositive(ps.maxTileCount, DEFAULT_STREAM_STATE.maxTileCount);
+    const maxTileSendPerFrame = clampPositive(ps.maxTileSendPerFrame, DEFAULT_STREAM_STATE.maxTileSendPerFrame);
+    const tilesX = Math.ceil(canvasWidth / tileSize);
+    const tilesY = Math.ceil(canvasHeight / tileSize);
+    const totalPixels = canvasWidth * canvasHeight;
+    const changedTiles = [];
+    let changedPixels = 0;
+    for (let ty = 0; ty < tilesY; ty++) {
+      for (let tx = 0; tx < tilesX; tx++) {
+        const startX = tx * tileSize;
+        const startY = ty * tileSize;
+        const tileWidth = Math.min(tileSize, canvasWidth - startX);
+        const tileHeight = Math.min(tileSize, canvasHeight - startY);
+        if (tileWidth <= 0 || tileHeight <= 0) continue;
+        if (tileIsDirty(current, previous, canvasWidth, startX, startY, tileWidth, tileHeight)) {
+          const pixels = copyRegionPixels(current, canvasWidth, startX, startY, tileWidth, tileHeight);
+          changedTiles.push({ region: { x: startX, y: startY, width: tileWidth, height: tileHeight }, pixels });
+          changedPixels += tileWidth * tileHeight;
+        }
+      }
+    }
+    if (!changedTiles.length) {
+      return null;
+    }
+    const changeRatio = changedPixels / totalPixels;
+    if (changeRatio >= maxRatio || changedTiles.length > maxCount) {
+      releaseDiffTiles({ tiles: changedTiles });
+      return { isFullFrame: true, pixels: current, width: canvasWidth, height: canvasHeight };
+    }
+    if (changedTiles.length > maxTileSendPerFrame) {
+      const merged = mergeTilesIntoBoundingRegion(changedTiles, current, canvasWidth, canvasHeight);
+      if (merged) {
+        releaseDiffTiles({ tiles: changedTiles });
+        return { isFullFrame: false, tiles: [merged], width: canvasWidth, height: canvasHeight };
+      }
+    }
+    return { isFullFrame: false, tiles: changedTiles, width: canvasWidth, height: canvasHeight };
+  }
+
+  function tileIsDirty(current, previous, canvasWidth, startX, startY, regionWidth, regionHeight){
+    for (let y = 0; y < regionHeight; y++) {
+      const baseIndex = ((startY + y) * canvasWidth + startX) * 4;
+      for (let x = 0; x < regionWidth; x++) {
+        const idx = baseIndex + x * 4;
+        if (
+          current[idx] !== previous[idx] ||
+          current[idx + 1] !== previous[idx + 1] ||
+          current[idx + 2] !== previous[idx + 2] ||
+          current[idx + 3] !== previous[idx + 3]
+        ) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function copyRegionPixels(sourcePixels, canvasWidth, startX, startY, regionWidth, regionHeight){
+    const buffer = pixelPool.acquire(regionWidth * regionHeight * 4);
+    const rowStride = regionWidth * 4;
+    for (let row = 0; row < regionHeight; row++) {
+      const srcIndex = ((startY + row) * canvasWidth + startX) * 4;
+      const destIndex = row * rowStride;
+      buffer.set(sourcePixels.subarray(srcIndex, srcIndex + rowStride), destIndex);
+    }
+    return buffer;
+  }
+
+  function mergeTilesIntoBoundingRegion(tiles, sourcePixels, canvasWidth, canvasHeight){
+    if (!Array.isArray(tiles) || !tiles.length) {
+      return null;
+    }
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    tiles.forEach((tile) => {
+      if (!tile || !tile.region) {
+        return;
+      }
+      const { x = 0, y = 0, width = 0, height = 0 } = tile.region;
+      if (width <= 0 || height <= 0) {
+        return;
+      }
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x + width);
+      maxY = Math.max(maxY, y + height);
+    });
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+      return null;
+    }
+    const mergedWidth = Math.max(1, Math.min(canvasWidth, Math.floor(maxX - minX)));
+    const mergedHeight = Math.max(1, Math.min(canvasHeight, Math.floor(maxY - minY)));
+    if (!mergedWidth || !mergedHeight) {
+      return null;
+    }
+    const originX = Math.max(0, Math.floor(minX));
+    const originY = Math.max(0, Math.floor(minY));
+    const pixels = copyRegionPixels(sourcePixels, canvasWidth, originX, originY, mergedWidth, mergedHeight);
+    return {
+      region: {
+        x: originX,
+        y: originY,
+        width: mergedWidth,
+        height: mergedHeight
+      },
+      pixels
+    };
+  }
+
+  function releaseDiffTiles(diff){
+    if (!diff || diff.isFullFrame || !Array.isArray(diff.tiles)) {
+      return;
+    }
+    diff.tiles.forEach((tile) => {
+      if (tile && tile.pixels) {
+        pixelPool.release(tile.pixels);
+      }
+    });
+  }
+
+  function toUint8ArrayView(source){
+    if (source instanceof Uint8Array) {
+      return new Uint8Array(source.buffer, source.byteOffset, source.byteLength);
+    }
+    if (source instanceof Uint8ClampedArray) {
+      return new Uint8Array(source.buffer, source.byteOffset, source.byteLength);
+    }
+    if (Array.isArray(source)) {
+      return Uint8Array.from(source);
+    }
+    if (source && typeof source.buffer === 'object') {
+      try {
+        return new Uint8Array(source.buffer, source.byteOffset || 0, source.byteLength || source.length || 0);
+      } catch (err) {
+        return new Uint8Array(0);
+      }
+    }
+    return new Uint8Array(0);
+  }
+
+  function buildBinaryFrame(metadata, pixelArray){
+    const headerJson = JSON.stringify(metadata);
+    const headerBytes = textEncoder ? textEncoder.encode(headerJson) : fallbackEncode(headerJson);
+    const totalBytes = 4 + headerBytes.length + pixelArray.byteLength;
+    const buffer = new ArrayBuffer(totalBytes);
+    const view = new DataView(buffer);
+    view.setUint32(0, headerBytes.length, false);
+    const headerDest = new Uint8Array(buffer, 4, headerBytes.length);
+    headerDest.set(headerBytes);
+    if (pixelArray.byteLength) {
+      const pixelDest = new Uint8Array(buffer, 4 + headerBytes.length, pixelArray.byteLength);
+      pixelDest.set(pixelArray);
+    }
+    return buffer;
+  }
+
+  function fallbackEncode(str){
+    const arr = new Uint8Array(str.length);
+    for (let i = 0; i < str.length; i++) {
+      arr[i] = str.charCodeAt(i) & 0xff;
+    }
+    return arr;
+  }
+
+  window.connectStream = function(wsAddress, streamId, userCode, targetFPS) {
+    pixelDensity(1); // Ensure pixelDensity is 1 for consistent pixel data
+    const ps = window.p5Stream;
+    ps.wsAddress = wsAddress;
+    ps.targetWebviewuuid = streamId;
+    ps.targetUuid = userCode;
+    ps.lastFrameSentAt = 0;
+    ps.lastKeyframeSentAt = 0;
+    const desiredFPS = (typeof targetFPS === 'number') ? targetFPS : DEFAULT_STREAM_STATE.targetFPS;
+    ps.targetFPS = clampPositive(desiredFPS, DEFAULT_STREAM_STATE.targetFPS);
+    if (ps.lastPixels) {
+      pixelPool.release(ps.lastPixels);
+      ps.lastPixels = null;
+    }
+    openSocket(ps);
+  };
+
+  window.sendPixels = function() {
+    sendPixels(window.p5Stream);
+  };
+})();
 // --- Custom context menu for "Save As png..." and "Copy image" on canvas ---
 (function() {
   // Inject style for custom context menu hover effect

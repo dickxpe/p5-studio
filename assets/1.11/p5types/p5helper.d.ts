@@ -69,8 +69,9 @@ declare function inputPrompt(): any;
  * @param wsAddress The WebSocket address.
  * @param streamId The webview UUID.
  * @param userCode The canvas UUID.
+ * @param targetFPS Optional target FPS for throttling sends (defaults to 30).
  */
-declare function connectStream(wsAddress: string, streamId: string, userCode: string): void;
+declare function connectStream(wsAddress: string, streamId: string, userCode: string, targetFPS?: number): void;
 
 /**
  * Send the current canvas pixels over the WebSocket stream.

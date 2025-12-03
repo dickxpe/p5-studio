@@ -63,3 +63,17 @@ declare function oscArgsToArray(args: any[] | any): any[];
  */
 declare function inputPrompt(): any;
 
+/**
+ * Connect to a WebSocket stream for pixel streaming.
+ * @param wsAddress The WebSocket address.
+ * @param streamId The webview UUID.
+ * @param userCode The canvas UUID.
+ * @param targetFPS Optional target FPS for throttling sends (defaults to 30).
+ */
+declare function connectStream(wsAddress: string, streamId: string, userCode: string, targetFPS?: number): void;
+
+/**
+ * Send the current canvas pixels over the WebSocket stream.
+ */
+declare function sendPixels(): void;
+
