@@ -45,6 +45,7 @@ export async function handleReloadClicked(
     setSteppingActive?: (docUri: string, value: boolean) => void;
     setHasDraw?: (docUri: string, value: boolean) => void;
     setDrawLoopPaused?: (docUri: string, paused: boolean) => void;
+    getDrawLoopPaused?: (docUri: string) => boolean;
   }
 ) {
   const { panel, editor } = params;
@@ -81,9 +82,13 @@ export async function handleReloadClicked(
   const initialHasDraw = (() => {
     try { return detectDrawFunction(rawCode); } catch { return false; }
   })();
+  const prevLoopPaused = (() => {
+    try { return deps.getDrawLoopPaused?.(docUri) ?? false; } catch { return false; }
+  })();
+  const targetLoopPaused = initialHasDraw ? prevLoopPaused : false;
   try {
     deps.setHasDraw?.(docUri, initialHasDraw);
-    deps.setDrawLoopPaused?.(docUri, false);
+    deps.setDrawLoopPaused?.(docUri, targetLoopPaused);
   } catch { }
 
   function postGlobalsSnapshot() {
@@ -178,7 +183,7 @@ export async function handleReloadClicked(
         }, 600);
       } else {
         const guarded = applyLoopGuards(rewrittenCode);
-        panel.webview.postMessage({ type: 'reload', code: guarded, preserveGlobals: false });
+        panel.webview.postMessage({ type: 'reload', code: guarded, preserveGlobals: false, loopPaused: targetLoopPaused });
         setTimeout(() => {
           try { postGlobalsSnapshot(); } catch { }
         }, 200);
@@ -220,7 +225,7 @@ export async function handleReloadClicked(
   } else {
     // For sketches with draw(), always reset globals to initial values on reload
     const guarded = applyLoopGuards(rewrittenCode);
-    panel.webview.postMessage({ type: 'reload', code: guarded, preserveGlobals: false });
+    panel.webview.postMessage({ type: 'reload', code: guarded, preserveGlobals: false, loopPaused: targetLoopPaused });
     setTimeout(() => {
       try { postGlobalsSnapshot(); } catch { }
     }, 200);

@@ -1247,6 +1247,18 @@ document.addEventListener('contextmenu', function(e) {
 // --- Provide MEDIA_FOLDER global for user sketches ---
 const MEDIA_FOLDER = ${JSON.stringify(mediaWebviewUriPrefix)};
 const vscode = acquireVsCodeApi();
+if (!window._p5CaptureRecordResumeHookInstalled) {
+  try { window._p5CaptureRecordResumeHookInstalled = true; } catch {}
+  document.addEventListener('click', function handleCaptureRecordClick(ev) {
+    try {
+      const target = (ev && ev.target && typeof ev.target === 'object' && ev.target) ? ev.target : null;
+      const recordButton = target && typeof target.closest === 'function' ? target.closest('.p5c-btn') : null;
+      if (!recordButton) return;
+      if (!window._p5LoopPaused) return;
+      vscode.postMessage({ type: 'context-menu-toggle-pause', pause: false });
+    } catch {}
+  }, true);
+}
 window._p5Instance = null;
 window._p5UserDefinedCanvas = false;
 window._p5UserAutoFill = false;
@@ -1525,7 +1537,11 @@ function runUserSketch(code){
   window._p5ErrorLogged = false;
   window._p5SetupDone = false;
   window._p5PostedAfterSetup = false;
-  window._p5LoopPaused = false;
+  const pendingLoopState = (typeof window._p5PendingLoopPaused === 'boolean')
+    ? window._p5PendingLoopPaused
+    : (typeof window._p5LoopPaused === 'boolean' ? window._p5LoopPaused : false);
+  window._p5PendingLoopPaused = undefined;
+  window._p5LoopPaused = !!pendingLoopState;
   safeRemoveP5Instance();
   document.querySelectorAll("canvas").forEach(c=>c.remove());
 
@@ -1638,7 +1654,10 @@ window.addEventListener("resize",()=>{
   }
 });
 
-window._p5LoopPaused = false;
+if (typeof window._p5LoopPaused !== 'boolean') {
+  window._p5LoopPaused = false;
+}
+window._p5PendingLoopPaused = undefined;
 function applyDrawLoopState(){
   try {
     if (!window._p5Instance) return;
@@ -1684,8 +1703,12 @@ window.addEventListener("message", e => {
       break;
     case "reload":
       // Always reset capture UI/timer on reload so the panel timer shows fresh
-  try { if (typeof window._resetCaptureUIAndTimer === 'function') window._resetCaptureUIAndTimer(); } catch {}
-  if (data.preserveGlobals) {
+      try { if (typeof window._resetCaptureUIAndTimer === 'function') window._resetCaptureUIAndTimer(); } catch {}
+      const nextLoopPaused = (typeof data.loopPaused === 'boolean') ? !!data.loopPaused : false;
+      window._p5PendingLoopPaused = nextLoopPaused;
+      window._p5LoopPaused = nextLoopPaused;
+      try { applyDrawLoopState(); } catch {}
+      if (data.preserveGlobals) {
         // Reset stepping control flags before reloading
         try {
           window.__liveP5Gate = null;

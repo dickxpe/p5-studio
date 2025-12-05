@@ -107,25 +107,71 @@ export function activate(context: vscode.ExtensionContext) {
   const oscCfg = cfg.getOscConfig() ?? { localAddress: '127.0.0.1', localPort: 57121, remoteAddress: '127.0.0.1', remotePort: 57122 };
   oscStatusBar.text = '▶️ Start OSC';
   oscStatusBar.tooltip = `Start OSC server \nListen on: ${oscCfg.localAddress}:${oscCfg.localPort} \nSend to: ${oscCfg.remoteAddress}:${oscCfg.remotePort}`;
-  oscStatusBar.color = '#307dc1';
+  function setOscStatusBarColor() {
+    const theme = vscode.window.activeColorTheme;
+    // VS Code API does not expose theme name directly; fallback to document.body.className if available
+    let themeName = '';
+    try {
+      // @ts-ignore
+      themeName = (typeof document !== 'undefined' && document.body && document.body.className) ? document.body.className.toLowerCase() : '';
+    } catch { }
+    const statusBarBg = vscode.workspace.getConfiguration('workbench').get('colorCustomizations')?.['statusBar.background'];
+    if (theme.kind === vscode.ColorThemeKind.Dark) {
+      // Force white for all dark themes with default background
+      if (statusBarBg === '#1e1e1e' || !statusBarBg) {
+        oscStatusBar.color = '#ffffff';
+      } else {
+        oscStatusBar.color = '#ffffff'; // white for colored status bar
+      }
+    } else if (theme.kind === vscode.ColorThemeKind.Light) {
+      oscStatusBar.color = '#000000'; // black for light
+    } else {
+      oscStatusBar.color = '#ffffff'; // white for high-contrast or colored status bar
+    }
+  }
+  setOscStatusBarColor();
+  vscode.window.onDidChangeActiveColorTheme(() => {
+    setOscStatusBarColor();
+    updateOscStatusBar();
+  });
   context.subscriptions.push(oscStatusBar);
   oscStatusBar.show();
 
   let oscRunning = false;
   function updateOscStatusBar() {
+    // Theme-aware color logic for both running and stopped states
+    // VS Code API does not expose theme name directly; fallback to document.body.className if available
+    let themeName = '';
+    try {
+      // @ts-ignore
+      themeName = (typeof document !== 'undefined' && document.body && document.body.className) ? document.body.className.toLowerCase() : '';
+    } catch { }
+    const statusBarBg = vscode.workspace.getConfiguration('workbench').get('colorCustomizations')?.['statusBar.background'];
+    let color = '#307dc1'; // default blue for dark
+    const theme = vscode.window.activeColorTheme;
+    if (theme.kind === vscode.ColorThemeKind.Dark) {
+      // Force white for all dark themes with default background
+      if (statusBarBg === '#1e1e1e' || !statusBarBg) {
+        color = '#ffffff';
+      } else {
+        color = '#ffffff'; // white for colored status bar
+      }
+    } else if (theme.kind === vscode.ColorThemeKind.Light) {
+      color = '#000000'; // black for light
+    } else {
+      color = '#ffffff'; // white for high-contrast or colored status bar
+    }
+
     if (oscRunning && oscService && typeof oscService.getConfig === 'function') {
       const runningCfg = oscService.getConfig();
-      // Prefer to show the actual address/port the server is bound to, including any custom overrides
-      // These fields always reflect the actual running values, including custom overrides
       oscStatusBar.text = '🛑 Stop OSC';
       oscStatusBar.tooltip = `Server is running\nListening on: ${runningCfg.localAddress}:${runningCfg.localPort}\nSending to: ${runningCfg.remoteAddress}:${runningCfg.remotePort}`;
-      oscStatusBar.color = '#00bfae';
+      oscStatusBar.color = color;
     } else {
-      // Show what will be used from settings
       const oscCfg = cfg.getOscConfig() ?? { localAddress: '127.0.0.1', localPort: 57121, remoteAddress: '127.0.0.1', remotePort: 57122 };
       oscStatusBar.text = '▶️ Start OSC';
       oscStatusBar.tooltip = `Start OSC server\nListen on: ${oscCfg.localAddress}:${oscCfg.localPort}\nSend to: ${oscCfg.remoteAddress}:${oscCfg.remotePort}`;
-      oscStatusBar.color = '#307dc1';
+      oscStatusBar.color = color;
     }
   }
 
@@ -454,13 +500,14 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   // Status bar button for P5 Reference
-  const p5RefStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+  const p5RefStatusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 98);
   p5RefStatusBar.command = 'extension.openP5Ref';
   p5RefStatusBar.text = '$(book) P5.js Reference'; // Status bar text
   p5RefStatusBar.tooltip = '$(book) Open P5.js Reference'; // Tooltip text
   p5RefStatusBar.color = '#ff0000';
   p5RefStatusBar.tooltip = '$(book) Open P5.js Reference';
   context.subscriptions.push(p5RefStatusBar);
+  p5RefStatusBar.show();
 
   // Track all open panels to robustly close them on document close (even if untracked)
   const panelManager: LivePanelManagerApi = registerLivePanelManager(context, {
@@ -1168,6 +1215,9 @@ export function activate(context: vscode.ExtensionContext) {
               setSteppingActive: (docUri: string, active: boolean) => { try { contextService.setSteppingActive(docUri, active); } catch { } },
               setHasDraw: (docUri: string, value: boolean) => { try { contextService.setHasDraw(docUri, value); } catch { } },
               setDrawLoopPaused: (docUri: string, paused: boolean) => { try { contextService.setDrawLoopPaused(docUri, paused); } catch { } },
+              getDrawLoopPaused: (docUri: string) => {
+                try { return contextService.getDrawLoopPaused(docUri); } catch { return false; }
+              },
             });
           }
           // --- STEP RUN HANDLER (merged with single-step instrumentation + auto-advance) ---

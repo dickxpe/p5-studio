@@ -35,7 +35,7 @@ export type WebviewToExtensionMessage =
 
 // Messages sent FROM the extension host TO the webview
 export type ExtensionToWebviewMessage =
-    | { type: 'reload'; code: string; preserveGlobals?: boolean }
+    | { type: 'reload'; code: string; preserveGlobals?: boolean; loopPaused?: boolean }
     | { type: 'syntaxError'; message: string }
     | { type: 'showWarning'; message: string }
     | { type: 'showTopInputs'; items: TopInputItem[] }
