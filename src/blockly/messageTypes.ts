@@ -6,6 +6,12 @@ export type BlocklyToExtensionMessage =
         code: string;
         workspace?: string;
         lineMap?: Array<{ line: number; blockId: string }>;
+    }
+    | {
+        type: 'blocklyRequestSave';
+    }
+    | {
+        type: 'blocklyReady';
     };
 
 export type ExtensionToBlocklyMessage =

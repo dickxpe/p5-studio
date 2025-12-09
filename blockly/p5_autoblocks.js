@@ -177,9 +177,9 @@
       const blockColor = CATEGORY_COLORS[category] || 15;
 
       // Build block meta depending on whether this is an event block
-  const isEvent = EVENT_BLOCK_TYPES.has(type);
-  // Any params explicitly provided via JSON for this event type
-  const jsonEventParams = isEvent ? (EVENT_BLOCK_META.get(type) || []) : [];
+      const isEvent = EVENT_BLOCK_TYPES.has(type);
+      // Any params explicitly provided via JSON for this event type
+      const jsonEventParams = isEvent ? (EVENT_BLOCK_META.get(type) || []) : [];
       // Default: call-style statement block with parameter inputs
       const blockDef = {
         type,
@@ -312,9 +312,29 @@
     });
   } catch (_) { }
   // ensure some known ones
-  ['PI', 'TWO_PI', 'HALF_PI', 'QUARTER_PI', 'TAU', 'DEGREES', 'RADIANS', 'DEG_TO_RAD', 'RAD_TO_DEG'].forEach(n => { if (!CONSTS.includes(n)) CONSTS.push(n); });
+  const ALWAYS_INCLUDE_CONSTS = [
+    'MEDIA_FOLDER', 'INCLUDE_FOLDER',
+    'DEGREES', 'RADIANS',
+    'RGB', 'HSB', 'HSL',
+    'CENTER', 'CORNER', 'CORNERS', 'RADIUS',
+    'OPEN', 'CHORD', 'PIE',
+    'CLOSE',
+    'LEFT', 'RIGHT', 'TOP', 'BOTTOM', 'BASELINE',
+    'ROUND', 'SQUARE', 'PROJECT', 'MITER', 'BEVEL',
+    'BLEND', 'ADD', 'DARKEST', 'LIGHTEST', 'DIFFERENCE', 'EXCLUSION', 'MULTIPLY', 'SCREEN', 'REPLACE', 'OVERLAY', 'HARD_LIGHT', 'SOFT_LIGHT',
+    'ARROW', 'CROSS', 'HAND', 'MOVE', 'TEXT', 'WAIT',
+    'WEBGL',
+    'PI', 'HALF_PI', 'QUARTER_PI', 'TWO_PI',
+    'BACKSPACE', 'DELETE', 'ENTER', 'RETURN', 'TAB', 'ESCAPE',
+    'UP_ARROW', 'DOWN_ARROW', 'LEFT_ARROW', 'RIGHT_ARROW',
+    'ALT', 'CONTROL', 'SHIFT',
+    'INVERT', 'THRESHOLD', 'GRAY', 'OPAQUE', 'POSTERIZE', 'BLUR', 'ERODE', 'DILATE',
+    'TAU', 'DEG_TO_RAD', 'RAD_TO_DEG'
+  ];
+  ALWAYS_INCLUDE_CONSTS.forEach(n => { if (typeof n === 'string' && !CONSTS.includes(n)) CONSTS.push(n); });
   CONSTS.sort();
-  const constOpts = CONSTS.map(n => [n, n]);
+  const filteredConsts = CONSTS.filter(n => typeof n === 'string' && !n.startsWith('BLOCKLY_'));
+  const constOpts = filteredConsts.map(n => [n, n]);
 
   const extraBlocks = [];
   if (numOpts.length) extraBlocks.push({

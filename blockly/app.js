@@ -533,31 +533,74 @@
     return { code, lineMap };
   }
 
+  function sendWorkspaceUpdateToExtension() {
+    const res = getGeneratedCode();
+    let code = res && res.code != null ? res.code : '';
+    if (ws.getAllBlocks(false).length === 0 || !code.trim()) {
+      code = '';
+    }
+    if (window.vscode && typeof window.vscode.postMessage === 'function') {
+      let workspaceObj = null;
+      try { workspaceObj = Blockly.serialization.workspaces.save(ws); } catch (e) { workspaceObj = null; }
+      const workspaceJson = workspaceObj ? JSON.stringify(workspaceObj) : null;
+      const payload = { type: 'blocklyGeneratedCode', code, workspace: workspaceJson };
+      if (res && Array.isArray(res.lineMap)) {
+        payload.lineMap = res.lineMap;
+      }
+      window.vscode.postMessage(payload);
+    } else {
+      postCodeToExtension(code);
+    }
+    return res;
+  }
+
+  const refreshBtn = document.getElementById('blocklyRefreshBtn');
+  function updateRefreshButtonVisibility() {
+    if (!refreshBtn || !ws || typeof ws.getAllBlocks !== 'function') return;
+    try {
+      const count = ws.getAllBlocks(false).length;
+      refreshBtn.style.display = count > 0 ? 'flex' : 'none';
+    } catch (e) {
+      refreshBtn.style.display = 'none';
+    }
+  }
+
   // Send code to extension on every change
   ws.addChangeListener((e) => {
     if (!e.isUiEvent && e.type !== Blockly.Events.FINISHED_LOADING && !ws.isDragging()) {
-      // Always export code, even if workspace is empty
-      const res = getGeneratedCode();
-      let code = res && res.code != null ? res.code : '';
-      // If workspace is empty or code is only whitespace, send empty string
-      if (ws.getAllBlocks(false).length === 0 || !code.trim()) {
-        code = '';
-      }
-      if (res && Array.isArray(res.lineMap)) {
-        if (window.vscode && typeof window.vscode.postMessage === 'function') {
-          let workspaceObj = null;
-          try { workspaceObj = Blockly.serialization.workspaces.save(ws); } catch (e) { workspaceObj = null; }
-          const workspaceJson = workspaceObj ? JSON.stringify(workspaceObj) : null;
-          window.vscode.postMessage({ type: 'blocklyGeneratedCode', code, workspace: workspaceJson, lineMap: res.lineMap });
-        } else {
-          postCodeToExtension(code);
-        }
-      } else {
-        postCodeToExtension(code);
-      }
+      sendWorkspaceUpdateToExtension();
+      updateRefreshButtonVisibility();
     }
     if (!e.isUiEvent) save(ws);
   });
+
+  try {
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', () => {
+        try {
+          refreshBtn.classList.add('spinning');
+          setTimeout(() => refreshBtn.classList.remove('spinning'), 650);
+        } catch (e) { /* ignore */ }
+        sendWorkspaceUpdateToExtension();
+        try {
+          if (window.vscode && typeof window.vscode.postMessage === 'function') {
+            window.vscode.postMessage({ type: 'blocklyRequestSave' });
+          }
+        } catch (e) { /* ignore */ }
+      });
+      updateRefreshButtonVisibility();
+    }
+  } catch (e) { /* ignore */ }
+
+  function notifyExtensionReady() {
+    try {
+      if (window.vscode && typeof window.vscode.postMessage === 'function') {
+        window.vscode.postMessage({ type: 'blocklyReady' });
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  notifyExtensionReady();
 
   // --- Coloring helpers (Values fallback + JSON overrides) ---
   const VALUES_COLOR = '#5ec453';
@@ -1029,6 +1072,7 @@
       } catch (e) {
         console.warn('[B5] failed to load workspace from extension message', e);
       }
+      updateRefreshButtonVisibility();
     }
   });
 

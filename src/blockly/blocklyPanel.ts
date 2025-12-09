@@ -32,6 +32,8 @@ export function registerBlockly(
     const ignoreDocumentChangeForBlockly = new Set<string>();
     const workspaceDebounceTimers = new Map<string, Timeout>();
     const blocklyLineMapForDocument = new Map<string, Array<{ line: number; blockId: string }>>();
+    const readyBlocklyPanels = new WeakSet<vscode.WebviewPanel>();
+    const pendingWorkspaceForPanel = new WeakMap<vscode.WebviewPanel, string>();
 
     function normalizeFsPath(p: string | undefined | null): string {
         try {
@@ -41,6 +43,15 @@ export function registerBlockly(
             return n;
         } catch {
             return String(p || '');
+        }
+    }
+
+    function queueWorkspaceLoad(panel: vscode.WebviewPanel, workspaceJson: string) {
+        if (!workspaceJson) return;
+        if (readyBlocklyPanels.has(panel)) {
+            try { sendBlockly(panel, { type: 'loadWorkspace', workspace: workspaceJson }); } catch { }
+        } else {
+            pendingWorkspaceForPanel.set(panel, workspaceJson);
         }
     }
 
@@ -363,7 +374,10 @@ export function registerBlockly(
                     <pre id="generatedCode"><code></code></pre>
                     <div id="output"></div>
                 </div>
-                <div id="blocklyDiv"></div>
+                <div id="blocklyWrapper">
+                    <div id="blocklyDiv"></div>
+                    <button id="blocklyRefreshBtn" type="button" aria-label="Refresh Blockly code" title="Refresh Blockly code"></button>
+                </div>
             </div>
 
         <script nonce="${nonce}" src="${toolboxJs}"></script>
@@ -524,13 +538,37 @@ export function registerBlockly(
                         }
                     }
                     if (workspaceContent) {
-                        setTimeout(() => { try { sendBlockly(panel, { type: 'loadWorkspace', workspace: workspaceContent }); } catch { } }, 300);
+                        queueWorkspaceLoad(panel, workspaceContent);
                     }
                 } catch { }
             })();
 
             registerBlocklyRouter(panel, async (msg: BlocklyToExtensionMessage) => {
-                if (msg && msg.type === 'blocklyGeneratedCode' && typeof msg.code === 'string') {
+                if (!msg) return;
+                if (msg.type === 'blocklyRequestSave') {
+                    try {
+                        if (!doc.isClosed) {
+                            await doc.save();
+                        } else if (originatingEditor && !originatingEditor.document.isClosed) {
+                            await originatingEditor.document.save();
+                        } else {
+                            await vscode.commands.executeCommand('workbench.action.files.save');
+                        }
+                    } catch {
+                        try { await vscode.commands.executeCommand('workbench.action.files.save'); } catch { }
+                    }
+                    return;
+                }
+                if (msg.type === 'blocklyReady') {
+                    readyBlocklyPanels.add(panel);
+                    const pending = pendingWorkspaceForPanel.get(panel);
+                    if (pending) {
+                        queueWorkspaceLoad(panel, pending);
+                        pendingWorkspaceForPanel.delete(panel);
+                    }
+                    return;
+                }
+                if (msg.type === 'blocklyGeneratedCode' && typeof msg.code === 'string') {
                     let wsObj: any = null;
                     try { if (msg.workspace && typeof msg.workspace === 'string') wsObj = JSON.parse(msg.workspace); } catch { wsObj = null; }
                     try { if (Array.isArray(msg.lineMap)) blocklyLineMapForDocument.set(docUri, msg.lineMap); } catch { }
@@ -614,7 +652,7 @@ export function registerBlockly(
                             }
                         }
                         if (workspaceContent) {
-                            sendBlockly(panel, { type: 'loadWorkspace', workspace: workspaceContent });
+                            queueWorkspaceLoad(panel, workspaceContent);
                         }
                     } catch { }
                 })();

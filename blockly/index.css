@@ -34,14 +34,73 @@ code {
   overflow: auto;
 }
 
-#blocklyDiv {
+#blocklyWrapper {
   flex: 1 1 auto;
   min-width: 320px;
+  height: 100%;
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+}
+
+#blocklyDiv {
+  flex: 1 1 auto;
+  min-width: 0;
   height: 100%;
   box-sizing: border-box;
   overflow: hidden !important;
   -ms-overflow-style: none !important;
   scrollbar-width: none !important;
+}
+
+#blocklyRefreshBtn {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 16px;
+  background: rgba(20, 20, 20, 0.9);
+  color: #fff;
+  cursor: pointer;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+  transition: transform 0.2s ease, opacity 0.2s ease;
+  padding: 0;
+}
+
+#blocklyRefreshBtn::before {
+  content: '\21bb';
+  font-size: 16px;
+  line-height: 1;
+}
+
+#blocklyRefreshBtn:hover {
+  transform: scale(1.1);
+}
+
+#blocklyRefreshBtn:focus-visible {
+  outline: 2px solid #4c9ffe;
+  outline-offset: 2px;
+}
+
+body.light-theme #blocklyRefreshBtn {
+  background: rgba(255,255,255,0.95);
+  color: #111;
+  border: 1px solid rgba(0,0,0,0.12);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.2);
+}
+
+#blocklyRefreshBtn.spinning::before {
+  animation: blk-refresh-spin 0.6s linear;
+}
+
+@keyframes blk-refresh-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* Force toolbox/category labels black as a robust fallback across Blockly versions */
