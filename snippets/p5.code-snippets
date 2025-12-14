@@ -1,0 +1,137 @@
+{
+  "p5 setup": {
+    "prefix": ["setup", "p5setup"],
+    "body": [
+      "function setup() {",
+      "  $0",
+      "}"
+    ],
+    "description": "Create a p5.js setup() function"
+  },
+  "p5 draw": {
+    "prefix": ["draw", "p5draw"],
+    "body": [
+      "function draw() {",
+      "  $0",
+      "}"
+    ],
+    "description": "Create a p5.js draw() function"
+  },
+  "p5 preload": {
+    "prefix": ["preload", "p5preload"],
+    "body": [
+      "function preload() {",
+      "  $0",
+      "}"
+    ],
+    "description": "Create a p5.js preload() function"
+  },
+  "p5 receivedOSC": {
+    "prefix": ["receivedOSC", "osc"],
+    "body": [
+      "function receivedOSC(address, args) {",
+      "  $0",
+      "}"
+    ],
+    "description": "Handle incoming OSC messages"
+  },
+  "p5 keyPressed": {
+    "prefix": ["keyPressed", "keyp"],
+    "body": [
+      "function keyPressed() {",
+      "  $0",
+      "}"
+    ],
+    "description": "Create a p5.js keyPressed() handler"
+  },
+  "p5 keyReleased": {
+    "prefix": ["keyReleased", "keyr"],
+    "body": [
+      "function keyReleased() {",
+      "  $0",
+      "}"
+    ],
+    "description": "Create a p5.js keyReleased() handler"
+  },
+  "p5 keyTyped": {
+    "prefix": ["keyTyped", "keyt"],
+    "body": [
+      "function keyTyped() {",
+      "  $0",
+      "}"
+    ],
+    "description": "Create a p5.js keyTyped() handler"
+  },
+  "p5 doubleClicked": {
+    "prefix": ["doubleClicked", "dblclick"],
+    "body": [
+      "function doubleClicked() {",
+      "  $0",
+      "}"
+    ],
+    "description": "Create a p5.js doubleClicked() handler"
+  },
+  "p5 mouseClicked": {
+    "prefix": ["mouseClicked", "mclick"],
+    "body": [
+      "function mouseClicked() {",
+      "  $0",
+      "}"
+    ],
+    "description": "Create a p5.js mouseClicked() handler"
+  },
+  "p5 mouseDragged": {
+    "prefix": ["mouseDragged", "mdrag"],
+    "body": [
+      "function mouseDragged() {",
+      "  $0",
+      "}"
+    ],
+    "description": "Create a p5.js mouseDragged() handler"
+  },
+  "p5 mouseMoved": {
+    "prefix": ["mouseMoved", "mmove"],
+    "body": [
+      "function mouseMoved() {",
+      "  $0",
+      "}"
+    ],
+    "description": "Create a p5.js mouseMoved() handler"
+  },
+  "p5 mousePressed": {
+    "prefix": ["mousePressed", "mpress"],
+    "body": [
+      "function mousePressed() {",
+      "  $0",
+      "}"
+    ],
+    "description": "Create a p5.js mousePressed() handler"
+  },
+  "p5 mouseReleased": {
+    "prefix": ["mouseReleased", "mrelease"],
+    "body": [
+      "function mouseReleased() {",
+      "  $0",
+      "}"
+    ],
+    "description": "Create a p5.js mouseReleased() handler"
+  },
+  "p5 mouseWheel": {
+    "prefix": ["mouseWheel", "mwheel"],
+    "body": [
+      "function mouseWheel(event) {",
+      "  $0",
+      "}"
+    ],
+    "description": "Create a p5.js mouseWheel(event) handler"
+  },
+  "p5 windowResized": {
+    "prefix": ["windowResized", "wresize"],
+    "body": [
+      "function windowResized() {",
+      "  $0",
+      "}"
+    ],
+    "description": "Create a p5.js windowResized() handler"
+  }
+}
