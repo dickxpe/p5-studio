@@ -325,7 +325,7 @@
       "editor/context": [
         {
           "command": "extension.openSelectedText",
-          "when": "hasP5Project == true && editorHasSelection && isJsOrTs",
+          "when": "hasP5Project == true && isJsOrTs",
           "group": "navigation@0"
         },
         {

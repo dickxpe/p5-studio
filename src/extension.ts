@@ -1587,15 +1587,35 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.openSelectedText', () => {
       const editor = vscode.window.activeTextEditor;
-      if (editor && editor.selection && !editor.selection.isEmpty) {
-        const search = encodeURIComponent(editor.document.getText(editor.selection));
-        try {
-          const version = cfg.getP5jsVersion();
-          const base = (version === '2.1') ? 'https://beta.p5js.org/reference/' : 'https://p5js.org/reference/';
-          vscode.env.openExternal(vscode.Uri.parse(`${base}p5/${search}`));
-        } catch {
-          vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/p5/${search}`));
+      if (!editor) {
+        return;
+      }
+
+      let text: string | undefined;
+
+      if (editor.selection && !editor.selection.isEmpty) {
+        text = editor.document.getText(editor.selection);
+      } else {
+        const pos = editor.selection.active;
+        const wordRange = editor.document.getWordRangeAtPosition(pos);
+        if (wordRange) {
+          text = editor.document.getText(wordRange);
         }
+      }
+
+      if (!text || !text.trim()) {
+        // No word/selection: just open the main P5 reference
+        vscode.commands.executeCommand('extension.openP5Ref');
+        return;
+      }
+
+      const search = encodeURIComponent(text.trim());
+      try {
+        const version = cfg.getP5jsVersion();
+        const base = (version === '2.1') ? 'https://beta.p5js.org/reference/' : 'https://p5js.org/reference/';
+        vscode.env.openExternal(vscode.Uri.parse(`${base}p5/${search}`));
+      } catch {
+        vscode.env.openExternal(vscode.Uri.parse(`https://p5js.org/reference/p5/${search}`));
       }
     })
   );
