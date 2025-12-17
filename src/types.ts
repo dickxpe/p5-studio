@@ -19,7 +19,17 @@ export interface GlobalVar {
     type: string;
     value: any;
     updatedAt?: number;
+    control?: VarControl;
 }
+
+export type SliderControl = {
+    kind: 'slider';
+    min: number;
+    max: number;
+    step?: number;
+};
+
+export type VarControl = SliderControl;
 
 export interface TopInputItem {
     varName: string;

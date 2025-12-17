@@ -859,6 +859,13 @@ export function activate(context: vscode.ExtensionContext) {
       allowInteractiveTopInputs: _allowInteractiveTopInputs,
     });
 
+    try {
+      const sliderDefs = prep?.globals?.variables
+        ? prep.globals.variables.map(g => ({ name: g.name, control: g.control }))
+        : [];
+      variablesService.setGlobalHintsForDoc(docUri, sliderDefs);
+    } catch { }
+
     let syntaxErrorMsg: string | null = null;
 
     if (prep.inputsOverlay && prep.inputsOverlay.length > 0) {
@@ -1021,6 +1028,13 @@ export function activate(context: vscode.ExtensionContext) {
           allowInteractiveTopInputs: _allowInteractiveTopInputs,
         });
 
+        try {
+          const sliderDefs = prep?.globals?.variables
+            ? prep.globals.variables.map(g => ({ name: g.name, control: g.control }))
+            : [];
+          variablesService.setGlobalHintsForDoc(docUri, sliderDefs);
+        } catch { }
+
         let syntaxErrorMsg: string | null = prep.syntaxErrorMsg || null;
         const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
         if (!workspaceFolder) return;
@@ -1043,7 +1057,6 @@ export function activate(context: vscode.ExtensionContext) {
         try { (panel as any)._p5Version = selectedVersion; } catch { }
 
         // Focus the output channel for the new sketch immediately
-        const docUri = editor.document.uri.toString();
         const fileName = path.basename(editor.document.fileName);
         const outputChannel = getOrCreateOutputChannel(docUri, fileName);
         showAndTrackOutputChannel(outputChannel); // <--- replaced direct show

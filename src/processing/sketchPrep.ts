@@ -22,11 +22,12 @@ import {
     findFirstTemplateLiteral,
     formatTemplateLiteralError,
 } from './astHelpers';
+import type { VarControl } from '../types';
 
 export type ReloadReason = 'typing' | 'save' | 'command' | 'open' | undefined;
 
 export interface SketchPrepGlobals {
-    variables: Array<{ name: string; type: string }>;
+    variables: Array<{ name: string; type: string; control?: VarControl }>;
     readOnly: boolean;
 }
 
@@ -205,7 +206,7 @@ export async function prepareSketch(opts: SketchPrepOptions): Promise<SketchPrep
     code = wrapInSetupIfNeeded(code);
 
     // Globals snapshot for VARIABLES panel
-    let filteredGlobals: Array<{ name: string; type: string }> = [];
+    let filteredGlobals: Array<{ name: string; type: string; control?: VarControl }> = [];
     let readOnly = false;
     try {
         // Use originalCode for global extraction so variables that were moved inside setup (no-setup/no-draw) still appear

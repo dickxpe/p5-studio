@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
+import type { VarControl } from '../types';
 
-export type GlobalVar = { name: string; value: any; type: string };
+export type GlobalVar = { name: string; value: any; type: string; control?: VarControl };
 
 export interface VariablesViewDeps {
   getActiveP5Panel: () => vscode.WebviewPanel | undefined;
@@ -59,7 +60,13 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
       .muted { opacity: 0.8; }
       h3 { margin: 8px 0 6px 0; color: #307dc1; }
       table { border-collapse: collapse; width: 100%; font-size: 12px; margin-bottom: 10px; table-layout: fixed; }
-      th, td { border: 1px solid #8884; padding: 2px 4px; text-align: left; }
+      th, td {
+        border: 1px solid #8884;
+        padding: 2px 4px;
+        text-align: left;
+        height: 20px;
+        vertical-align: middle;
+      }
       th.name-col, td.name-col { width: 45%; }
       th.value-col, td.value-col { width: 35%; }
       th.type-col, td.type-col { width: 20%; }
@@ -159,15 +166,17 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        position: relative;
+        height: 100%;
+        min-height: 0;
         height: 14px;
         line-height: 0;
         vertical-align: middle;
       }
       .checkbox-wrapper input[type="checkbox"] {
         position: absolute;
-        opacity: 0;
+        height: 22px;
         width: 14px;
+        align-self: center;
         height: 14px;
         top: 0;
         left: 0;
@@ -205,6 +214,94 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
         border-bottom: 2px solid var(--vscode-editor-background, #1e1e1e);
         transform: rotate(45deg);
         margin-bottom: 1px;
+      }
+      .slider-wrapper {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 100%;
+        min-height: 0;
+      }
+      .slider-wrapper input[type="range"] {
+        flex: 1;
+        accent-color: #2f78b9;
+        background-color: transparent;
+        -webkit-appearance: none;
+        height: 22px;
+        margin: 0;
+        align-self: center;
+        outline: none;
+        border: none;
+      }
+      .slider-wrapper input[type="range"]:focus,
+      .slider-wrapper input[type="range"]:focus-visible {
+        outline: 1px solid var(--vscode-focusBorder, #2f78b9);
+        outline-offset: 0;
+        box-shadow: 0 0 0 0.5px var(--vscode-focusBorder, #2f78b9);
+      }
+      .slider-wrapper input[type="range"]::-webkit-slider-runnable-track {
+        background-color: #313131;
+        border-radius: 999px;
+        height: 6px;
+        margin: 0;
+      }
+      .slider-wrapper input[type="range"]::-moz-range-track {
+        background-color: #313131;
+        border-radius: 999px;
+        height: 6px;
+        margin: 0;
+      }
+      .slider-wrapper input[type="range"]::-ms-track {
+        background-color: transparent;
+        border-color: transparent;
+        color: transparent;
+      }
+      .slider-wrapper input[type="range"]::-ms-fill-lower,
+      .slider-wrapper input[type="range"]::-ms-fill-upper {
+        background-color: #313131;
+        border-radius: 999px;
+      }
+      .slider-wrapper input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background-color: #2f78b9;
+        border: 1px solid #1e1e1e;
+        margin-top: -4px;
+        cursor: pointer;
+      }
+      .slider-wrapper input[type="range"]::-moz-range-thumb {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background-color: #2f78b9;
+        border: 1px solid #1e1e1e;
+        cursor: pointer;
+      }
+      .slider-wrapper input[type="range"]::-ms-thumb {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background-color: #2f78b9;
+        border: 1px solid #1e1e1e;
+        cursor: pointer;
+      }
+      .slider-wrapper input[type="range"][disabled] {
+        opacity: 0.5;
+      }
+      .slider-value-input {
+        min-width: 58px;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .slider-wrapper .slider-number-wrapper {
+        width: 64px;
+        min-width: 64px;
+      }
+      .slider-wrapper .slider-number-wrapper input {
+        text-align: right;
+        padding-right: 18px;
       }
       input.error,
         input[data-invalid="true"] {
@@ -377,6 +474,15 @@ function normalizeForInput(type, v) {
   if (type === 'boolean') return !!v;
   return (v === undefined || v === null) ? '' : String(v);
 }
+function sliderFieldKey(scope, name) {
+  return (scope || 'globals') + '::' + name;
+}
+function setSliderNumberInput(container, scope, name, value) {
+  if (!container) return;
+  var key = sliderFieldKey(scope, name);
+  var input = container.querySelector('input[data-slider-number="true"][data-slider-key="' + key + '"]');
+  if (input && input.value !== value) input.value = value;
+}
 // Normalize localized decimal separators before parsing user input.
 function parseNumberFieldValue(raw) {
   if (typeof raw !== 'string') {
@@ -448,6 +554,9 @@ function decorateNumberInputs(rootEl) {
     input.setAttribute('data-spin-wrapped', 'true');
     var wrapper = document.createElement('div');
     wrapper.className = 'number-wrapper';
+    if (input.getAttribute('data-slider-number') === 'true') {
+      wrapper.classList.add('slider-number-wrapper');
+    }
     var parent = input.parentNode;
     if (!parent) return;
     parent.insertBefore(wrapper, input);
@@ -492,7 +601,9 @@ function buildTable(targetId, vars, scope) {
   for (var i = 0; i < vars.length; ++i) {
 
     var v = vars[i];
-    if (scope === 'globals') _globalsIndex.set(v.name, { type: v.type }); else _localsIndex.set(v.name, { type: v.type });
+    var sliderControl = (v && v.control && v.control.kind === 'slider') ? v.control : null;
+    var controlSig = sliderControl ? JSON.stringify([sliderControl.kind, sliderControl.min, sliderControl.max, sliderControl.step]) : '';
+    if (scope === 'globals') _globalsIndex.set(v.name, { type: v.type, control: controlSig }); else _localsIndex.set(v.name, { type: v.type, control: controlSig });
     html += '<tr><td class="name-col">' + v.name + '</td><td class="value-col">';
     var isGlobal = scope === 'globals';
     var editable = isGlobal && _hasDraw;
@@ -500,6 +611,29 @@ function buildTable(targetId, vars, scope) {
     var disabledAttr = editable ? '' : ' disabled';
     if (v.type === 'boolean') {
       html += '<label class="checkbox-wrapper"><input type="checkbox" data-var="' + v.name + '" data-scope="' + scope + '"' + (v.value ? ' checked' : '') + disabledAttr + ' /><span class="checkbox-custom" aria-hidden="true"></span></label>';
+    } else if (sliderControl && v.type === 'number') {
+      var sliderMin = Number(sliderControl.min);
+      if (!Number.isFinite(sliderMin)) sliderMin = 0;
+      var sliderMax = Number(sliderControl.max);
+      if (!Number.isFinite(sliderMax)) sliderMax = sliderMin + 1;
+      if (sliderMax < sliderMin) {
+        var tmp = sliderMax;
+        sliderMax = sliderMin;
+        sliderMin = tmp;
+      }
+      var sliderStep = (typeof sliderControl.step === 'number' && sliderControl.step > 0) ? sliderControl.step : Math.abs(sliderMax - sliderMin) / 100;
+      if (!Number.isFinite(sliderStep) || sliderStep <= 0) sliderStep = 1;
+      var sliderValueRaw = normalizeForInput('number', v.value);
+      var sliderValueNum = Number(sliderValueRaw);
+      if (!Number.isFinite(sliderValueNum)) sliderValueNum = sliderMin;
+      if (sliderValueNum < sliderMin) sliderValueNum = sliderMin;
+      if (sliderValueNum > sliderMax) sliderValueNum = sliderMax;
+      var sliderValueStr = sliderValueNum.toString();
+      var sliderKey = sliderFieldKey(scope, v.name);
+      html += '<div class="slider-wrapper">'
+        + '<input type="text" class="slider-value-input" data-slider-number="true" data-slider-key="' + sliderKey + '" data-number-field="true" lang="en" inputmode="decimal" autocomplete="off" data-var="' + v.name + '" data-scope="' + scope + '" value="' + sliderValueStr + '" step="any"' + readonlyAttr + ' />'
+        + '<input type="range" data-slider-field="true" data-slider-key="' + sliderKey + '" data-var="' + v.name + '" data-scope="' + scope + '" min="' + sliderMin + '" max="' + sliderMax + '" step="' + sliderStep + '" value="' + sliderValueStr + '"' + disabledAttr + ' />'
+        + '</div>';
     } else if (v.type === 'number') {
       html += '<input type="text" data-number-field="true" lang="en" inputmode="decimal" autocomplete="off" data-var="' + v.name + '" data-scope="' + scope + '" value="' + normalizeForInput('number', v.value) + '" step="any"' + readonlyAttr + ' />';
     } else if (v.type === 'array') {
@@ -524,7 +658,41 @@ function buildTable(targetId, vars, scope) {
     }
     if (input.type === 'checkbox') {
       input.addEventListener('change', function() { sendVarUpdate(name, input.checked, scopeAttr); });
+    } else if (input.getAttribute('data-slider-field') === 'true') {
+      const sliderKey = input.getAttribute('data-slider-key');
+      const numberInput = sliderKey
+        ? tableDiv.querySelector('input[data-slider-number="true"][data-slider-key="' + sliderKey + '"]')
+        : null;
+      const updateNumber = function(normalized) {
+        if (!numberInput) return;
+        if (numberInput.value !== normalized) numberInput.value = normalized;
+      };
+      const handleSlider = function() {
+        var parsed = parseNumberFieldValue(String(input.value));
+        if (!parsed.isValid) return;
+        updateNumber(parsed.normalized);
+        sendVarUpdate(name, parsed.value, scopeAttr);
+      };
+      input.addEventListener('input', handleSlider);
+      input.addEventListener('change', handleSlider);
     } else if (input.getAttribute('data-number-field') === 'true') {
+      const sliderKey = input.getAttribute('data-slider-number') === 'true'
+        ? input.getAttribute('data-slider-key')
+        : null;
+      const sliderField = sliderKey
+        ? tableDiv.querySelector('input[data-slider-field="true"][data-slider-key="' + sliderKey + '"]')
+        : null;
+      const syncSliderFromNumber = function(normalized, valueNum) {
+        if (!sliderField) return { normalized: normalized, value: valueNum };
+        var minAttr = Number(sliderField.getAttribute('min'));
+        var maxAttr = Number(sliderField.getAttribute('max'));
+        var clamped = valueNum;
+        if (Number.isFinite(minAttr) && clamped < minAttr) clamped = minAttr;
+        if (Number.isFinite(maxAttr) && clamped > maxAttr) clamped = maxAttr;
+        var normalizedStr = Number.isFinite(clamped) ? clamped.toString() : normalized;
+        if (sliderField.value !== normalizedStr) sliderField.value = normalizedStr;
+        return { normalized: normalizedStr, value: clamped };
+      };
       let numDebounceTimer = null;
       input.addEventListener('input', function() {
         if (numDebounceTimer) clearTimeout(numDebounceTimer);
@@ -532,8 +700,15 @@ function buildTable(targetId, vars, scope) {
           if (input.value === '') { sendVarUpdate(name, '', scopeAttr); return; }
           var parsed = parseNumberFieldValue(String(input.value));
           if (parsed.isValid) {
-            if (input.value !== parsed.normalized) input.value = parsed.normalized;
-            sendVarUpdate(name, parsed.value, scopeAttr);
+            let normalized = parsed.normalized;
+            let valueNum = parsed.value;
+            if (sliderField) {
+              const synced = syncSliderFromNumber(normalized, valueNum);
+              normalized = synced.normalized;
+              valueNum = synced.value;
+            }
+            if (input.value !== normalized) input.value = normalized;
+            sendVarUpdate(name, valueNum, scopeAttr);
           } else {
             sendVarUpdate(name, '', scopeAttr);
           }
@@ -543,8 +718,15 @@ function buildTable(targetId, vars, scope) {
         if (input.value === '') { sendVarUpdate(name, '', scopeAttr); return; }
         var parsed = parseNumberFieldValue(String(input.value));
         if (parsed.isValid) {
-          if (input.value !== parsed.normalized) input.value = parsed.normalized;
-          sendVarUpdate(name, parsed.value, scopeAttr);
+          let normalized = parsed.normalized;
+          let valueNum = parsed.value;
+          if (sliderField) {
+            const synced = syncSliderFromNumber(normalized, valueNum);
+            normalized = synced.normalized;
+            valueNum = synced.value;
+          }
+          if (input.value !== normalized) input.value = normalized;
+          sendVarUpdate(name, valueNum, scopeAttr);
         } else {
           sendVarUpdate(name, '', scopeAttr);
         }
@@ -642,8 +824,10 @@ function patchValues(targetId, vars, scope) {
   if (indexMap.size !== vars.length) needRebuild = true;
   for (var i = 0; i < vars.length && !needRebuild; ++i) {
     var v = vars[i];
+    var sliderControl = (v && v.control && v.control.kind === 'slider') ? v.control : null;
+    var controlSig = sliderControl ? JSON.stringify([sliderControl.kind, sliderControl.min, sliderControl.max, sliderControl.step]) : '';
     var meta = indexMap.get(v.name);
-    if (!meta || meta.type !== v.type) { needRebuild = true; break; }
+    if (!meta || meta.type !== v.type || (meta.control || '') !== controlSig) { needRebuild = true; break; }
   }
   if (needRebuild || !_rendered) { buildTable(targetId, vars, scope); return; }
   for (var j = 0; j < vars.length; ++j) {
@@ -655,7 +839,18 @@ function patchValues(targetId, vars, scope) {
       continue;
     }
     if (input === document.activeElement) continue;
-    if (vv.type === 'boolean') {
+    if (input.getAttribute('data-slider-field') === 'true') {
+      var sliderVal = normalizeForInput('number', vv.value);
+      var sliderMinAttr = Number(input.getAttribute('min'));
+      var sliderMaxAttr = Number(input.getAttribute('max'));
+      var sliderNum = Number(sliderVal);
+      if (!Number.isFinite(sliderNum)) sliderNum = Number.isFinite(sliderMinAttr) ? sliderMinAttr : 0;
+      if (Number.isFinite(sliderMinAttr) && sliderNum < sliderMinAttr) sliderNum = sliderMinAttr;
+      if (Number.isFinite(sliderMaxAttr) && sliderNum > sliderMaxAttr) sliderNum = sliderMaxAttr;
+      var sliderStr = Number.isFinite(sliderNum) ? sliderNum.toString() : sliderVal;
+      if (input.value !== sliderStr) input.value = sliderStr;
+      setSliderNumberInput(tableDiv, scope, vv.name, sliderStr);
+    } else if (vv.type === 'boolean') {
       var chk = !!vv.value;
       if (input.checked !== chk) input.checked = chk;
     } else if (vv.type === 'number') {

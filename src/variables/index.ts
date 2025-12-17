@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
 import { registerVariablesView } from '../views/variablesView';
+import type { VarControl } from '../types';
 
-export type VarEntry = { name: string; value: any; type: string; updatedAt?: number };
-type GlobalDefs = Map<string, { type: string; initialValue?: any }>;
+export type VarEntry = { name: string; value: any; type: string; updatedAt?: number; control?: VarControl };
+type GlobalDefs = Map<string, { type: string; initialValue?: any; control?: VarControl }>;
 type LocalsHeading = 'locals' | 'variables';
 export type VarState = {
   globals: VarEntry[];
@@ -14,6 +15,7 @@ export type VarState = {
   forceRevealNextGlobals: boolean;
   globalTimestamps: Map<string, number>;
   hasDraw: boolean;
+  globalHints: Map<string, { control?: VarControl }>;
 };
 
 export type VariablesServiceDeps = {
@@ -36,6 +38,7 @@ export type VariablesServiceApi = {
   getLocalsHeadingForDoc: (docUri: string) => LocalsHeading;
   setHasDrawForDoc: (docUri: string, hasDraw: boolean) => void;
   resetValuesForDoc: (docUri: string) => void;
+  setGlobalHintsForDoc: (docUri: string, defs: Array<{ name: string; control?: VarControl }>) => void;
 };
 
 const inferType = (value: any): string => {
@@ -56,6 +59,14 @@ const cloneVarValue = (value: any): any => {
   return value;
 };
 
+const pickControl = (st: VarState, name: string, fallback?: VarControl): VarControl | undefined => {
+  if (st.globalHints.has(name)) {
+    return st.globalHints.get(name)?.control;
+  }
+  if (fallback) return fallback;
+  return st.globalDefs.get(name)?.control;
+};
+
 export function registerVariablesService(
   context: vscode.ExtensionContext,
   deps: VariablesServiceDeps,
@@ -73,6 +84,7 @@ export function registerVariablesService(
         forceRevealNextGlobals: false,
         globalTimestamps: new Map(),
         hasDraw: false,
+        globalHints: new Map(),
       });
     }
     return latestVarsByDoc.get(docUri)!;
@@ -82,6 +94,28 @@ export function registerVariablesService(
     const idx = list.findIndex(v => v.name === entry.name);
     if (idx >= 0) list[idx] = entry;
     else list.push(entry);
+  };
+
+  const applyHintsToList = (st: VarState, list: VarEntry[]): VarEntry[] =>
+    list.map(entry => ({ ...entry, control: pickControl(st, entry.name, entry.control) }));
+
+  const setGlobalHintsForDocInternal = (docUri: string, defs: Array<{ name: string; control?: VarControl }>) => {
+    const st = ensure(docUri);
+    st.globalHints = new Map();
+    if (Array.isArray(defs)) {
+      for (const def of defs) {
+        if (!def || typeof def.name !== 'string') continue;
+        if (def.control) {
+          st.globalHints.set(def.name, { control: def.control });
+        }
+      }
+    }
+    st.globals = applyHintsToList(st, st.globals);
+    st.pendingGlobals = applyHintsToList(st, st.pendingGlobals);
+    st.globalDefs = new Map(Array.from(st.globalDefs.entries()).map(([name, def]) => {
+      const hint = st.globalHints.get(name);
+      return [name, { ...def, control: hint?.control }];
+    }));
   };
 
   const setGlobalValueInternal = (docUri: string, name: string, value: any, opts?: { updatedAt?: number }) => {
@@ -110,7 +144,8 @@ export function registerVariablesService(
       || st.pendingGlobals.find(v => v.name === name)?.type
       || inferType(value);
     const safeValue = cloneVarValue(value);
-    const nextEntry: VarEntry = { name, value: safeValue, type: hinted, updatedAt: timestamp };
+    const control = pickControl(st, name);
+    const nextEntry: VarEntry = { name, value: safeValue, type: hinted, updatedAt: timestamp, control };
 
     const visibleIdx = st.globals.findIndex(v => v.name === name);
     if (visibleIdx >= 0) {
@@ -123,7 +158,8 @@ export function registerVariablesService(
     const def = st.globalDefs.get(name) || { type: hinted };
     st.globalDefs.set(name, {
       type: hinted || def.type,
-      initialValue: typeof def.initialValue !== 'undefined' ? def.initialValue : cloneVarValue(value)
+      initialValue: typeof def.initialValue !== 'undefined' ? def.initialValue : cloneVarValue(value),
+      control: control ?? def.control,
     });
     try { st.globalTimestamps.set(name, timestamp); } catch { }
   };
@@ -156,7 +192,8 @@ export function registerVariablesService(
         ? list.filter(entry => !!entry && typeof entry.name === 'string').map(entry => ({
           ...entry,
           value: cloneVarValue(entry.value),
-          type: entry.type || inferType(entry.value)
+          type: entry.type || inferType(entry.value),
+          control: entry.control,
         }))
         : [];
       const snapshotTime = (opts && typeof opts.generatedAt === 'number') ? opts.generatedAt : Date.now();
@@ -171,9 +208,11 @@ export function registerVariablesService(
       st.globalDefs = new Map();
       for (const entry of normalized) {
         if (entry && entry.name) {
+          const control = pickControl(st, entry.name, entry.control);
           st.globalDefs.set(entry.name, {
             type: entry.type || inferType(entry.value),
-            initialValue: cloneVarValue(entry.value)
+            initialValue: cloneVarValue(entry.value),
+            control,
           });
         }
       }
@@ -189,11 +228,13 @@ export function registerVariablesService(
           if (existing && lastUpdate > incomingTime) {
             mergedPending.push({ ...existing, value: cloneVarValue(existing.value) });
           } else {
+            const control = pickControl(st, entry.name, entry.control);
             const safeEntry: VarEntry = {
               name: entry.name,
               type: entry.type || inferType(entry.value),
               value: cloneVarValue(entry.value),
               updatedAt: incomingTime,
+              control,
             };
             mergedPending.push(safeEntry);
             try { st.globalTimestamps.set(entry.name, incomingTime); } catch { }
@@ -219,11 +260,13 @@ export function registerVariablesService(
         if (existing && lastUpdate > incomingTime) {
           merged.push({ ...existing, value: cloneVarValue(existing.value) });
         } else {
+          const control = pickControl(st, entry.name, entry.control);
           merged.push({
             name: entry.name,
             type: entry.type || inferType(entry.value),
             value: cloneVarValue(entry.value),
             updatedAt: incomingTime,
+            control,
           });
           try { st.globalTimestamps.set(entry.name, incomingTime); } catch { }
         }
@@ -246,6 +289,7 @@ export function registerVariablesService(
           value: cloneVarValue(entry.value),
           type: entry.type || inferType(entry.value),
           updatedAt: typeof entry.updatedAt === 'number' ? entry.updatedAt : Date.now(),
+          control: entry.control,
         }))
         : [];
       st.globals = [];
@@ -257,9 +301,11 @@ export function registerVariablesService(
       st.globalTimestamps = new Map();
       for (const entry of snapshot) {
         if (entry && entry.name) {
+          const control = pickControl(st, entry.name, entry.control);
           st.globalDefs.set(entry.name, {
             type: entry.type || inferType(entry.value),
-            initialValue: cloneVarValue(entry.value)
+            initialValue: cloneVarValue(entry.value),
+            control,
           });
           try { st.globalTimestamps.set(entry.name, entry.updatedAt || Date.now()); } catch { }
         }
@@ -284,7 +330,8 @@ export function registerVariablesService(
         const safeValue = cloneVarValue(sourceValue);
         const type = entry.type || st.globalDefs.get(entry.name)?.type || inferType(safeValue);
         const now = Date.now();
-        const hydrated: VarEntry = { name: entry.name, value: safeValue, type, updatedAt: now };
+        const control = pickControl(st, entry.name, entry.control);
+        const hydrated: VarEntry = { name: entry.name, value: safeValue, type, updatedAt: now, control };
         upsertEntry(st.globals, hydrated);
         try { st.globalTimestamps.set(entry.name, now); } catch { }
       }
@@ -320,7 +367,8 @@ export function registerVariablesService(
           const value = (typeof def?.initialValue !== 'undefined')
             ? cloneVarValue(def.initialValue)
             : (type === 'number' ? 0 : type === 'boolean' ? false : type === 'array' ? [] : '');
-          return { name, type: type || inferType(value), value, updatedAt: now };
+          const control = pickControl(st, name, def?.control);
+          return { name, type: type || inferType(value), value, updatedAt: now, control };
         });
       } else if (st.globals.length > 0) {
         st.globals = st.globals.map(entry => {
@@ -330,7 +378,8 @@ export function registerVariablesService(
           else if (type === 'boolean') value = false;
           else if (type === 'array') value = [];
           else value = '';
-          return { name: entry.name, type, value, updatedAt: now };
+          const control = pickControl(st, entry.name, entry.control);
+          return { name: entry.name, type, value, updatedAt: now, control };
         });
       } else if (st.pendingGlobals.length > 0) {
         st.globals = st.pendingGlobals.map(entry => ({
@@ -338,6 +387,7 @@ export function registerVariablesService(
           type: entry.type || inferType(entry.value),
           value: cloneVarValue(entry.value),
           updatedAt: typeof entry.updatedAt === 'number' ? entry.updatedAt : now,
+          control: pickControl(st, entry.name, entry.control),
         }));
       } else {
         st.globals = [];
@@ -347,6 +397,10 @@ export function registerVariablesService(
       st.globalsSuppressed = st.globals.length === 0;
       st.forceRevealNextGlobals = true;
       st.globalTimestamps = new Map(st.globals.map(entry => [entry.name, entry.updatedAt || now] as const));
+    },
+    setGlobalHintsForDoc: (docUri: string, defs: Array<{ name: string; control?: VarControl }>) => {
+      setGlobalHintsForDocInternal(docUri, defs);
+      updateVariablesPanel();
     },
   };
 }

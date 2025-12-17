@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { detectDrawFunction } from '../../utils/helpers';
+import type { VarControl } from '../../types';
 
 export async function handleSubmitTopInputs(
   params: { panel: vscode.WebviewPanel; editor: vscode.TextEditor; values: any[] },
@@ -8,9 +9,9 @@ export async function handleSubmitTopInputs(
     preprocessTopLevelInputs: (code: string, opts: { key: string; interactive: boolean }) => Promise<string>;
     setCachedInputsForKey: (key: string, items: Array<{ varName: string; label?: string }>, values: any[]) => void;
     wrapInSetupIfNeeded: (code: string) => string;
-    extractGlobalVariables: (code: string) => Array<{ name: string; value: any; type: string }>;
-    extractGlobalVariablesWithConflicts: (code: string) => { globals: Array<{ name: string; value: any; type: string }>; conflicts: string[] };
-    rewriteUserCodeWithWindowGlobals: (code: string, globals: Array<{ name: string; value?: any }>) => string;
+    extractGlobalVariables: (code: string) => Array<{ name: string; value: any; type: string; control?: VarControl }>;
+    extractGlobalVariablesWithConflicts: (code: string) => { globals: Array<{ name: string; value: any; type: string; control?: VarControl }>; conflicts: string[] };
+    rewriteUserCodeWithWindowGlobals: (code: string, globals: Array<{ name: string; value?: any; control?: VarControl }>) => string;
     createHtml: (code: string, panel: vscode.WebviewPanel, extensionPath: string, opts?: { allowInteractiveTopInputs?: boolean; initialCaptureVisible?: boolean }) => Promise<string>;
     getInitialCaptureVisible: (panel: vscode.WebviewPanel) => boolean;
     getExtensionPath: () => string;

@@ -3,6 +3,7 @@ import { config as cfg } from '../../config';
 import { buildStepMap, StepMap } from '../../processing/stepMap';
 import { findFirstTemplateLiteral, formatTemplateLiteralError } from '../../processing/astHelpers';
 import { detectDrawFunction } from '../../utils/helpers';
+import type { VarControl } from '../../types';
 
 function findFirstExecutableLine(code: string): number | null {
   try {
@@ -75,9 +76,9 @@ export async function handleStepRunClicked(
     wrapInSetupIfNeeded: (code: string) => string;
     rewriteFrameCountRefs: (code: string) => string;
     instrumentSetupForSingleStep: (code: string, lineOffset: number, opts?: { disableTopLevelPreSteps?: boolean; docStepMap?: StepMap; topLevelGlobals?: string[] }) => string;
-    extractGlobalVariablesWithConflicts: (code: string) => { globals: Array<{ name: string; value: any; type: string }>; conflicts: string[] };
-    extractGlobalVariables: (code: string) => Array<{ name: string; value: any; type: string }>;
-    rewriteUserCodeWithWindowGlobals: (code: string, globals: Array<{ name: string; value?: any }>) => string;
+    extractGlobalVariablesWithConflicts: (code: string) => { globals: Array<{ name: string; value: any; type: string; control?: VarControl }>; conflicts: string[] };
+    extractGlobalVariables: (code: string) => Array<{ name: string; value: any; type: string; control?: VarControl }>;
+    rewriteUserCodeWithWindowGlobals: (code: string, globals: Array<{ name: string; value?: any; control?: VarControl }>) => string;
     getHiddenGlobalsByDirective: (code: string) => Set<string>;
     hasOnlySetup: (code: string) => boolean;
     createHtml: (code: string, panel: vscode.WebviewPanel, extensionPath: string, opts?: { allowInteractiveTopInputs?: boolean; initialCaptureVisible?: boolean }) => Promise<string>;
@@ -86,7 +87,7 @@ export async function handleStepRunClicked(
     getAllowInteractiveTopInputs: () => boolean;
     setAllowInteractiveTopInputs: (v: boolean) => void;
     setSteppingActive?: (docUri: string, value: boolean) => void;
-    primeGlobalsForDoc?: (docUri: string, list: Array<{ name: string; value: any; type: string }>) => void;
+    primeGlobalsForDoc?: (docUri: string, list: Array<{ name: string; value: any; type: string; control?: VarControl }>) => void;
     updateVariablesPanel?: () => void;
     setHasDraw?: (docUri: string, value: boolean) => void;
     setDrawLoopPaused?: (docUri: string, paused: boolean) => void;
@@ -307,16 +308,16 @@ export async function handleSingleStepClicked(
     wrapInSetupIfNeeded: (code: string) => string;
     rewriteFrameCountRefs: (code: string) => string;
     instrumentSetupForSingleStep: (code: string, lineOffset: number, opts?: { disableTopLevelPreSteps?: boolean; docStepMap?: StepMap; topLevelGlobals?: string[] }) => string;
-    extractGlobalVariablesWithConflicts: (code: string) => { globals: Array<{ name: string; value: any; type: string }>; conflicts: string[] };
-    extractGlobalVariables: (code: string) => Array<{ name: string; value: any; type: string }>;
-    rewriteUserCodeWithWindowGlobals: (code: string, globals: Array<{ name: string; value?: any }>) => string;
+    extractGlobalVariablesWithConflicts: (code: string) => { globals: Array<{ name: string; value: any; type: string; control?: VarControl }>; conflicts: string[] };
+    extractGlobalVariables: (code: string) => Array<{ name: string; value: any; type: string; control?: VarControl }>;
+    rewriteUserCodeWithWindowGlobals: (code: string, globals: Array<{ name: string; value?: any; control?: VarControl }>) => string;
     getHiddenGlobalsByDirective: (code: string) => Set<string>;
     hasOnlySetup: (code: string) => boolean;
     createHtml: (code: string, panel: vscode.WebviewPanel, extensionPath: string, opts?: { allowInteractiveTopInputs?: boolean; initialCaptureVisible?: boolean }) => Promise<string>;
     getInitialCaptureVisible: (panel: vscode.WebviewPanel) => boolean;
     getExtensionPath: () => string;
     setSteppingActive?: (docUri: string, value: boolean) => void;
-    primeGlobalsForDoc?: (docUri: string, list: Array<{ name: string; value: any; type: string }>) => void;
+    primeGlobalsForDoc?: (docUri: string, list: Array<{ name: string; value: any; type: string; control?: VarControl }>) => void;
     updateVariablesPanel?: () => void;
     setHasDraw?: (docUri: string, value: boolean) => void;
     setDrawLoopPaused?: (docUri: string, paused: boolean) => void;

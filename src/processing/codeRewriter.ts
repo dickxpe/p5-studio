@@ -1,12 +1,90 @@
 import * as recast from 'recast';
 import { RESERVED_GLOBALS, P5_NUMERIC_IDENTIFIERS, P5_EVENT_HANDLERS } from '../constants';
+import type { VarControl } from '../types';
+
+const SLIDER_DIRECTIVE_RE = /^\s*\/\/\s*@Slider\s*\(([^)]*)\)\s*$/i;
+
+function countDecimalPlaces(raw: string): number {
+    const trimmed = raw.trim();
+    if (!trimmed.includes('.')) return 0;
+    const expIdx = trimmed.toLowerCase().indexOf('e');
+    const base = expIdx >= 0 ? trimmed.slice(0, expIdx) : trimmed;
+    const dotIdx = base.indexOf('.');
+    if (dotIdx === -1) return 0;
+    return Math.max(0, base.length - dotIdx - 1);
+}
+
+function parseSliderDirective(line?: string): VarControl | undefined {
+    if (!line) return undefined;
+    const match = line.match(SLIDER_DIRECTIVE_RE);
+    if (!match) return undefined;
+    const rawArgs = match[1].split(',').map(part => part.trim()).filter(Boolean);
+    if (rawArgs.length < 2) return undefined;
+    const minRaw = rawArgs[0];
+    const maxRaw = rawArgs[1];
+    const minVal = Number(minRaw);
+    const maxVal = Number(maxRaw);
+    if (!Number.isFinite(minVal) || !Number.isFinite(maxVal) || minVal === maxVal) {
+        return undefined;
+    }
+    let [min, max] = minVal <= maxVal ? [minVal, maxVal] : [maxVal, minVal];
+    let step: number | undefined;
+    if (rawArgs[2]) {
+        const explicitStep = Number(rawArgs[2]);
+        if (Number.isFinite(explicitStep) && explicitStep > 0) {
+            step = explicitStep;
+        }
+    }
+    if (!step) {
+        const decimals = Math.max(countDecimalPlaces(minRaw), countDecimalPlaces(maxRaw));
+        step = decimals > 0 ? Number((Math.pow(10, -decimals)).toFixed(decimals)) : 1;
+    }
+    const span = Math.abs(max - min);
+    if (!Number.isFinite(step) || step <= 0) {
+        step = span > 0 ? span / 100 : 1;
+    }
+    if (span > 0 && step > span) {
+        step = span;
+    }
+    return { kind: 'slider', min, max, step };
+}
+
+function createSliderLookup(code: string): (node: any) => VarControl | undefined {
+    const lines = code.split(/\r?\n/);
+    return (node: any): VarControl | undefined => {
+        const locLine = node && node.loc && node.loc.start && typeof node.loc.start.line === 'number'
+            ? node.loc.start.line
+            : undefined;
+        if (typeof locLine !== 'number') return undefined;
+        let idx = locLine - 2;
+        while (idx >= 0) {
+            const rawLine = lines[idx];
+            if (typeof rawLine !== 'string') return undefined;
+            if (rawLine.trim() === '') {
+                idx--;
+                continue;
+            }
+            return parseSliderDirective(rawLine);
+        }
+        return undefined;
+    };
+}
 
 // Extract top-level global variables and detect conflicts with reserved names
-export function extractGlobalVariablesWithConflicts(code: string): { globals: { name: string, value: any, type: string }[], conflicts: string[] } {
+export function extractGlobalVariablesWithConflicts(code: string): { globals: { name: string, value: any, type: string, control?: VarControl }[], conflicts: string[] } {
     const acorn = require('acorn');
-    const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
-    const globals: { name: string, value: any, type: string }[] = [];
+    const ast = recast.parse(code, {
+        parser: {
+            parse: (src: string) => acorn.parse(src, {
+                ecmaVersion: 2020,
+                sourceType: 'script',
+                locations: true,
+            }),
+        },
+    });
+    const globals: { name: string, value: any, type: string, control?: VarControl }[] = [];
     const conflicts: string[] = [];
+    const sliderLookup = createSliderLookup(code);
     function extractFromDecls(decls: any[]) {
         for (const decl of decls) {
             if (decl.id && decl.id.name) {
@@ -41,10 +119,11 @@ export function extractGlobalVariablesWithConflicts(code: string): { globals: { 
                         }
                     } catch { value = undefined; type = 'other'; }
                 }
+                const control = type === 'number' ? sliderLookup(decl) : undefined;
                 if (RESERVED_GLOBALS.has(decl.id.name)) {
                     conflicts.push(decl.id.name);
                 } else {
-                    globals.push({ name: decl.id.name, value, type });
+                    globals.push({ name: decl.id.name, value, type, control });
                 }
             }
         }
@@ -66,10 +145,19 @@ export function extractGlobalVariablesWithConflicts(code: string): { globals: { 
 }
 
 // Extract top-level global variables, excluding reserved names
-export function extractGlobalVariables(code: string): { name: string, value: any, type: string }[] {
+export function extractGlobalVariables(code: string): { name: string, value: any, type: string, control?: VarControl }[] {
     const acorn = require('acorn');
-    const ast = recast.parse(code, { parser: { parse: (src: string) => acorn.parse(src, { ecmaVersion: 2020, sourceType: 'script' }) } });
-    const globals: { name: string, value: any, type: string }[] = [];
+    const ast = recast.parse(code, {
+        parser: {
+            parse: (src: string) => acorn.parse(src, {
+                ecmaVersion: 2020,
+                sourceType: 'script',
+                locations: true,
+            }),
+        },
+    });
+    const globals: { name: string, value: any, type: string, control?: VarControl }[] = [];
+    const sliderLookup = createSliderLookup(code);
     function extractFromDecls(decls: any[]) {
         for (const decl of decls) {
             if (decl.id && decl.id.name) {
@@ -101,7 +189,8 @@ export function extractGlobalVariables(code: string): { name: string, value: any
                         }
                     } catch { value = undefined; type = 'other'; }
                 }
-                globals.push({ name: decl.id.name, value, type });
+                const control = type === 'number' ? sliderLookup(decl) : undefined;
+                globals.push({ name: decl.id.name, value, type, control });
             }
         }
     }
