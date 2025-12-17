@@ -93,6 +93,10 @@ export function activate(context: vscode.ExtensionContext) {
   let variablesService: VariablesServiceApi;
   // OSC service is now started/stopped manually via status bar
   let oscService: OscServiceApi | null = null;
+  const updateShowFpsContext = (value: boolean) => {
+    void vscode.commands.executeCommand('setContext', 'p5ShowFPS', !!value);
+  };
+  updateShowFpsContext(cfg.getShowFPS());
   const broadcastOscToPanels = (address: string, args: any[]) => {
     for (const [, panel] of webviewPanelMap.entries()) {
       try {
@@ -1596,6 +1600,32 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.window.showInformationMessage('Reload on typing is now enabled.');
     })
   );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('P5Studio.enableShowFPS', async () => {
+      try {
+        await cfg.setShowFPS(true);
+        updateShowFpsContext(true);
+        vscode.window.showInformationMessage('FPS overlay enabled.');
+      } catch (err) {
+        console.error('[P5Studio] Failed enabling FPS overlay', err);
+        vscode.window.showErrorMessage('Failed to enable the FPS overlay.');
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('P5Studio.disableShowFPS', async () => {
+      try {
+        await cfg.setShowFPS(false);
+        updateShowFpsContext(false);
+        vscode.window.showInformationMessage('FPS overlay disabled.');
+      } catch (err) {
+        console.error('[P5Studio] Failed disabling FPS overlay', err);
+        vscode.window.showErrorMessage('Failed to disable the FPS overlay.');
+      }
+    })
+  );
   // Command to open selected text in the P5 reference
   context.subscriptions.push(
     vscode.commands.registerCommand('extension.openSelectedText', () => {
@@ -1898,6 +1928,7 @@ export function activate(context: vscode.ExtensionContext) {
       // Immediately apply showFPS changes in all open panels (debounced)
       if (e.affectsConfiguration('P5Studio.showFPS')) {
         const show = cfg.getShowFPS();
+        updateShowFpsContext(show);
         if (_showFpsDebounceTimer) clearTimeout(_showFpsDebounceTimer);
         _showFpsDebounceTimer = setTimeout(() => {
           for (const [, panel] of webviewPanelMap.entries()) {
