@@ -468,6 +468,15 @@ export function activate(context: vscode.ExtensionContext) {
     try {
       const docUri = getDocUriForPanel(panel)?.toString();
       if (docUri) {
+        // If stepping paused a draw-loop sketch, ensure it resumes when stopping debugging.
+        try {
+          const hasDraw = contextService?.getHasDraw?.(docUri);
+          if (hasDraw) {
+            try { sendToWebview(panel, { type: 'resumeDrawLoop' }); } catch { }
+            try { contextService?.setDrawLoopPaused(docUri, false); } catch { }
+          }
+        } catch { }
+
         // Clear editor-line highlight for the sketch tied to this panel
         const edToClear = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === docUri);
         try { if (edToClear) clearStepHighlight(edToClear); } catch { }
@@ -557,7 +566,7 @@ export function activate(context: vscode.ExtensionContext) {
   p5RefStatusBar.command = 'extension.openP5Ref';
   p5RefStatusBar.text = '$(book) P5.js Reference'; // Status bar text
   p5RefStatusBar.tooltip = '$(book) Open P5.js Reference'; // Tooltip text
-  p5RefStatusBar.color = '#ff0000';
+  p5RefStatusBar.color = '#ed225d';
   p5RefStatusBar.tooltip = '$(book) Open P5.js Reference';
   context.subscriptions.push(p5RefStatusBar);
   p5RefStatusBar.show();

@@ -1585,7 +1585,12 @@ function runUserSketch(code){
         const _origDraw = inst._draw;
         inst._draw = function(ts) {
           try {
-            if (window.__liveP5FrameInProgress && !window.__liveP5SteppingDone) {
+            const steppingHelpersActive =
+              (typeof window.__liveP5WaitStep === 'function')
+              || (typeof window.__liveP5StepAdvance === 'function')
+              || (typeof window.__liveP5Highlight === 'function')
+              || (typeof window.__liveP5ClearHighlight === 'function');
+            if (steppingHelpersActive && window.__liveP5FrameInProgress && !window.__liveP5SteppingDone) {
               if (inst._loop) {
                 try { inst._requestAnimId = window.requestAnimationFrame(inst._draw); } catch {}
               }
@@ -1765,6 +1770,22 @@ window.addEventListener("message", e => {
     case "reload":
       // Always reset capture UI/timer on reload so the panel timer shows fresh
       try { if (typeof window._resetCaptureUIAndTimer === 'function') window._resetCaptureUIAndTimer(); } catch {}
+      // Clear stepping state so the draw loop cannot remain frozen after stopping debugging.
+      try {
+        window.__liveP5Gate = null;
+        window.__liveP5DrawBusy = false;
+        window.__liveP5FrameCounter = 0;
+        window.__liveP5StepResolve = null;
+        window.__liveP5StepAdvance = null;
+        window.__liveP5WaitStep = null;
+        window.__liveP5Highlight = null;
+        window.__liveP5ClearHighlight = null;
+        window.__liveP5FrameInProgress = false;
+        window.__liveP5ShouldWaitForFrame = false;
+        window.__liveP5SteppingDone = true;
+        window.__liveP5Stepping = false;
+        window.__liveP5SetupDone = true;
+      } catch {}
       const nextLoopPaused = (typeof data.loopPaused === 'boolean') ? !!data.loopPaused : false;
       window._p5PendingLoopPaused = nextLoopPaused;
       window._p5LoopPaused = nextLoopPaused;
