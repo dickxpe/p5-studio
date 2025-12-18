@@ -1574,6 +1574,29 @@ function runUserSketch(code){
 
   try {
   window._p5Instance = new window.p5();
+    // --- Stepping compatibility (p5 1.x):
+    // When debug stepping, user draw() is instrumented as async and yields between statements.
+    // p5 1.x keeps calling redraw() every frame, which calls resetMatrix() and wipes transforms
+    // between steps. While a stepped frame is in progress, skip redraw() to preserve state.
+    try {
+      const inst = window._p5Instance;
+      if (inst && typeof inst._draw === 'function' && !inst._p5SteppingDrawLoopPatched) {
+        inst._p5SteppingDrawLoopPatched = true;
+        const _origDraw = inst._draw;
+        inst._draw = function(ts) {
+          try {
+            if (window.__liveP5FrameInProgress && !window.__liveP5SteppingDone) {
+              if (inst._loop) {
+                try { inst._requestAnimId = window.requestAnimationFrame(inst._draw); } catch {}
+              }
+              return;
+            }
+          } catch {}
+          try { return _origDraw.call(inst, ts); }
+          catch (e) { try { return _origDraw(ts); } catch { throw e; } }
+        };
+      }
+    } catch {}
     try { applyDrawLoopState(); } catch {}
     // After p5 starts, poll for setup completion once and push all current globals to VARIABLES panel
     try {
