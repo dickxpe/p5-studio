@@ -15,6 +15,7 @@ import { clearStepHighlight, applyStepHighlight } from './editors/stepHighlight'
 import { instrumentSetupForSingleStep } from './processing/instrumentation';
 import { OscServiceApi } from './osc/oscService';
 import { registerVariablesService, VariablesServiceApi } from './variables';
+import { registerTriggersService, TriggersServiceApi } from './triggers';
 import { registerBlockly, BlocklyApi } from './blockly/blocklyPanel';
 import { registerLinting, LintApi } from './lint';
 import { registerRestoreManager, RESTORE_BLOCKLY_KEY, RESTORE_LIVE_KEY, RESTORE_LIVE_ORDER_KEY } from './restore/restoreManager';
@@ -28,6 +29,7 @@ import { config as cfg } from './config/index';
 import { setHtmlAndPost } from './webview/helpers';
 import { prepareSketch, validateSource, ReloadReason } from './processing/sketchPrep';
 import { injectLoopGuards } from './processing/loopGuards';
+import { extractTriggers } from './processing/triggers';
 // Commands groups
 import { registerDebugCommands } from './commands/debug';
 import { registerCaptureCommands } from './commands/capture';
@@ -91,6 +93,8 @@ export function activate(context: vscode.ExtensionContext) {
   try { (globalThis as any).RESERVED_GLOBALS = RESERVED_GLOBALS; } catch { }
   // VARIABLES SERVICE
   let variablesService: VariablesServiceApi;
+  // TRIGGERS SERVICE
+  let triggersService: TriggersServiceApi;
   // OSC service is now started/stopped manually via status bar
   let oscService: OscServiceApi | null = null;
   const updateShowFpsContext = (value: boolean) => {
@@ -339,6 +343,51 @@ export function activate(context: vscode.ExtensionContext) {
     getDocUriForPanel: (p) => getDocUriForPanel(p),
   });
   const updateVariablesPanel = () => { try { variablesService.updateVariablesPanel(); } catch { } };
+
+  // Initialize TRIGGERS service (wraps view + storage)
+  triggersService = registerTriggersService(context, {
+    getActiveP5Panel: () => getActiveP5Panel(),
+    getDocUriForPanel: (p) => getDocUriForPanel(p),
+    invokeTrigger: (panel, fnName, args) => {
+      try {
+        const coerceArg = (v: any) => {
+          if (typeof v !== 'string') return v;
+          const s = v.trim();
+          if (s === '') return v;
+          if (s === 'true') return true;
+          if (s === 'false') return false;
+          if (s === 'null') return null;
+          // numeric-looking (supports comma decimal and scientific notation)
+          let numCandidate = s;
+          const commaCount = (numCandidate.match(/,/g) || []).length;
+          const hasDot = numCandidate.indexOf('.') !== -1;
+          if (commaCount === 1 && !hasDot) {
+            numCandidate = numCandidate.replace(',', '.');
+          }
+          if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(numCandidate)) {
+            const n = Number(numCandidate);
+            if (Number.isFinite(n)) return n;
+          }
+          return v;
+        };
+        const safeArgs = Array.isArray(args) ? args.map(coerceArg) : [];
+        sendToWebview(panel, { type: 'invokeTrigger', fnName, args: safeArgs });
+      } catch { }
+    },
+  });
+  const updateTriggersPanel = () => { try { triggersService.updateTriggersPanel(); } catch { } };
+
+  const syncTriggersForEditor = (editor?: vscode.TextEditor) => {
+    if (!editor) return;
+    try {
+      const docUri = editor.document.uri.toString();
+      const text = editor.document.getText();
+      const triggers = extractTriggers(text);
+      triggersService.setTriggersForDoc(docUri, triggers);
+      updateTriggersPanel();
+    } catch { }
+  };
+
   const syncLocalsHeadingForEditor = (editor?: vscode.TextEditor) => {
     if (!editor) return;
     try {
@@ -705,6 +754,7 @@ export function activate(context: vscode.ExtensionContext) {
     updateJsOrTsContext(editor);
     updateBlocklyAvailability(editor);
     if (!editor) return;
+    syncTriggersForEditor(editor);
     const docUri = editor.document.uri.toString();
     // Restore focus for P5 panel and set hasP5Webview context per sketch
     const panel = webviewPanelMap.get(docUri);
@@ -712,9 +762,11 @@ export function activate(context: vscode.ExtensionContext) {
       panel.reveal(panel.viewColumn, true);
       activeP5Panel = panel;
       vscode.commands.executeCommand('setContext', 'hasP5Webview', true);
+      updateTriggersPanel();
     } else {
       // No webpanel for this sketch: show Open P5 button
       vscode.commands.executeCommand('setContext', 'hasP5Webview', false);
+      updateTriggersPanel();
     }
     // Restore focus for Blockly panel if it exists
     try {
@@ -743,6 +795,7 @@ export function activate(context: vscode.ExtensionContext) {
       updateBlocklyAvailability(vscode.window.activeTextEditor);
       // Stop highlighting as soon as code is changed
       clearStepHighlight(vscode.window.activeTextEditor);
+      syncTriggersForEditor(vscode.window.activeTextEditor);
     }
 
     // Lint on every text change in the script editor
@@ -1058,6 +1111,7 @@ export function activate(context: vscode.ExtensionContext) {
           localResourceRoots,
         });
         syncLocalsHeadingForEditor(editor);
+        syncTriggersForEditor(editor);
         try { (panel as any)._p5Version = selectedVersion; } catch { }
 
         // Focus the output channel for the new sketch immediately
@@ -1085,6 +1139,8 @@ export function activate(context: vscode.ExtensionContext) {
                 activeP5Panel = panel;
                 // Keep VARIABLES panel in sync with the newly active webview tab
                 updateVariablesPanel();
+                // Keep TRIGGERS panel in sync with the newly active webview tab
+                updateTriggersPanel();
               }
             } catch { }
           });
@@ -1096,6 +1152,7 @@ export function activate(context: vscode.ExtensionContext) {
           try { contextService.setSteppingActive(docUri, false); } catch { }
           contextService.clearForDoc(docUri);
           try { variablesService.clearForDoc(docUri); } catch { }
+          try { triggersService.clearForDoc(docUri); } catch { }
           try { disposeOutputForDoc(docUri); } catch { }
           if (activeP5Panel === panel) {
             vscode.commands.executeCommand('setContext', 'p5DebugPrimed', false);
@@ -1103,6 +1160,8 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.commands.executeCommand('setContext', 'p5SteppingActive', false);
             // If the disposed panel was active, refresh VARIABLES panel to reflect no active sketch
             updateVariablesPanel();
+            // If the disposed panel was active, refresh TRIGGERS panel to reflect no active sketch
+            updateTriggersPanel();
           }
         });
 
@@ -1169,6 +1228,7 @@ export function activate(context: vscode.ExtensionContext) {
             });
           } else if (msg.type === 'submitTopInputs') {
             syncLocalsHeadingForEditor(editor);
+            syncTriggersForEditor(editor);
             await handleSubmitTopInputs({ panel, editor, values: msg.values }, {
               detectTopLevelInputs,
               preprocessTopLevelInputs,
@@ -1205,6 +1265,7 @@ export function activate(context: vscode.ExtensionContext) {
             return;
           } else if (msg.type === 'reload-button-clicked') {
             syncLocalsHeadingForEditor(editor);
+            syncTriggersForEditor(editor);
             await handleReloadClicked({ panel, editor, preserveGlobals: !!msg.preserveGlobals }, {
               getTime,
               getOrCreateOutputChannel,
@@ -1241,6 +1302,7 @@ export function activate(context: vscode.ExtensionContext) {
           else if (msg.type === 'step-run-clicked') {
             try { contextService.setSteppingActive(docUri, true); } catch { }
             syncLocalsHeadingForEditor(editor);
+            syncTriggersForEditor(editor);
             await handleStepRunClicked({ panel, editor }, {
               getTime,
               getOrCreateOutputChannel,
@@ -1289,6 +1351,7 @@ export function activate(context: vscode.ExtensionContext) {
           else if (msg.type === 'single-step-clicked') {
             try { contextService.setSteppingActive(docUri, true); } catch { }
             syncLocalsHeadingForEditor(editor);
+            syncTriggersForEditor(editor);
             await handleSingleStepClicked({ panel, editor }, {
               getTime,
               getOrCreateOutputChannel,

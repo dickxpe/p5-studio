@@ -48,6 +48,7 @@ export type ExtensionToWebviewMessage =
     // Additional control/event messages used by the extension
     | { type: 'oscReceive'; address: string; args?: any[] }
     | { type: 'showError'; message: string }
+    | { type: 'invokeTrigger'; fnName: string; args?: any[] }
     | { type: 'invokeStepRun' }
     | { type: 'invokeContinue' }
     | { type: 'invokeSingleStep' }

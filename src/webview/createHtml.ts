@@ -1672,6 +1672,44 @@ function applyDrawLoopState(){
 window.addEventListener("message", e => {
   const data = e.data;
   switch(data.type){
+    case "invokeTrigger": {
+      const fnName = String((data && (data.fnName || data.name)) || '');
+      const rawArgs = Array.isArray(data && data.args) ? data.args : [];
+      if (!fnName) break;
+      try {
+        const fn = window[fnName];
+        if (typeof fn !== 'function') {
+          try { vscode.postMessage({ type: 'showError', message: '[TRIGGER] Function not found: ' + fnName }); } catch {}
+          break;
+        }
+        const coerceArg = (v) => {
+          if (typeof v !== 'string') return v;
+          const s = v.trim();
+          if (s === '') return v;
+          if (s === 'true') return true;
+          if (s === 'false') return false;
+          if (s === 'null') return null;
+          // numeric-looking (also supports comma decimal and scientific notation)
+          let numCandidate = s;
+          const commaCount = (numCandidate.match(/,/g) || []).length;
+          const hasDot = numCandidate.indexOf('.') !== -1;
+          if (commaCount === 1 && !hasDot) {
+            numCandidate = numCandidate.replace(',', '.');
+          }
+          if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(numCandidate)) {
+            const n = Number(numCandidate);
+            if (Number.isFinite(n)) return n;
+          }
+          return v;
+        };
+        const args = rawArgs.map(coerceArg);
+        fn.apply(window, args);
+      } catch (err) {
+        const raw = (err && err.message) ? String(err.message) : String(err);
+        try { vscode.postMessage({ type: 'showError', message: '[TRIGGER] ' + raw }); } catch {}
+      }
+      break;
+    }
     case "invokeReload": {
       const preserveGlobals = (data && typeof data.preserveGlobals === 'boolean') ? !!data.preserveGlobals : true;
       vscode.postMessage({type:"reload-button-clicked", preserveGlobals});

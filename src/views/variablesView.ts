@@ -70,6 +70,7 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
       th.name-col, td.name-col { width: 45%; }
       th.value-col, td.value-col { width: 35%; }
       th.type-col, td.type-col { width: 20%; }
+      td.value-col { overflow: hidden; }
       th { background: #2222; color: #307dc1; }
       /* Make inputs fill the table cell (render-only) */
       input[type="number"],
@@ -221,9 +222,12 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
         gap: 6px;
         height: 100%;
         min-height: 0;
+        min-width: 0;
       }
       .slider-wrapper input[type="range"] {
         flex: 1;
+        min-width: 0;
+        width: 100%;
         accent-color: #2f78b9;
         background-color: transparent;
         -webkit-appearance: none;
@@ -832,24 +836,48 @@ function patchValues(targetId, vars, scope) {
   if (needRebuild || !_rendered) { buildTable(targetId, vars, scope); return; }
   for (var j = 0; j < vars.length; ++j) {
     var vv = vars[j];
-    var input = tableDiv.querySelector('input[data-var="' + vv.name + '"][data-scope="' + scope + '"]');
-    if (!input) { needRebuild = true; break; }
     var key = makeInvalidKey(vv.name, scope);
     if (_invalidVars.has(key)) {
       continue;
     }
-    if (input === document.activeElement) continue;
-    if (input.getAttribute('data-slider-field') === 'true') {
+    var sliderControl = (vv && vv.control && vv.control.kind === 'slider') ? vv.control : null;
+    // Slider controls render two inputs (number + range). Prefer patching the range input.
+    if (sliderControl && vv.type === 'number') {
+      var sliderInput = tableDiv.querySelector('input[data-slider-field="true"][data-var="' + vv.name + '"][data-scope="' + scope + '"]');
+      if (!sliderInput) { needRebuild = true; break; }
+      var sliderKey = sliderFieldKey(scope, vv.name);
+      var numberInput = tableDiv.querySelector('input[data-slider-number="true"][data-slider-key="' + sliderKey + '"]');
+      if (sliderInput === document.activeElement || (numberInput && numberInput === document.activeElement)) continue;
+
       var sliderVal = normalizeForInput('number', vv.value);
-      var sliderMinAttr = Number(input.getAttribute('min'));
-      var sliderMaxAttr = Number(input.getAttribute('max'));
+      var sliderMinAttr = Number(sliderInput.getAttribute('min'));
+      var sliderMaxAttr = Number(sliderInput.getAttribute('max'));
       var sliderNum = Number(sliderVal);
-      if (!Number.isFinite(sliderNum)) sliderNum = Number.isFinite(sliderMinAttr) ? sliderMinAttr : 0;
+      // Avoid Number('') => 0 causing spurious resets when value is missing.
+      if (sliderVal === '' || !Number.isFinite(sliderNum)) sliderNum = Number.isFinite(sliderMinAttr) ? sliderMinAttr : 0;
       if (Number.isFinite(sliderMinAttr) && sliderNum < sliderMinAttr) sliderNum = sliderMinAttr;
       if (Number.isFinite(sliderMaxAttr) && sliderNum > sliderMaxAttr) sliderNum = sliderMaxAttr;
       var sliderStr = Number.isFinite(sliderNum) ? sliderNum.toString() : sliderVal;
-      if (input.value !== sliderStr) input.value = sliderStr;
+      if (sliderInput.value !== sliderStr) sliderInput.value = sliderStr;
       setSliderNumberInput(tableDiv, scope, vv.name, sliderStr);
+      continue;
+    }
+
+    var input = tableDiv.querySelector('input[data-var="' + vv.name + '"][data-scope="' + scope + '"]');
+    if (!input) { needRebuild = true; break; }
+    if (input === document.activeElement) continue;
+    if (input.getAttribute('data-slider-field') === 'true') {
+      // Legacy/defensive: if we ever render only a range input for a var.
+      var sliderVal2 = normalizeForInput('number', vv.value);
+      var sliderMinAttr2 = Number(input.getAttribute('min'));
+      var sliderMaxAttr2 = Number(input.getAttribute('max'));
+      var sliderNum2 = Number(sliderVal2);
+      if (sliderVal2 === '' || !Number.isFinite(sliderNum2)) sliderNum2 = Number.isFinite(sliderMinAttr2) ? sliderMinAttr2 : 0;
+      if (Number.isFinite(sliderMinAttr2) && sliderNum2 < sliderMinAttr2) sliderNum2 = sliderMinAttr2;
+      if (Number.isFinite(sliderMaxAttr2) && sliderNum2 > sliderMaxAttr2) sliderNum2 = sliderMaxAttr2;
+      var sliderStr2 = Number.isFinite(sliderNum2) ? sliderNum2.toString() : sliderVal2;
+      if (input.value !== sliderStr2) input.value = sliderStr2;
+      setSliderNumberInput(tableDiv, scope, vv.name, sliderStr2);
     } else if (vv.type === 'boolean') {
       var chk = !!vv.value;
       if (input.checked !== chk) input.checked = chk;
