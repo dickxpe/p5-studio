@@ -1238,6 +1238,14 @@ export function activate(context: vscode.ExtensionContext) {
             handleFocusScriptTab();
             return;
           }
+          if (msg.type === 'openLoopGuardSettings') {
+            try {
+              await vscode.commands.executeCommand('workbench.action.openSettings', 'P5Studio.loopGuard');
+            } catch {
+              await vscode.commands.executeCommand('workbench.action.openSettings');
+            }
+            return;
+          }
           if (msg.type === 'captureVisibilityChanged') {
             handleCaptureVisibilityChanged({ panel, editor, visible: !!msg.visible }, {
               setCaptureVisible: (docUri, vis) => contextService.setCaptureVisible(docUri, vis),
@@ -1267,7 +1275,14 @@ export function activate(context: vscode.ExtensionContext) {
           } else if (msg.type === 'loopGuardHit') {
             try {
               const toast = 'Infinite loop detected, sketch was terminated.\n\r VS Code can be unresponsive for a few seconds.';
-              vscode.window.showWarningMessage(toast);
+              const action = await vscode.window.showWarningMessage(toast, 'Open Loop Guard Settings');
+              if (action === 'Open Loop Guard Settings') {
+                try {
+                  await vscode.commands.executeCommand('workbench.action.openSettings', 'P5Studio.loopGuard');
+                } catch {
+                  await vscode.commands.executeCommand('workbench.action.openSettings');
+                }
+              }
             } catch { }
           } else if (msg.type === 'showError') {
             handleShowError({ panel, editor, message: msg.message }, {

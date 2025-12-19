@@ -1358,7 +1358,34 @@ window.addEventListener('DOMContentLoaded', () => {
 function showError(msg){
   window._p5ErrorActive = true;
   const el = document.getElementById("error-overlay");
-  if(el){el.textContent = msg; el.style.display = "block";}
+  if(el){
+    // Render as DOM so we can optionally add an action link for loop-guard errors.
+    while (el.firstChild) { try { el.removeChild(el.firstChild); } catch { break; } }
+    const msgEl = document.createElement('div');
+    msgEl.textContent = msg;
+    el.appendChild(msgEl);
+
+    try {
+      const isLoopGuard = !!window.__p5LoopGuardActive
+        && typeof msg === 'string'
+        && msg.indexOf('Potential infinite loop detected') !== -1;
+      if (isLoopGuard) {
+        const linkWrap = document.createElement('div');
+        const a = document.createElement('a');
+        a.href = '#';
+        a.textContent = 'Open Loop Guard Settings';
+        try { a.style.textDecoration = 'underline'; a.style.cursor = 'pointer'; } catch {}
+        a.addEventListener('click', (ev) => {
+          try { ev.preventDefault(); } catch {}
+          try { vscode.postMessage({ type: 'openLoopGuardSettings' }); } catch {}
+        });
+        linkWrap.appendChild(a);
+        el.appendChild(linkWrap);
+      }
+    } catch {}
+
+    el.style.display = "block";
+  }
   try {
     window.__p5LoopGuardActive = !!window.__p5LoopGuardActive;
     window.__p5LoopGuardMsg = msg || '';

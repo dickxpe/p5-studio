@@ -9,6 +9,7 @@ export type WebviewToExtensionMessage =
     | { type: 'log'; message: any; focus?: boolean }
     | { type: 'showError'; message: string }
     | { type: 'loopGuardHit'; message?: string }
+    | { type: 'openLoopGuardSettings' }
     | { type: 'submitTopInputs'; values: any[] }
     | { type: 'reload-button-clicked'; preserveGlobals?: boolean }
     | { type: 'context-menu-refresh' }
