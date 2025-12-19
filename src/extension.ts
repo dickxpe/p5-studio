@@ -1274,7 +1274,13 @@ export function activate(context: vscode.ExtensionContext) {
             });
           } else if (msg.type === 'loopGuardHit') {
             try {
-              const toast = 'Infinite loop detected, sketch was terminated.\n\r VS Code can be unresponsive for a few seconds.';
+              const loopCfg = vscode.workspace.getConfiguration('P5Studio');
+              const enabled = loopCfg.get<boolean>('loopGuard.enabled', true) !== false;
+              const maxIterations = loopCfg.get<number>('loopGuard.maxIterations', 10000);
+              const maxTimeMs = loopCfg.get<number>('loopGuard.maxTimeMs', 500);
+
+              const settingsLine = `maxIterations=${maxIterations}, maxTimeMs=${maxTimeMs}`;
+              const toast = 'Infinite loop detected, sketch was terminated.\n\r' + settingsLine + '\n\rVS Code can be unresponsive for a few seconds.';
               const action = await vscode.window.showWarningMessage(toast, 'Open Loop Guard Settings');
               if (action === 'Open Loop Guard Settings') {
                 try {

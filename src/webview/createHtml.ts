@@ -1370,10 +1370,20 @@ function showError(msg){
         && typeof msg === 'string'
         && msg.indexOf('Potential infinite loop detected') !== -1;
       if (isLoopGuard) {
+        try {
+          const cfg = (window && window.__p5LoopGuardConfig) || {};
+          const enabled = (cfg && typeof cfg.enabled === 'boolean') ? cfg.enabled : undefined;
+          const maxIterations = (cfg && typeof cfg.maxIterations === 'number') ? cfg.maxIterations : undefined;
+          const maxTimeMs = (cfg && typeof cfg.maxTimeMs === 'number') ? cfg.maxTimeMs : undefined;
+          const cfgLine = document.createElement('div');
+          cfgLine.textContent = 'maxIterations=' + maxIterations + ', maxTimeMs=' + maxTimeMs;
+          el.appendChild(cfgLine);
+        } catch {}
+
         const linkWrap = document.createElement('div');
         const a = document.createElement('a');
         a.href = '#';
-        a.textContent = 'Open Loop Guard Settings';
+        a.textContent = 'Edit Loop Guard Settings to allow for longer loops';
         try { a.style.textDecoration = 'underline'; a.style.cursor = 'pointer'; } catch {}
         a.addEventListener('click', (ev) => {
           try { ev.preventDefault(); } catch {}
