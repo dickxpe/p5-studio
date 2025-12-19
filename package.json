@@ -2,7 +2,7 @@
   "name": "p5-studio",
   "displayName": "P5 Studio",
   "description": "Live code p5js in VS Code",
-  "version": "1.1.9",
+  "version": "1.1.10",
   "icon": "images/ICON.png",
   "author": {
     "name": "peterdickx"
@@ -246,12 +246,12 @@
         {
           "id": "p5studioVariablesPanel",
           "title": "VARIABLES",
-          "icon": "images/p5.svg"
+          "icon": "images/vars.svg"
         },
         {
           "id": "p5studioTriggersPanel",
           "title": "Triggers",
-          "icon": "images/p5.svg"
+          "icon": "images/trigs.svg"
         }
       ]
     },
@@ -260,7 +260,7 @@
         {
           "id": "p5studioVariablesView",
           "name": "VARIABLES",
-          "icon": "p5.svg",
+          "icon": "images/vars.svg",
           "type": "webview"
         }
       ],
@@ -268,7 +268,7 @@
         {
           "id": "p5studioTriggersView",
           "name": "Triggers",
-          "icon": "p5.svg",
+          "icon": "images/trigs.svg",
           "type": "webview"
         }
       ]

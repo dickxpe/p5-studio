@@ -1272,6 +1272,12 @@ export function activate(context: vscode.ExtensionContext) {
           } else if (msg.type === 'context-menu-toggle-capture') {
             await toggleCapture(panel);
             return;
+          } else if (msg.type === 'context-menu-toggle-fps') {
+            const show = !!(msg as any).show;
+            try { await cfg.setShowFPS(show); } catch { }
+            try { updateShowFpsContext(show); } catch { }
+            try { sendToWebview(panel, { type: 'toggleFPS', show }); } catch { }
+            return;
           } else if (msg.type === 'reload-button-clicked') {
             syncLocalsHeadingForEditor(editor);
             syncTriggersForEditor(editor);

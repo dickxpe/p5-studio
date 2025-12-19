@@ -1023,11 +1023,23 @@ window.addEventListener("message", function(e) {
       customMenu.remove();
     });
 
+    const fpsEl = document.getElementById('fps-indicator');
+    const fpsVisible = !!(fpsEl && fpsEl.style && fpsEl.style.display !== 'none');
+    const fpsItem = document.createElement('div');
+    fpsItem.className = 'p5-custom-context-menu-item';
+    fpsItem.textContent = fpsVisible ? 'Hide FPS' : 'Show FPS';
+    fpsItem.addEventListener('mousedown', function(ev) { ev.stopPropagation(); ev.preventDefault(); });
+    fpsItem.addEventListener('click', function() {
+      try { vscode.postMessage({ type: 'context-menu-toggle-fps', show: !fpsVisible }); } catch { }
+      customMenu.remove();
+    });
+
     customMenu.appendChild(saveItem);
     customMenu.appendChild(copyItem);
     customMenu.appendChild(refreshItem);
     customMenu.appendChild(pauseItem);
     customMenu.appendChild(recordItem);
+    customMenu.appendChild(fpsItem);
     document.body.appendChild(customMenu);
 
     // Remove menu on click elsewhere or escape

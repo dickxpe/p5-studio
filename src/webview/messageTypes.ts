@@ -14,6 +14,7 @@ export type WebviewToExtensionMessage =
     | { type: 'context-menu-refresh' }
     | { type: 'context-menu-toggle-pause'; pause: boolean }
     | { type: 'context-menu-toggle-capture' }
+    | { type: 'context-menu-toggle-fps'; show: boolean }
     | { type: 'step-run-clicked' }
     | { type: 'continue-clicked' }
     | { type: 'single-step-clicked' }
