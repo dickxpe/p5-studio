@@ -917,6 +917,31 @@ window.addEventListener("message", function(e) {
     document.head.appendChild(style);
   }
   let customMenu = null;
+  function clampMenuToViewport(menuEl, clientX, clientY) {
+    try {
+      if (!menuEl) return;
+      const margin = 8;
+      const vw = window.innerWidth || 0;
+      const vh = window.innerHeight || 0;
+      // Start at the click position
+      let left = Number(clientX) || 0;
+      let top = Number(clientY) || 0;
+      // Measure after being in DOM (visibility hidden is fine)
+      const rect = menuEl.getBoundingClientRect();
+      if (vw > 0) {
+        if (left + rect.width > vw - margin) left = Math.max(margin, vw - rect.width - margin);
+        if (left < margin) left = margin;
+      }
+      if (vh > 0) {
+        if (top + rect.height > vh - margin) top = Math.max(margin, vh - rect.height - margin);
+        if (top < margin) top = margin;
+      }
+      menuEl.style.left = left + 'px';
+      menuEl.style.top = top + 'px';
+    } catch { }
+  }
+
+  let _menuResizeHandler = null;
   document.addEventListener('contextmenu', function(e) {
     // Only show on canvas (p5Canvas)
     const canvas = e.target && e.target.classList && e.target.classList.contains('p5Canvas') ? e.target : null;
@@ -928,6 +953,8 @@ window.addEventListener("message", function(e) {
     customMenu.className = 'p5-custom-context-menu';
     customMenu.style.left = e.clientX + 'px';
     customMenu.style.top = e.clientY + 'px';
+    // Hide until clamped into the viewport
+    customMenu.style.visibility = 'hidden';
 
     // Helper: get a PNG dataUrl of the canvas at its display size (not upscaled by CSS)
     function getCanvasDataUrlAtDisplaySize() {
@@ -1042,8 +1069,39 @@ window.addEventListener("message", function(e) {
     customMenu.appendChild(fpsItem);
     document.body.appendChild(customMenu);
 
+    // Avoid "shrink-to-fit" width when positioned near the right/bottom edge:
+    // measure once with plenty of space, then freeze the width and only move.
+    try {
+      customMenu.style.width = '';
+      customMenu.style.left = '8px';
+      customMenu.style.top = '8px';
+      const rect = customMenu.getBoundingClientRect();
+      if (rect && rect.width > 0) {
+        customMenu.style.width = rect.width + 'px';
+      }
+    } catch { }
+
+    // Clamp into the visible webview bounds
+    clampMenuToViewport(customMenu, e.clientX, e.clientY);
+    customMenu.style.visibility = '';
+
+    // Keep it clamped if the webview is resized while open
+    _menuResizeHandler = function() {
+      try { if (customMenu) clampMenuToViewport(customMenu, parseFloat(customMenu.style.left || '0'), parseFloat(customMenu.style.top || '0')); } catch { }
+    };
+    try { window.addEventListener('resize', _menuResizeHandler); } catch { }
+
     // Remove menu on click elsewhere or escape
-    function removeMenu() { if (customMenu) { customMenu.remove(); customMenu = null; } }
+    function removeMenu() {
+      if (customMenu) {
+        customMenu.remove();
+        customMenu = null;
+      }
+      try {
+        if (_menuResizeHandler) window.removeEventListener('resize', _menuResizeHandler);
+      } catch { }
+      _menuResizeHandler = null;
+    }
     setTimeout(() => {
   document.addEventListener('mousedown', removeMenu, { once: true });
   document.addEventListener('keydown', function esc(ev) { if (ev && ev.key === 'Escape') { removeMenu(); document.removeEventListener('keydown', esc); } });
