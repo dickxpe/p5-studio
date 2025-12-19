@@ -67,10 +67,19 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
         height: 20px;
         vertical-align: middle;
       }
-      th.name-col, td.name-col { width: 45%; }
-      th.value-col, td.value-col { width: 35%; }
+      th.name-col, td.name-col { width: 35%; }
+      th.value-col, td.value-col { width: 45%; }
       th.type-col, td.type-col { width: 20%; }
       td.value-col { overflow: hidden; }
+      /* Responsive: when the Value column would drop below 256px, hide the Type column */
+      table.hide-type-col th.type-col,
+      table.hide-type-col td.type-col {
+        display: none;
+      }
+      table.hide-type-col th.name-col,
+      table.hide-type-col td.name-col { width: 55%; }
+      table.hide-type-col th.value-col,
+      table.hide-type-col td.value-col { width: 45%; }
       th { background: #2222; color: #307dc1; }
       /* Make inputs fill the table cell (render-only) */
       input[type="number"],
@@ -327,6 +336,56 @@ const vscode = window.acquireVsCodeApi ? acquireVsCodeApi() : null;
 const emptyStateEl = document.getElementById('variables-empty-state');
 const globalsTableEl = document.getElementById('globals-table');
 const localsTableEl = document.getElementById('locals-table');
+const RESPONSIVE_VALUE_MIN_PX = 256;
+
+function measureValueColWidthWhenTypeVisible(table) {
+  if (!table) return 0;
+  var hadHiddenType = table.classList.contains('hide-type-col');
+  try {
+    // Measure the Value column width *as if* the Type column is visible.
+    if (hadHiddenType) table.classList.remove('hide-type-col');
+    var valueCell = table.querySelector('thead th.value-col') || table.querySelector('th.value-col') || table.querySelector('td.value-col');
+    if (valueCell && typeof valueCell.getBoundingClientRect === 'function') {
+      return valueCell.getBoundingClientRect().width;
+    }
+    return table.getBoundingClientRect().width;
+  } catch {
+    return 0;
+  } finally {
+    try {
+      if (hadHiddenType) table.classList.add('hide-type-col');
+    } catch { }
+  }
+}
+
+function updateTypeColumnVisibilityIn(containerEl) {
+  if (!containerEl) return;
+  var tables = containerEl.querySelectorAll('table');
+  tables.forEach(function(table) {
+    try {
+      var valueWidthWhenFull = measureValueColWidthWhenTypeVisible(table);
+      var shouldHide = valueWidthWhenFull > 0 && valueWidthWhenFull < RESPONSIVE_VALUE_MIN_PX;
+      if (shouldHide) table.classList.add('hide-type-col');
+      else table.classList.remove('hide-type-col');
+    } catch { }
+  });
+}
+
+function updateTypeColumnVisibilityAll() {
+  updateTypeColumnVisibilityIn(globalsTableEl);
+  updateTypeColumnVisibilityIn(localsTableEl);
+}
+
+// Keep responsive state updated when the view resizes.
+try {
+  if (typeof ResizeObserver === 'function') {
+    const ro = new ResizeObserver(function() { updateTypeColumnVisibilityAll(); });
+    ro.observe(document.body);
+  } else {
+    window.addEventListener('resize', function() { updateTypeColumnVisibilityAll(); });
+  }
+} catch { }
+
 var _localsHeading = 'locals';
 function getColumnLabel(scope) {
   if (_localsHeading === 'variables') return 'Variable(s)';
@@ -651,6 +710,7 @@ function buildTable(targetId, vars, scope) {
 
   tableDiv.innerHTML = html;
   decorateNumberInputs(tableDiv);
+  updateTypeColumnVisibilityIn(tableDiv);
   var inputs = tableDiv.querySelectorAll('input[data-var]');
   inputs.forEach(function(input) {
     var name = input.getAttribute('data-var');
@@ -896,7 +956,10 @@ function patchValues(targetId, vars, scope) {
     }
   }
   if (needRebuild) buildTable(targetId, vars, scope);
-  else pruneInvalidForScope(scope, vars);
+  else {
+    pruneInvalidForScope(scope, vars);
+    updateTypeColumnVisibilityIn(tableDiv);
+  }
 }
 window.addEventListener('message', function(event) {
   if (event.data && event.data.type === 'setVarsSplit') {
@@ -923,6 +986,7 @@ window.addEventListener('message', function(event) {
       patchValues('globals-table', globals, 'globals');
       patchValues('locals-table', locals, 'locals');
     }
+    updateTypeColumnVisibilityAll();
   }
 });
 </script>
