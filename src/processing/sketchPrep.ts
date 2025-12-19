@@ -205,7 +205,7 @@ export async function prepareSketch(opts: SketchPrepOptions): Promise<SketchPrep
     // Only wrap if we get here with no errors
     code = wrapInSetupIfNeeded(code);
 
-    // Globals snapshot for VARIABLES panel
+    // Globals snapshot for Variables panel
     let filteredGlobals: Array<{ name: string; type: string; control?: VarControl }> = [];
     let readOnly = false;
     try {

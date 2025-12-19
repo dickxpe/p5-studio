@@ -1673,7 +1673,7 @@ function runUserSketch(code){
       }
     } catch {}
     try { applyDrawLoopState(); } catch {}
-    // After p5 starts, poll for setup completion once and push all current globals to VARIABLES panel
+    // After p5 starts, poll for setup completion once and push all current globals to Variables panel
     try {
       if (window._p5SetupWatcher) { try { clearInterval(window._p5SetupWatcher); } catch {} }
       window._p5SetupWatcher = setInterval(() => {
@@ -1693,7 +1693,7 @@ function runUserSketch(code){
                   } else if (t === 'boolean') {
                     val = (val === true || val === 'true' || val === 1 || val === '1');
                   } else if (t !== 'string') {
-                    // Skip complex types for the VARIABLES panel
+                    // Skip complex types for the Variables panel
                     return;
                   }
                   const generatedAt = Date.now();
@@ -1986,7 +1986,7 @@ window.addEventListener("message", e => {
         }
       });
       renderGlobalVarControls(data.variables, readOnly, { suppressPanel });
-      // Install watchers so changes from the sketch propagate live to the VARIABLES panel
+      // Install watchers so changes from the sketch propagate live to the Variables panel
   try { if (typeof window._installGlobalVarWatchers === 'function') window._installGlobalVarWatchers(data.variables); } catch {}
       // Start rAF-based polling to ensure live updates even when accessors cannot be defined
   try { if (typeof window._startGlobalVarPolling === 'function') window._startGlobalVarPolling(data.variables); } catch {}
@@ -2183,7 +2183,7 @@ function updateGlobalVarInSketch(name, value) {
   }
 }
 
-// Live watchers for global variables so the VARIABLES panel updates when the sketch changes values
+// Live watchers for global variables so the Variables panel updates when the sketch changes values
 (function setupVarWatchers(){
   // Backing store for accessor properties
   if (!window._p5GlobalVarValues) window._p5GlobalVarValues = {};
@@ -2380,7 +2380,7 @@ function cloneValueForPost(value) {
 // Dynamically creates/removes the variable drawer and tab, and sets up event listeners for variable changes
 function renderGlobalVarControls(vars, readOnly, opts) {
   const suppressPanel = !!(opts && opts.suppressPanel);
-  // Send globals to the extension for the VARIABLES panel,
+  // Send globals to the extension for the Variables panel,
   // but enrich values with current runtime values if available so we don't revert to initial code values.
   if (!suppressPanel && typeof vscode !== 'undefined' && Array.isArray(vars)) {
     try {

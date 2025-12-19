@@ -54,7 +54,7 @@ Like this extension and want to support me? Buy me a coffee:
 
 3. **Live Coding:**
    - Edit your code and see changes instantly in the webview panel.
-   - Adjust global variables from the VARIABLES panel.
+   - Adjust global variables from the Variables panel.
    - Errors will appear as overlays and in a dedicated output channel per sketch.
 
 4. **Reload Options:**

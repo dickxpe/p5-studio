@@ -998,7 +998,7 @@ window.addEventListener('message', function(event) {
       webviewView.onDidChangeVisibility(() => { if (webviewView.visible) triggerRefresh(); });
       webviewView.onDidDispose(() => { if (variablesPanelView === webviewView) variablesPanelView = undefined; });
 
-      // Attach message listener for updates coming from VARIABLES panel
+      // Attach message listener for updates coming from Variables panel
       webviewView.webview.onDidReceiveMessage((msg) => {
         if (msg && msg.type === 'updateGlobalVar' && msg.name) {
           try {

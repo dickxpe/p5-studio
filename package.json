@@ -245,7 +245,7 @@
       "panel": [
         {
           "id": "p5studioVariablesPanel",
-          "title": "VARIABLES",
+          "title": "Variables",
           "icon": "images/vars.svg"
         },
         {
@@ -259,7 +259,7 @@
       "p5studioVariablesPanel": [
         {
           "id": "p5studioVariablesView",
-          "name": "VARIABLES",
+          "name": "Variables",
           "icon": "images/vars.svg",
           "type": "webview"
         }

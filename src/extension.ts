@@ -91,7 +91,7 @@ function registerClearHighlightCommand(context: vscode.ExtensionContext) {
 export function activate(context: vscode.ExtensionContext) {
   // Make p5/builtin globals visible to the linter via globalThis hook
   try { (globalThis as any).RESERVED_GLOBALS = RESERVED_GLOBALS; } catch { }
-  // VARIABLES SERVICE
+  // Variables SERVICE
   let variablesService: VariablesServiceApi;
   // TRIGGERS SERVICE
   let triggersService: TriggersServiceApi;
@@ -337,7 +337,7 @@ export function activate(context: vscode.ExtensionContext) {
     return undefined;
   }
 
-  // Initialize VARIABLES service (wraps view + storage)
+  // Initialize Variables service (wraps view + storage)
   variablesService = registerVariablesService(context, {
     getActiveP5Panel: () => getActiveP5Panel(),
     getDocUriForPanel: (p) => getDocUriForPanel(p),
@@ -403,7 +403,7 @@ export function activate(context: vscode.ExtensionContext) {
     } catch { }
   };
 
-  // Initialize context service now that we can update the VARIABLES panel
+  // Initialize context service now that we can update the Variables panel
   contextService = registerContextService(context, {
     getActiveP5Panel: () => getActiveP5Panel(),
     getDocUriForPanel: (p) => getDocUriForPanel(p),
@@ -1146,7 +1146,7 @@ export function activate(context: vscode.ExtensionContext) {
             try {
               if (panel.active) {
                 activeP5Panel = panel;
-                // Keep VARIABLES panel in sync with the newly active webview tab
+                // Keep Variables panel in sync with the newly active webview tab
                 updateVariablesPanel();
                 // Keep TRIGGERS panel in sync with the newly active webview tab
                 updateTriggersPanel();
@@ -1167,7 +1167,7 @@ export function activate(context: vscode.ExtensionContext) {
             vscode.commands.executeCommand('setContext', 'p5DebugPrimed', false);
             vscode.commands.executeCommand('setContext', 'p5CaptureVisible', false);
             vscode.commands.executeCommand('setContext', 'p5SteppingActive', false);
-            // If the disposed panel was active, refresh VARIABLES panel to reflect no active sketch
+            // If the disposed panel was active, refresh Variables panel to reflect no active sketch
             updateVariablesPanel();
             // If the disposed panel was active, refresh TRIGGERS panel to reflect no active sketch
             updateTriggersPanel();
