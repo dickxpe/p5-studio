@@ -12,6 +12,8 @@ export interface VariablesViewDeps {
   getHasDrawForDoc: (docUri: string) => boolean;
   setGlobalValue: (docUri: string, name: string, value: any, opts?: { updatedAt?: number }) => void;
   setLocalValue: (docUri: string, name: string, value: any) => void;
+  // One-shot: return true to force the webview to rebuild its tables (dropping focus).
+  consumeForceRebuildForDoc?: (docUri: string) => boolean;
 }
 
 let variablesPanelView: vscode.WebviewView | undefined;
@@ -25,6 +27,7 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
       let locals: GlobalVar[] = [];
       let localsHeading: 'locals' | 'variables' = 'locals';
       let hasDraw = false;
+      let forceRebuild = false;
       if (panel) {
         const docUri = deps.getDocUriForPanel(panel)?.toString();
         if (docUri) {
@@ -36,9 +39,10 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
           try {
             hasDraw = !!deps.getHasDrawForDoc(docUri);
           } catch { hasDraw = false; }
+          try { forceRebuild = !!deps.consumeForceRebuildForDoc?.(docUri); } catch { forceRebuild = false; }
         }
       }
-      variablesPanelView.webview.postMessage({ type: 'setVarsSplit', globals, locals, localsHeading, hasDraw });
+      variablesPanelView.webview.postMessage({ type: 'setVarsSplit', globals, locals, localsHeading, hasDraw, forceRebuild });
     } catch { }
   }
 
@@ -55,8 +59,9 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
   <head>
     <meta charset="UTF-8" />
     <style>
-      body { margin: 0; font-family: monospace; color: var(--vscode-editor-foreground); background: transparent; font-size: 12px; }
-      .wrap { padding: 8px; overflow-x: auto; }
+      html, body { margin: 0 !important; padding: 0 !important; }
+      body { font-family: monospace; color: var(--vscode-editor-foreground); background: transparent; font-size: 12px; }
+      .wrap { padding: 8px !important; overflow-x: auto; }
       .muted { opacity: 0.8; }
       h3 { margin: 8px 0 6px 0; color: #307dc1; }
       table { border-collapse: collapse; width: 100%; font-size: 12px; margin-bottom: 10px; table-layout: fixed; }
@@ -1015,6 +1020,10 @@ window.addEventListener('message', function(event) {
     var globals = event.data.globals || [];
     var locals = event.data.locals || [];
     _hasDraw = !!event.data.hasDraw;
+    if (event.data.forceRebuild) {
+      // Force a rebuild so even the focused slider/field resets.
+      _rendered = false;
+    }
     var headingChanged = false;
     if (event.data.localsHeading === 'locals' || event.data.localsHeading === 'variables') {
       if (event.data.localsHeading !== _localsHeading) {

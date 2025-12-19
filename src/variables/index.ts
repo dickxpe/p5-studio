@@ -16,6 +16,7 @@ export type VarState = {
   globalTimestamps: Map<string, number>;
   hasDraw: boolean;
   globalHints: Map<string, { control?: VarControl }>;
+  forcePanelRebuild: boolean;
 };
 
 export type VariablesServiceDeps = {
@@ -25,6 +26,7 @@ export type VariablesServiceDeps = {
 
 export type VariablesServiceApi = {
   getGlobalsForDoc: (docUri: string) => VarEntry[];
+  requestPanelRebuildForDoc: (docUri: string) => void;
   setGlobalsForDoc: (docUri: string, list: VarEntry[], opts?: { generatedAt?: number }) => void;
   primeGlobalsForDoc: (docUri: string, list: VarEntry[]) => void;
   hasGlobalDefinition: (docUri: string, name: string) => boolean;
@@ -85,6 +87,7 @@ export function registerVariablesService(
         globalTimestamps: new Map(),
         hasDraw: false,
         globalHints: new Map(),
+        forcePanelRebuild: false,
       });
     }
     return latestVarsByDoc.get(docUri)!;
@@ -182,10 +185,20 @@ export function registerVariablesService(
     getHasDrawForDoc: (docUri: string) => ensure(docUri).hasDraw,
     setGlobalValue: setGlobalValueInternal,
     setLocalValue: setLocalValueInternal,
+    consumeForceRebuildForDoc: (docUri: string) => {
+      const st = ensure(docUri);
+      const v = !!st.forcePanelRebuild;
+      st.forcePanelRebuild = false;
+      return v;
+    },
   });
 
   return {
     getGlobalsForDoc: (docUri: string) => ensure(docUri).globals,
+    requestPanelRebuildForDoc: (docUri: string) => {
+      const st = ensure(docUri);
+      st.forcePanelRebuild = true;
+    },
     setGlobalsForDoc: (docUri: string, list: VarEntry[], opts?: { generatedAt?: number }) => {
       const st = ensure(docUri);
       const next = Array.isArray(list)

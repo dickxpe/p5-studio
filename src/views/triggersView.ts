@@ -39,8 +39,9 @@ export function registerTriggersView(context: vscode.ExtensionContext, deps: Tri
   <head>
     <meta charset="UTF-8" />
     <style>
-      body { margin: 0; font-family: monospace; color: var(--vscode-editor-foreground); background: transparent; font-size: 12px; }
-      .wrap { padding: 8px; }
+      html, body { margin: 0 !important; padding: 0 !important; }
+      body { font-family: monospace; color: var(--vscode-editor-foreground); background: transparent; font-size: 12px; }
+    .wrap { padding: 8px !important; }
       .muted { opacity: 0.8; }
       .row { display: grid; grid-template-columns: max-content 1fr; align-items: center; column-gap: 6px; margin-bottom: 6px; min-width: 0; }
       .btn { justify-self: start; min-width: 100px; padding: 2px 6px; border-radius: 2px; border: 1px solid var(--vscode-button-border, transparent); background: var(--vscode-button-background); color: var(--vscode-button-foreground); cursor: pointer; white-space: nowrap; }

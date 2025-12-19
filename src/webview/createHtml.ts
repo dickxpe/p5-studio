@@ -1406,7 +1406,8 @@ function _p5ShouldSuppressError(raw){
 (function(){
   const origLog = console.log;
   console.log = function(...args){
-    try { vscode.postMessage({ type: "log", message: args }); } catch { }
+    // If OSC output was just shown, a sketch log should switch back to the sketch output channel.
+    try { vscode.postMessage({ type: "log", message: args, focus: true }); } catch { }
     origLog.apply(console, args);
   };
   window.output = function(...args){

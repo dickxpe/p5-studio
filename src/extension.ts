@@ -288,12 +288,44 @@ export function activate(context: vscode.ExtensionContext) {
     try { sendToWebview(panel, { type: 'invokeReload', preserveGlobals }); } catch { }
   }
 
-  async function performPanelReload(panel: vscode.WebviewPanel, opts?: { preserveGlobals?: boolean }) {
+  async function performPanelReload(panel: vscode.WebviewPanel, opts?: { preserveGlobals?: boolean; resetVariablesPanelToCodeInitials?: boolean }) {
     const uri = getDocUriForPanel(panel);
     const uriStr = uri ? uri.toString() : undefined;
     if (uriStr) {
       resetDebugStateForDoc(uriStr);
     }
+
+    // If this reload was initiated via "Refresh" (VS Code title bar or custom context menu),
+    // force the Variables panel to reset its sliders to the *code-defined* initial values.
+    // Otherwise, the panel can appear to "not reset" because live updates resume quickly.
+    try {
+      if (opts?.resetVariablesPanelToCodeInitials && uriStr) {
+        const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === uriStr);
+        const raw = doc ? doc.getText() : undefined;
+        if (typeof raw === 'string') {
+          const globalsInfo = extractGlobalVariablesWithConflicts(raw);
+          let filteredGlobals = globalsInfo.globals
+            .filter((g: any) => g && typeof g.name === 'string')
+            .filter((g: any) => ['number', 'string', 'boolean', 'array'].includes(g.type));
+          const hiddenSet = getHiddenGlobalsByDirective(raw);
+          if (hiddenSet && hiddenSet.size > 0) {
+            filteredGlobals = filteredGlobals.filter((g: any) => !hiddenSet.has(g.name));
+          }
+          const now = Date.now();
+          variablesService.setGlobalsForDoc(uriStr, filteredGlobals.map((g: any) => ({
+            name: g.name,
+            value: g.value,
+            type: g.type,
+            control: g.control,
+            updatedAt: now,
+          })), { generatedAt: now });
+          variablesService.resetValuesForDoc(uriStr);
+          try { variablesService.requestPanelRebuildForDoc(uriStr); } catch { }
+          updateVariablesPanel();
+        }
+      }
+    } catch { /* ignore */ }
+
     try { (panel as any)._steppingActive = false; } catch { }
     if ((panel as any)._autoStepTimer) {
       try { clearInterval((panel as any)._autoStepTimer); } catch { }
@@ -433,7 +465,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(vscode.commands.registerCommand('P5Studio.reloadWebpanel', async () => {
     const panel = getActiveP5Panel();
     if (!panel) return;
-    await performPanelReload(panel);
+    await performPanelReload(panel, { resetVariablesPanelToCodeInitials: true });
   }));
 
   context.subscriptions.push(vscode.commands.registerCommand('P5Studio.pauseDrawLoop', async () => {
@@ -1216,13 +1248,21 @@ export function activate(context: vscode.ExtensionContext) {
           }
           const fileName = path.basename(editor.document.fileName);
           const docUri = editor.document.uri.toString();
+          // Capture the currently active output channel *before* getOrCreateOutputChannel updates the tracker.
+          const lastActiveOutputName = getLastActiveOutputChannel()?.name;
           const outputChannel = getOrCreateOutputChannel(docUri, fileName);
           if (msg.type === 'log') {
             handleLog({ message: msg.message, focus: !!msg.focus }, {
               canLog: () => !ignoreLogs,
               outputChannel,
               getTime,
-              focusOutputChannel: () => showAndTrackOutputChannel(outputChannel),
+              focusOutputChannel: () => {
+                // OSC server start intentionally shows the OSC output channel; on the next sketch log,
+                // switch back to the sketch output channel.
+                if (lastActiveOutputName === 'P5 STUDIO: OSC') {
+                  showAndTrackOutputChannel(outputChannel);
+                }
+              },
             });
           } else if (msg.type === 'loopGuardHit') {
             try {
@@ -1255,7 +1295,7 @@ export function activate(context: vscode.ExtensionContext) {
               setAllowInteractiveTopInputs: (v: boolean) => { _allowInteractiveTopInputs = v; },
             });
           } else if (msg.type === 'context-menu-refresh') {
-            await performPanelReload(panel, { preserveGlobals: false });
+            await performPanelReload(panel, { preserveGlobals: false, resetVariablesPanelToCodeInitials: true });
             return;
           } else if (msg.type === 'context-menu-toggle-pause') {
             const docUri = editor.document.uri.toString();
