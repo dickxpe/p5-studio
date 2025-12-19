@@ -1383,7 +1383,7 @@ function showError(msg){
         const linkWrap = document.createElement('div');
         const a = document.createElement('a');
         a.href = '#';
-        a.textContent = 'Edit Loop Guard Settings to allow for longer loops';
+        a.textContent = 'Edit loop guard settings to allow for longer loops';
         try { a.style.textDecoration = 'underline'; a.style.cursor = 'pointer'; } catch {}
         a.addEventListener('click', (ev) => {
           try { ev.preventDefault(); } catch {}

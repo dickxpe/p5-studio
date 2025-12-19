@@ -1281,8 +1281,8 @@ export function activate(context: vscode.ExtensionContext) {
 
               const settingsLine = `maxIterations=${maxIterations}, maxTimeMs=${maxTimeMs}`;
               const toast = 'Infinite loop detected, sketch was terminated.\n\r' + settingsLine + '\n\rVS Code can be unresponsive for a few seconds.';
-              const action = await vscode.window.showWarningMessage(toast, 'Open Loop Guard Settings');
-              if (action === 'Open Loop Guard Settings') {
+              const action = await vscode.window.showWarningMessage(toast, 'Edit loop guard settings');
+              if (action === 'Edit loop guard settings') {
                 try {
                   await vscode.commands.executeCommand('workbench.action.openSettings', 'P5Studio.loopGuard');
                 } catch {
