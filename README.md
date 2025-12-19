@@ -102,6 +102,86 @@ All settings live under the `P5 Studio` namespace. Configure them from VS Code s
 | `P5Studio.lint.StrictLooseEqualityWarning` | enum | `"ignore"` | Severity for using `==` / `!=` instead of strict equality. |
 | `P5Studio.lint.logWarningsToOutput` | boolean | `true` | Mirror lint warnings to the Output panel in addition to the webview overlay. |
 
+## Output / Input
+- Log messages to the output channel with the output(msg) function
+   ```js
+   output("Hello");
+   ```
+
+- Place a inputPrompt() function call at the top of your file to prompt for input:
+   ```js
+   let a = inputPrompt();
+   ```
+
+## Variables & Triggers Views
+P5 Studio exposes two side views in the VS Code **Panel** area (the same area as Terminal/Problems): **Variables** and **Triggers**.
+
+### Variables view
+- Shows your sketch **global variables** (top-level `let`/`const`/`var`) and lets you edit them live.
+- During **debug stepping**, it can also show **local variables**.
+
+**Controls** (based on type):
+- `number`: editable number field (and can be shown as a slider)
+- `boolean`: checkbox
+- `string`: text field
+- `array`: JSON-style text field
+
+**Optional slider hint**
+To force a numeric global variable to use a slider, add a `@Slider(...)` comment on the line directly above the variable:
+
+```js
+// @Slider(0, 255, 1)
+let radius = 50;
+```
+
+### Triggers view
+The Triggers view lets you expose buttons that call functions inside your sketch.
+
+Add a `@trigger` annotation directly above a function declaration:
+
+```js
+//@trigger("Clear")
+function clearCanvas() {
+   background(0);
+}
+
+//@trigger("Set BG")
+function setBg(r, g, b) {
+   background(r, g, b);
+}
+```
+
+- The view renders a button per trigger.
+- If the function has parameters, the view shows input fields for each parameter.
+- The label is optional: `//@trigger`, `//@trigger()`, and `//@trigger("Label")` are all supported. When omitted, the function name is used.
+- Inputs are converted to useful JS values when possible (e.g. `123` → number, `true/false`, `null`, and JSON like `[1,2,3]`).
+
+Tip: if you don't see the views, open them via **View → Open View...** and search for "Variables" or "Triggers".
+
+## Custom CSS Support
+You can style html elements in your sketches using your own CSS files. P5 Studio will automatically load and apply any `.css` files found in these locations:
+
+- The `common/` folder at the root of your workspace (recursively)
+- Any `include/` folder next to your sketch, its parent folder, or at the workspace root
+
+All discovered CSS files are injected into the webview for every sketch.
+
+**How to use:**
+- Place your shared styles in `common/` (e.g., `common/global.css`)
+- Place sketch-specific styles in an `include/` folder next to your sketch file
+- All matching `.css` files will be loaded automatically when you open or reload a sketch
+- **Note:** If you move or rename CSS files, reload the P5 panel to apply changes.
+
+## Loop Guard Protection
+To prevent infinite loops or runaway code from freezing your editor, P5 Studio automatically injects a loop guard into your sketches. This mechanism detects when a loop (such as `while`, `for`, or `do...while`) exceeds a safe number of iterations or runs for too long, and will stop execution with a clear error overlay in the webview.
+
+**How it works:**
+- Every loop in your code is instrumented with a guard counter and timer.
+- If a loop exceeds the configured maximum number of iterations or total execution time, the sketch is halted and an error message is shown.
+- This helps protect your editor and system from accidental infinite loops during live coding.
+- You can adjust guard settings in your VS Code settings under the P5Studio.loopGuard section.
+- Set `P5Studio.loopGuard.enabled` to `false` if you want to disable the guard entirely (for example, when benchmarking or when working with intentionally long-running loops).
+
 
 ## OSC (Open Sound Control)
 P5 Studio supports sending and receiving OSC (Open Sound Control) messages between your p5.js sketch and other OSC-compatible software or devices.
@@ -167,40 +247,6 @@ This allows you to connect your p5.js sketches to other creative coding tools, D
 - To self-test without an external server, set the  `P5Studio.oscRemoteAddress` and  `P5Studio.oscLocalAddress` both to `127.0.0.1` and set `P5Studio.oscRemotePort` to match `P5Studio.oscLocalPort` (default `57121`) and call `sendOSC('/test', [1,'a',true])` from your sketch.
 - To receive from another device on your network, set `P5Studio.oscLocalAddress` to `0.0.0.0`, keep `P5Studio.oscLocalPort` (e.g., `57121`), and send to your computer’s LAN IP at that port.
 
-## Output / Input
-- Log messages to the output channel with the output(msg) function
-   ```js
-   output("Hello");
-   ```
-
-- Place a inputPrompt() function call at the top of your file to prompt for input:
-   ```js
-   let a = inputPrompt();
-   ```
-
-## Custom CSS Support
-You can style html elements in your sketches using your own CSS files. P5 Studio will automatically load and apply any `.css` files found in these locations:
-
-- The `common/` folder at the root of your workspace (recursively)
-- Any `include/` folder next to your sketch, its parent folder, or at the workspace root
-
-All discovered CSS files are injected into the webview for every sketch.
-
-**How to use:**
-- Place your shared styles in `common/` (e.g., `common/global.css`)
-- Place sketch-specific styles in an `include/` folder next to your sketch file
-- All matching `.css` files will be loaded automatically when you open or reload a sketch
-- **Note:** If you move or rename CSS files, reload the P5 panel to apply changes.
-
-## Loop Guard Protection
-To prevent infinite loops or runaway code from freezing your editor, P5 Studio automatically injects a loop guard into your sketches. This mechanism detects when a loop (such as `while`, `for`, or `do...while`) exceeds a safe number of iterations or runs for too long, and will stop execution with a clear error overlay in the webview.
-
-**How it works:**
-- Every loop in your code is instrumented with a guard counter and timer.
-- If a loop exceeds the configured maximum number of iterations or total execution time, the sketch is halted and an error message is shown.
-- This helps protect your editor and system from accidental infinite loops during live coding.
-- You can adjust guard settings in your VS Code settings under the P5Studio.loopGuard section.
-- Set `P5Studio.loopGuard.enabled` to `false` if you want to disable the guard entirely (for example, when benchmarking or when working with intentionally long-running loops).
 
 ## Pixel Streaming Helpers
 Stream the canvas to a website and/or remote display with the built-in `connectStream()` and `sendPixels()` helpers:

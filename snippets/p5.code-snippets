@@ -133,5 +133,27 @@
       "}"
     ],
     "description": "Create a p5.js windowResized() handler"
+  },
+
+  "p5 //@hide": {
+    "prefix": ["@hide", "//@hide"],
+    "body": [
+      "//@hide"
+    ],
+    "description": "P5 Studio: hide variable/trigger from UI"
+  },
+  "p5 //@trigger": {
+    "prefix": ["@trigger", "//@trigger"],
+    "body": [
+      "//@trigger(${1:label})"
+    ],
+    "description": "P5 Studio: mark function as a trigger"
+  },
+  "p5 //@slider": {
+    "prefix": ["@slider", "//@slider"],
+    "body": [
+      "//@slider(${1:min}, ${2:max})"
+    ],
+    "description": "P5 Studio: add slider control for a numeric variable"
   }
 }

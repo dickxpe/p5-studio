@@ -56,7 +56,7 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
     <meta charset="UTF-8" />
     <style>
       body { margin: 0; font-family: monospace; color: var(--vscode-editor-foreground); background: transparent; font-size: 12px; }
-      .wrap { padding: 8px; }
+      .wrap { padding: 8px; overflow-x: auto; }
       .muted { opacity: 0.8; }
       h3 { margin: 8px 0 6px 0; color: #307dc1; }
       table { border-collapse: collapse; width: 100%; font-size: 12px; margin-bottom: 10px; table-layout: fixed; }
@@ -67,8 +67,14 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
         height: 20px;
         vertical-align: middle;
       }
-      th.name-col, td.name-col { width: 35%; }
-      th.value-col, td.value-col { width: 45%; }
+      th.name-col, td.name-col {
+        width: 25%;
+        min-width: 150px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      th.value-col, td.value-col { width: 55%; }
       th.type-col, td.type-col { width: 20%; }
       td.value-col { overflow: hidden; }
       /* Responsive: when the Value column would drop below 256px, hide the Type column */
@@ -76,10 +82,24 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
       table.hide-type-col td.type-col {
         display: none;
       }
+      /* Keep Name width stable; give extra space to Value when Type is hidden */
+      /* When Type is hidden, keep Name stable and give space to Value */
       table.hide-type-col th.name-col,
-      table.hide-type-col td.name-col { width: 55%; }
+      table.hide-type-col td.name-col { width: 25%; min-width: 175px; }
       table.hide-type-col th.value-col,
-      table.hide-type-col td.value-col { width: 45%; }
+      table.hide-type-col td.value-col { width: 75%; }
+
+      /* Responsive: when Value column gets too narrow, hide slider (range) controls */
+      table.hide-sliders input[data-slider-field="true"] {
+        display: none;
+      }
+      table.hide-sliders .slider-wrapper {
+        gap: 0;
+      }
+      table.hide-sliders .slider-wrapper .slider-number-wrapper {
+        width: 100% !important;
+        min-width: 0 !important;
+      }
       th { background: #2222; color: #307dc1; }
       /* Make inputs fill the table cell (render-only) */
       input[type="number"],
@@ -331,24 +351,30 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
       <div id="locals-table"></div>
     </div>
           <script>
-// Acquire VS Code API once and reuse
-const vscode = window.acquireVsCodeApi ? acquireVsCodeApi() : null;
+// Acquire VS Code API once and reuse (be defensive: avoid ReferenceError in some webview contexts)
+const vscode = (typeof acquireVsCodeApi === 'function')
+  ? acquireVsCodeApi()
+  : (window.acquireVsCodeApi ? window.acquireVsCodeApi() : null);
 const emptyStateEl = document.getElementById('variables-empty-state');
 const globalsTableEl = document.getElementById('globals-table');
 const localsTableEl = document.getElementById('locals-table');
 const RESPONSIVE_VALUE_MIN_PX = 256;
+const RESPONSIVE_SLIDER_MIN_PX = 140;
+// Type column visibility: consider combined width of Name + Value columns
+// (this avoids hiding Type too early when Value alone dips under the threshold).
+const RESPONSIVE_NAME_VALUE_MIN_PX = 280;
 
-function measureValueColWidthWhenTypeVisible(table) {
+function measureColWidthWhenTypeVisible(table, selector) {
   if (!table) return 0;
   var hadHiddenType = table.classList.contains('hide-type-col');
   try {
-    // Measure the Value column width *as if* the Type column is visible.
+    // Measure column width *as if* the Type column is visible.
     if (hadHiddenType) table.classList.remove('hide-type-col');
-    var valueCell = table.querySelector('thead th.value-col') || table.querySelector('th.value-col') || table.querySelector('td.value-col');
-    if (valueCell && typeof valueCell.getBoundingClientRect === 'function') {
-      return valueCell.getBoundingClientRect().width;
+    var cell = selector ? table.querySelector(selector) : null;
+    if (cell && typeof cell.getBoundingClientRect === 'function') {
+      return cell.getBoundingClientRect().width;
     }
-    return table.getBoundingClientRect().width;
+    return 0;
   } catch {
     return 0;
   } finally {
@@ -363,10 +389,33 @@ function updateTypeColumnVisibilityIn(containerEl) {
   var tables = containerEl.querySelectorAll('table');
   tables.forEach(function(table) {
     try {
-      var valueWidthWhenFull = measureValueColWidthWhenTypeVisible(table);
-      var shouldHide = valueWidthWhenFull > 0 && valueWidthWhenFull < RESPONSIVE_VALUE_MIN_PX;
-      if (shouldHide) table.classList.add('hide-type-col');
+      // 1) Decide Type visibility based on "full" layout measurement
+      var nameWidthWhenFull = measureColWidthWhenTypeVisible(table, 'thead th.name-col')
+        || measureColWidthWhenTypeVisible(table, 'th.name-col')
+        || measureColWidthWhenTypeVisible(table, 'td.name-col');
+      var valueWidthWhenFull = measureColWidthWhenTypeVisible(table, 'thead th.value-col')
+        || measureColWidthWhenTypeVisible(table, 'th.value-col')
+        || measureColWidthWhenTypeVisible(table, 'td.value-col');
+
+      var namePlusValue = (Number(nameWidthWhenFull) || 0) + (Number(valueWidthWhenFull) || 0);
+      var shouldHideType = namePlusValue > 0
+        ? (namePlusValue < RESPONSIVE_NAME_VALUE_MIN_PX)
+        : (valueWidthWhenFull > 0 && valueWidthWhenFull < RESPONSIVE_VALUE_MIN_PX);
+      if (shouldHideType) table.classList.add('hide-type-col');
       else table.classList.remove('hide-type-col');
+
+      // Ensure layout reflects the updated class before measuring widths.
+      try { void table.offsetWidth; } catch { }
+
+      // 2) Decide Slider visibility based on current rendered Value width
+      var valueCell = table.querySelector('thead th.value-col') || table.querySelector('th.value-col') || table.querySelector('td.value-col');
+      var valueWidthNow = 0;
+      try { valueWidthNow = valueCell && valueCell.getBoundingClientRect ? valueCell.getBoundingClientRect().width : 0; } catch { valueWidthNow = 0; }
+      // Hide sliders only after Type is already hidden (Type goes first).
+      var typeHiddenNow = table.classList.contains('hide-type-col');
+      var shouldHideSliders = typeHiddenNow && valueWidthNow > 0 && valueWidthNow < RESPONSIVE_SLIDER_MIN_PX;
+      if (shouldHideSliders) table.classList.add('hide-sliders');
+      else table.classList.remove('hide-sliders');
     } catch { }
   });
 }
@@ -389,7 +438,7 @@ try {
 var _localsHeading = 'locals';
 function getColumnLabel(scope) {
   if (_localsHeading === 'variables') return 'Variable(s)';
-  return scope === 'globals' ? 'Global variable(s)' : 'Local variable(s)';
+  return scope === 'globals' ? 'Global vars' : 'Local vars';
 }
 function cloneForMessage(value) {
   if (Array.isArray(value)) {
