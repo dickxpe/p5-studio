@@ -1684,7 +1684,6 @@ export function activate(context: vscode.ExtensionContext) {
       try {
         await cfg.setShowFPS(true);
         updateShowFpsContext(true);
-        vscode.window.showInformationMessage('FPS overlay enabled.');
       } catch (err) {
         console.error('[P5Studio] Failed enabling FPS overlay', err);
         vscode.window.showErrorMessage('Failed to enable the FPS overlay.');
@@ -1697,7 +1696,6 @@ export function activate(context: vscode.ExtensionContext) {
       try {
         await cfg.setShowFPS(false);
         updateShowFpsContext(false);
-        vscode.window.showInformationMessage('FPS overlay disabled.');
       } catch (err) {
         console.error('[P5Studio] Failed disabling FPS overlay', err);
         vscode.window.showErrorMessage('Failed to disable the FPS overlay.');
