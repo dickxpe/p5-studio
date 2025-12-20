@@ -198,6 +198,7 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
         outline-offset: 0;
       }
       .checkbox-wrapper {
+        position: relative;
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -217,6 +218,10 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
         left: 0;
         margin: 0;
         cursor: pointer;
+        opacity: 0;
+        -webkit-appearance: none;
+        appearance: none;
+        z-index: 1;
       }
       .checkbox-custom {
         width: 14px;
@@ -229,6 +234,7 @@ export function registerVariablesView(context: vscode.ExtensionContext, deps: Va
         justify-content: center;
         line-height: 0;
         pointer-events: none;
+        z-index: 0;
       }
       .checkbox-wrapper input[type="checkbox"]:hover + .checkbox-custom {
         border-color: var(--vscode-checkbox-foreground, #2f78b9);
